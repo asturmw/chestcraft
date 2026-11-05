@@ -5,7 +5,7 @@ use super::headers::SANDBOX_CSP;
 use super::limits::DownloadGuard;
 use super::query::Query;
 use super::views::{self, Crumb, Ctx, ListingView, Row, VolumeCard};
-use super::{AppState, ClientInfo, Shared, assets, cookie, stream};
+use super::{AppState, ClientInfo, Current, Shared, page_ctx, stream};
 use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, volume_perms};
 use crate::config::Note;
 use crate::fs::path::{RelPath, is_internal_name, validate_existing_name};
@@ -56,23 +56,6 @@ const ACTIVE_TYPES: &[&str] = &[
     "text/xml",
     "application/xml",
 ];
-
-fn ctx<'a>(st: &'a AppState, headers: &HeaderMap, principal: &Principal) -> Ctx<'a> {
-    let theme = match cookie(headers, "cc_theme") {
-        Some("light") => Some("light"),
-        Some("dark") => Some("dark"),
-        _ => None,
-    };
-    Ctx {
-        i18n: &st.i18n,
-        lang: st.request_lang(headers),
-        theme,
-        skin: assets::default_skin(),
-        keys: "standard",
-        signed_in: *principal != Principal::Anonymous,
-        tz: &st.cfg.server.timezone,
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 enum Fail {
@@ -144,9 +127,10 @@ pub async fn landing(
     State(st): State<Shared>,
     Extension(client): Extension<ClientInfo>,
     Extension(principal): Extension<Principal>,
+    Extension(current): Extension<Current>,
     headers: HeaderMap,
 ) -> Response {
-    let ctx = ctx(&st, &headers, &principal);
+    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     let readable: Vec<Arc<VolumeRoot>> = st
         .volumes
         .iter()
@@ -187,11 +171,12 @@ pub async fn handle(
     State(st): State<Shared>,
     Extension(client): Extension<ClientInfo>,
     Extension(principal): Extension<Principal>,
+    Extension(current): Extension<Current>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
 ) -> Response {
-    let ctx = ctx(&st, &headers, &principal);
+    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     if method != Method::GET && method != Method::HEAD {
         return fail(&ctx, Fail::Method);
     }
@@ -316,7 +301,7 @@ async fn listing(
     principal: &Principal,
     raw_path: &str,
 ) -> Response {
-    let admin = *principal == Principal::Admin;
+    let admin = principal.is_admin();
     let show_hidden = admin && q.get("hidden") == Some("1");
     let listed = {
         let (vol, rel) = (vol.clone(), rel.clone());
@@ -643,7 +628,7 @@ fn zip_response(
     head: bool,
     guard: Option<DownloadGuard>,
 ) -> Result<Response, Fail> {
-    let include_hidden = *principal == Principal::Admin && q.get("hidden") == Some("1");
+    let include_hidden = principal.is_admin() && q.get("hidden") == Some("1");
     let only: Vec<String> = q.all("n").map(String::from).collect();
     for n in &only {
         if validate_existing_name(n).is_err()

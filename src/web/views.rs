@@ -15,6 +15,9 @@ pub struct Ctx<'a> {
     /// `vim`, `standard` or `off`.
     pub keys: &'static str,
     pub signed_in: bool,
+    pub user_name: Option<&'a str>,
+    /// CSRF token of the session, for forms.
+    pub csrf: Option<&'a str>,
     pub tz: &'a jiff::tz::TimeZone,
 }
 
@@ -63,7 +66,13 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                 a class="skip-link" href="#main" { (ctx.t("common.skip_to_content")) }
                 header class="app-header" {
                     a class="app-header__brand" href="/" { "chestcraft" }
-                    @if !ctx.signed_in {
+                    @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
+                        span class="app-header__user" { (ctx.tf("common.signed_in_as", &[("name", name)])) }
+                        form class="app-header__sign-out" method="post" action="/.cc/logout" {
+                            input type="hidden" name="csrf" value=(csrf);
+                            button type="submit" { (ctx.t("common.sign_out")) }
+                        }
+                    } @else if !ctx.signed_in {
                         a class="app-header__sign-in" href="/.cc/login" { (ctx.t("common.sign_in")) }
                     }
                 }
@@ -245,6 +254,91 @@ pub fn error_page(ctx: &Ctx, title: &str, body: &str) -> Markup {
             h1 class="error__title" { (title) }
             p class="error__body" { (body) }
             p { a class="error__home" href="/" { (ctx.t("error.back_home")) } }
+        },
+    )
+}
+
+pub struct LoginView {
+    pub next: String,
+    pub username: String,
+    pub error: Option<String>,
+}
+
+pub fn login(ctx: &Ctx, v: &LoginView) -> Markup {
+    let title = ctx.t("login.title");
+    layout(
+        ctx,
+        title,
+        html! {
+            h1 class="login__title" { (title) }
+            @if let Some(e) = &v.error {
+                p class="form__error" role="alert" { (e) }
+            }
+            form class="login" method="post" action="/.cc/login" {
+                input type="hidden" name="next" value=(v.next);
+                label class="field" {
+                    span class="field__label" { (ctx.t("login.username")) }
+                    input class="field__input" type="text" name="username" value=(v.username)
+                        autocomplete="username" autocapitalize="off" spellcheck="false" required;
+                }
+                label class="field" {
+                    span class="field__label" { (ctx.t("login.password")) }
+                    input class="field__input" type="password" name="password"
+                        autocomplete="current-password" required;
+                }
+                button class="login__submit" type="submit" { (ctx.t("login.submit")) }
+            }
+        },
+    )
+}
+
+pub struct PasswordView {
+    /// First sign-in of an account with a one-time password: no current password asked.
+    pub forced: bool,
+    pub csrf: String,
+    pub error: Option<String>,
+    pub saved: bool,
+}
+
+pub fn password(ctx: &Ctx, v: &PasswordView) -> Markup {
+    let title = ctx.t("password.title");
+    let min = crate::auth::password::MIN_ACCOUNT_PASSWORD.to_string();
+    layout(
+        ctx,
+        title,
+        html! {
+            h1 class="password__title" { (title) }
+            @if v.forced {
+                p class="password__intro" { (ctx.t("password.forced_intro")) }
+            }
+            @if let Some(e) = &v.error {
+                p class="form__error" role="alert" { (e) }
+            }
+            @if v.saved {
+                p class="form__saved" role="status" { (ctx.t("password.saved")) }
+            }
+            form class="password" method="post" action="/.cc/password" {
+                input type="hidden" name="csrf" value=(v.csrf);
+                @if !v.forced {
+                    label class="field" {
+                        span class="field__label" { (ctx.t("password.current")) }
+                        input class="field__input" type="password" name="current"
+                            autocomplete="current-password" required;
+                    }
+                }
+                label class="field" {
+                    span class="field__label" { (ctx.t("password.new")) }
+                    input class="field__input" type="password" name="new" autocomplete="new-password"
+                        minlength=(min) required aria-describedby="password-hint";
+                    span class="field__hint" id="password-hint" { (ctx.tf("password.hint", &[("min", &min)])) }
+                }
+                label class="field" {
+                    span class="field__label" { (ctx.t("password.repeat")) }
+                    input class="field__input" type="password" name="repeat" autocomplete="new-password"
+                        minlength=(min) required;
+                }
+                button class="password__submit" type="submit" { (ctx.t("password.submit")) }
+            }
         },
     )
 }

@@ -73,10 +73,48 @@ pub enum Principal {
     /// A signed-in user with a role from the config. A role that no longer exists
     /// grants nothing.
     User {
+        name: String,
         role: String,
     },
-    Admin,
+    Admin {
+        name: String,
+    },
 }
+
+impl Principal {
+    pub fn is_admin(&self) -> bool {
+        matches!(self, Principal::Admin { .. })
+    }
+
+    pub fn is_anonymous(&self) -> bool {
+        matches!(self, Principal::Anonymous)
+    }
+
+    /// The username, for signed-in principals.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Principal::Anonymous => None,
+            Principal::User { name, .. } | Principal::Admin { name } => Some(name),
+        }
+    }
+
+    /// Build from a stored account: role "admin" is the built-in admin.
+    pub fn from_account(name: &str, role: &str) -> Principal {
+        if role == ADMIN_ROLE {
+            Principal::Admin {
+                name: name.to_string(),
+            }
+        } else {
+            Principal::User {
+                name: name.to_string(),
+                role: role.to_string(),
+            }
+        }
+    }
+}
+
+/// The built-in role with every permission.
+pub const ADMIN_ROLE: &str = "admin";
 
 /// Where the request came from (see `server.remote_proxies`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,8 +132,8 @@ pub fn volume_perms(cfg: &Config, who: &Principal, origin: Origin, volume: &str)
         return Perms::empty();
     }
     let base = match who {
-        Principal::Admin => Perms::all(),
-        Principal::User { role } => cfg
+        Principal::Admin { .. } => Perms::all(),
+        Principal::User { role, .. } => cfg
             .roles
             .get(role)
             .and_then(|r| r.volumes.get(volume))
@@ -120,7 +158,7 @@ pub fn path_perms(
     if path.is_internal() {
         return Perms::empty();
     }
-    if path.is_hidden() && *who != Principal::Admin {
+    if path.is_hidden() && !who.is_admin() {
         return Perms::empty();
     }
     let perms = volume_perms(cfg, who, origin, volume);
@@ -179,8 +217,17 @@ mod tests {
         .unwrap()
     }
 
+    fn admin() -> Principal {
+        Principal::Admin {
+            name: "root".into(),
+        }
+    }
+
     fn user(role: &str) -> Principal {
-        Principal::User { role: role.into() }
+        Principal::User {
+            name: "u".into(),
+            role: role.into(),
+        }
     }
 
     fn p(s: &str) -> RelPath {
@@ -213,7 +260,7 @@ mod tests {
             Perms::empty()
         );
         assert_eq!(
-            volume_perms(&c, &Principal::Admin, Origin::Local, "Nope"),
+            volume_perms(&c, &admin(), Origin::Local, "Nope"),
             Perms::empty()
         );
     }
@@ -244,11 +291,11 @@ mod tests {
     fn local_only_volume_is_closed_from_the_internet_even_for_admin() {
         let c = cfg();
         assert_eq!(
-            volume_perms(&c, &Principal::Admin, Origin::Remote, "Backups"),
+            volume_perms(&c, &admin(), Origin::Remote, "Backups"),
             Perms::empty()
         );
         assert_eq!(
-            volume_perms(&c, &Principal::Admin, Origin::Local, "Backups"),
+            volume_perms(&c, &admin(), Origin::Local, "Backups"),
             Perms::all()
         );
     }
@@ -263,7 +310,7 @@ mod tests {
         assert_eq!(ro_root, Perms::READ | Perms::SHARE);
         let rw = path_perms(&c, &fam, Origin::Local, "Medien", &p("immich-export/x.jpg"));
         assert_eq!(rw, Perms::all());
-        let whole = path_perms(&c, &Principal::Admin, Origin::Local, "Archiv", &p("a/b"));
+        let whole = path_perms(&c, &admin(), Origin::Local, "Archiv", &p("a/b"));
         assert_eq!(whole, Perms::READ | Perms::SHARE);
     }
 
@@ -276,18 +323,12 @@ mod tests {
             Perms::empty()
         );
         assert_eq!(
-            path_perms(
-                &c,
-                &Principal::Admin,
-                Origin::Local,
-                "Medien",
-                &p("a/.git/config")
-            ),
+            path_perms(&c, &admin(), Origin::Local, "Medien", &p("a/.git/config")),
             Perms::all()
         );
         for internal in [".chestcraft-trash/1/x", "a/.hist/up2k.db"] {
             assert_eq!(
-                path_perms(&c, &Principal::Admin, Origin::Local, "Medien", &p(internal)),
+                path_perms(&c, &admin(), Origin::Local, "Medien", &p(internal)),
                 Perms::empty(),
                 "{internal}"
             );

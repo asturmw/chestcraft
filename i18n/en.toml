@@ -13,6 +13,7 @@ datetime = "{d} {mon} {y}, {H}:{M}"
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 [common]
+signed_in_as = "Signed in as {name}"
 home = "Home"
 sign_in = "Sign in"
 sign_out = "Sign out"
@@ -48,6 +49,8 @@ free_space = "{free} free"
 read_only = "You can view and download here, but not change anything."
 
 [error]
+forbidden_title = "Request refused"
+forbidden_body = "chestcraft refused this request because it didn't come from this site. Reload the page and try again."
 back_home = "Back to the start page"
 not_found_title = "Not found"
 not_found_body = "This file or folder doesn't exist, or you don't have access to it."
@@ -59,3 +62,26 @@ server_error_title = "Something went wrong"
 server_error_body = "chestcraft couldn't finish this request. Try again in a moment, and tell the owner if it keeps happening."
 method_title = "Not supported"
 method_body = "chestcraft can't do that here."
+
+[login]
+title = "Sign in"
+username = "Username"
+password = "Password"
+submit = "Sign in"
+wrong = "Username or password is wrong."
+slowed_down = "Too many failed attempts. Try again in {minutes} min."
+
+[password]
+title = "Change password"
+forced_intro = "Choose your own password before you continue."
+current = "Current password"
+new = "New password"
+repeat = "Repeat new password"
+hint = "At least {min} characters."
+submit = "Save password"
+too_short = "Use at least {min} characters."
+same_as_name = "Don't use your username as your password."
+mismatch = "The new passwords don't match."
+same_as_old = "Choose a password you don't use here yet."
+wrong_current = "Your current password is wrong."
+saved = "Password saved. Your other devices are signed out."

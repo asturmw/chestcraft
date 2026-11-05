@@ -11,6 +11,7 @@ datetime = "{d2}.{m2}.{y}, {H}:{M}"
 months = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."]
 
 [common]
+signed_in_as = "Angemeldet als {name}"
 home = "Start"
 sign_in = "Anmelden"
 sign_out = "Abmelden"
@@ -45,6 +46,8 @@ free_space = "{free} frei"
 read_only = "Hier kannst du ansehen und herunterladen, aber nichts ändern."
 
 [error]
+forbidden_title = "Anfrage abgelehnt"
+forbidden_body = "chestcraft hat die Anfrage abgelehnt, weil sie nicht von dieser Seite kam. Lade die Seite neu und versuch es noch einmal."
 back_home = "Zurück zur Startseite"
 not_found_title = "Nicht gefunden"
 not_found_body = "Diese Datei oder dieser Ordner existiert nicht, oder du hast keinen Zugriff darauf."
@@ -56,3 +59,26 @@ server_error_title = "Etwas ist schiefgelaufen"
 server_error_body = "chestcraft konnte diese Anfrage nicht abschließen. Versuch es gleich noch einmal und sag dem Besitzer Bescheid, wenn es weiter passiert."
 method_title = "Nicht unterstützt"
 method_body = "Das geht hier nicht."
+
+[login]
+title = "Anmelden"
+username = "Benutzername"
+password = "Passwort"
+submit = "Anmelden"
+wrong = "Benutzername oder Passwort ist falsch."
+slowed_down = "Zu viele Fehlversuche. Versuch es in {minutes} Min. noch einmal."
+
+[password]
+title = "Passwort ändern"
+forced_intro = "Wähl dein eigenes Passwort, bevor es weitergeht."
+current = "Aktuelles Passwort"
+new = "Neues Passwort"
+repeat = "Neues Passwort wiederholen"
+hint = "Mindestens {min} Zeichen."
+submit = "Passwort speichern"
+too_short = "Nimm mindestens {min} Zeichen."
+same_as_name = "Nimm nicht deinen Benutzernamen als Passwort."
+mismatch = "Die neuen Passwörter stimmen nicht überein."
+same_as_old = "Nimm ein Passwort, das du hier noch nicht benutzt."
+wrong_current = "Dein aktuelles Passwort ist falsch."
+saved = "Passwort gespeichert. Deine anderen Geräte sind abgemeldet."

@@ -14,7 +14,11 @@ Plan steps 1–2 done. Step 3 (backend slices):
   zip (folder or selection), client origin through trusted proxies, security headers,
   anonymous download limit, i18n (built-in de/en + extra files), embedded assets
   (`build.rs`). Everyone is anonymous until slice 3.
-- Next: slice 3, auth/sessions/backoff (redb).
+- Slice 3 done: redb state DB (accounts, sessions, audit), argon2id passwords, login with
+  per-(IP, account) backoff and credential-stuffing signal, sessions (hashed ids, 30d
+  sliding, remote admin 12h), forced first-login password change, CSRF + Origin checks,
+  per-user settings in the page context, `chestcraft user ...` CLI (not as root).
+- Next: slice 4, upload/trash/overwrite/purge.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in
