@@ -1,0 +1,42 @@
+[package]
+name = "chestcraft"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+argon2 = "0.6.0"
+axum = "0.8.9"
+bitflags = "2.13.2"
+bs58 = "0.5.1"
+bytes = "1.12.1"
+clap = { version = "4.6.7", features = ["derive"] }
+dav-server = { version = "0.11.0", default-features = false }
+futures-util = "0.3.34"
+governor = "0.10.4"
+http = "1.5.0"
+http-body-util = "0.1.5"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
+ipnet = "2.12.2"
+jiff = "0.2.39"
+maud = { version = "0.27.0", features = ["axum"] }
+mime_guess = "2.0.5"
+percent-encoding = "2.3.2"
+pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
+rand = "0.10.3"
+redb = "4.4.0"
+rustix = { version = "1.1.6", features = ["fs", "process", "system"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "signal", "sync", "time", "process"] }
+toml = "1.2.0"
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["trace", "set-header", "limit"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zip = { version = "9.4.0", default-features = false }
+
+[dev-dependencies]
+proptest = "1.12.0"
+tempfile = "3.27.0"
