@@ -1,0 +1,58 @@
+# Deutsche UI-Texte ("du"). Platzhalter in geschweiften Klammern füllt der Server aus.
+# Plural: key_one für 1, key_other sonst.
+
+[meta]
+name = "Deutsch"
+
+[format]
+decimal = ","
+group = "."
+datetime = "{d2}.{m2}.{y}, {H}:{M}"
+months = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."]
+
+[common]
+home = "Start"
+sign_in = "Anmelden"
+sign_out = "Abmelden"
+skip_to_content = "Zum Inhalt springen"
+
+[landing]
+title = "Deine Ordner"
+public_title = "Öffentliche Ordner"
+free_of = "{free} frei von {total}"
+none = "Du hast noch keinen Zugriff auf Ordner. Bitte den Besitzer, dir Zugriff zu geben."
+none_public = "Hier ist nichts öffentlich. Melde dich an, um deine Ordner zu sehen."
+
+[browser]
+location = "Ort"
+col_select = "Auswählen"
+col_name = "Name"
+col_size = "Größe"
+col_modified = "Geändert"
+empty = "Dieser Ordner ist leer."
+download_folder = "Ordner als ZIP herunterladen"
+download_selected = "Auswahl als ZIP herunterladen"
+select_item = "{name} auswählen"
+items_one = "{count} Eintrag"
+items_other = "{count} Einträge"
+page_of = "Seite {page} von {pages}"
+page_prev = "Vorherige Seite"
+page_next = "Nächste Seite"
+show_hidden = "Versteckte Dateien zeigen"
+hide_hidden = "Versteckte Dateien ausblenden"
+folder = "Ordner"
+free_space = "{free} frei"
+read_only = "Hier kannst du ansehen und herunterladen, aber nichts ändern."
+
+[error]
+back_home = "Zurück zur Startseite"
+not_found_title = "Nicht gefunden"
+not_found_body = "Diese Datei oder dieser Ordner existiert nicht, oder du hast keinen Zugriff darauf."
+bad_request_title = "Diese Adresse funktioniert nicht"
+bad_request_body = "Die Adresse enthält Zeichen, die chestcraft nicht annimmt. Prüf den Link und versuch es noch einmal."
+too_many_title = "Zu viele Downloads gleichzeitig"
+too_many_body = "Warte, bis einer deiner Downloads fertig ist, und versuch es dann noch einmal."
+server_error_title = "Etwas ist schiefgelaufen"
+server_error_body = "chestcraft konnte diese Anfrage nicht abschließen. Versuch es gleich noch einmal und sag dem Besitzer Bescheid, wenn es weiter passiert."
+method_title = "Nicht unterstützt"
+method_body = "Das geht hier nicht."

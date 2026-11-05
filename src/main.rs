@@ -37,9 +37,58 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Cmd::Check { offline } => check(&cli.config, offline),
-        Cmd::Serve | Cmd::Collect => {
+        Cmd::Serve => serve(&cli.config),
+        Cmd::Collect => {
             eprintln!("not implemented yet");
             ExitCode::from(2)
+        }
+    }
+}
+
+fn init_logging() {
+    use tracing_subscriber::EnvFilter;
+    let filter =
+        EnvFilter::try_from_env("CHESTCRAFT_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_ansi(ansi);
+    // journald stamps every line itself.
+    if std::env::var_os("JOURNAL_STREAM").is_some() {
+        builder.without_time().init();
+    } else {
+        builder.init();
+    }
+}
+
+fn serve(path: &Path) -> ExitCode {
+    init_logging();
+    let cfg = match Config::load(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            tracing::error!("{}:\n{e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    for w in config::check_environment(&cfg).warnings {
+        tracing::warn!("{w}");
+    }
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!("can't start the async runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(chestcraft::web::serve(cfg, path.parent())) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            tracing::error!("{e:#}");
+            ExitCode::FAILURE
         }
     }
 }

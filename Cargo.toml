@@ -30,6 +30,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "signal", "sync", "time", "process"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
 toml = "1.2.0"
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["trace", "set-header", "limit"] }
