@@ -31,6 +31,30 @@ enum Cmd {
     },
     /// Read SMART data for the dashboard (runs as root from chestcraft-collect.timer)
     Collect,
+    /// Manage accounts (run as the service user while the service is stopped)
+    #[command(subcommand)]
+    User(UserCmd),
+}
+
+#[derive(Subcommand)]
+enum UserCmd {
+    /// Create an account; prints a one-time password to change at first sign-in
+    Add {
+        name: String,
+        /// "admin" or a role from the config
+        #[arg(long)]
+        role: String,
+    },
+    /// Give an account a new one-time password
+    Passwd { name: String },
+    /// Change an account's role
+    Role { name: String, role: String },
+    /// Block an account and end its sessions
+    Disable { name: String },
+    /// Unblock an account
+    Enable { name: String },
+    /// List accounts
+    List,
 }
 
 fn main() -> ExitCode {
@@ -38,6 +62,7 @@ fn main() -> ExitCode {
     match cli.command {
         Cmd::Check { offline } => check(&cli.config, offline),
         Cmd::Serve => serve(&cli.config),
+        Cmd::User(cmd) => user(&cli.config, cmd),
         Cmd::Collect => {
             eprintln!("not implemented yet");
             ExitCode::from(2)
@@ -120,4 +145,136 @@ fn check(path: &Path, offline: bool) -> ExitCode {
         cfg.roles.len()
     );
     ExitCode::SUCCESS
+}
+
+fn valid_username(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && !name.starts_with(['.', '-'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn user(path: &Path, cmd: UserCmd) -> ExitCode {
+    if rustix::process::geteuid().is_root() {
+        eprintln!(
+            "Run this as the service user (e.g. `sudo -u nasdebian chestcraft user ...`), not as root:"
+        );
+        eprintln!("a database file created by root can't be opened by the service.");
+        return ExitCode::FAILURE;
+    }
+    let cfg = match Config::load(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{}:\n{e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let db = match chestcraft::web::open_db(&cfg) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let role_ok =
+        |role: &str| role == chestcraft::auth::perm::ADMIN_ROLE || cfg.roles.contains_key(role);
+    let fail = |msg: String| {
+        eprintln!("{msg}");
+        ExitCode::FAILURE
+    };
+    let now = jiff::Timestamp::now().as_second();
+    let result: Result<ExitCode, chestcraft::db::DbError> = (|| {
+        Ok(match cmd {
+            UserCmd::Add { name, role } => {
+                if !valid_username(&name) {
+                    return Ok(fail(format!(
+                        "\"{name}\": use 1–32 of a–z, A–Z, 0–9, . _ -"
+                    )));
+                }
+                if !role_ok(&role) {
+                    return Ok(fail(format!(
+                        "unknown role \"{role}\" (admin or one from [roles])"
+                    )));
+                }
+                if db.user(&name)?.is_some() {
+                    return Ok(fail(format!("an account named \"{name}\" exists already")));
+                }
+                let pw = chestcraft::auth::password::generate();
+                db.put_user(&chestcraft::db::User {
+                    name: name.clone(),
+                    role,
+                    password_hash: chestcraft::auth::password::hash(&pw),
+                    must_change_password: true,
+                    disabled: false,
+                    created: now,
+                    last_login: None,
+                    settings: Default::default(),
+                    known_remote_ips: vec![],
+                })?;
+                println!("Created {name}. One-time password (changed at first sign-in): {pw}");
+                ExitCode::SUCCESS
+            }
+            UserCmd::Passwd { name } => match db.user(&name)? {
+                Some(mut u) => {
+                    let pw = chestcraft::auth::password::generate();
+                    u.password_hash = chestcraft::auth::password::hash(&pw);
+                    u.must_change_password = true;
+                    db.put_user(&u)?;
+                    db.delete_user_sessions(&chestcraft::db::User::key(&u.name), None)?;
+                    println!("New one-time password for {}: {pw}", u.name);
+                    ExitCode::SUCCESS
+                }
+                None => fail(format!("no account named \"{name}\"")),
+            },
+            UserCmd::Role { name, role } => match db.user(&name)? {
+                Some(_) if !role_ok(&role) => fail(format!("unknown role \"{role}\"")),
+                Some(mut u) => {
+                    u.role = role;
+                    db.put_user(&u)?;
+                    println!("{} now has role {}", u.name, u.role);
+                    ExitCode::SUCCESS
+                }
+                None => fail(format!("no account named \"{name}\"")),
+            },
+            UserCmd::Disable { name } | UserCmd::Enable { name } if db.user(&name)?.is_none() => {
+                fail(format!("no account named \"{name}\""))
+            }
+            UserCmd::Disable { name } => {
+                let mut u = db.user(&name)?.expect("checked above");
+                u.disabled = true;
+                db.put_user(&u)?;
+                let ended = db.delete_user_sessions(&chestcraft::db::User::key(&u.name), None)?;
+                println!("{} is disabled; {ended} session(s) ended", u.name);
+                ExitCode::SUCCESS
+            }
+            UserCmd::Enable { name } => {
+                let mut u = db.user(&name)?.expect("checked above");
+                u.disabled = false;
+                db.put_user(&u)?;
+                println!("{} is enabled", u.name);
+                ExitCode::SUCCESS
+            }
+            UserCmd::List => {
+                let mut users = db.users()?;
+                users.sort_by_key(|u| u.name.to_lowercase());
+                for u in users {
+                    let mut flags = Vec::new();
+                    if u.disabled {
+                        flags.push("disabled");
+                    }
+                    if u.must_change_password {
+                        flags.push("must change password");
+                    }
+                    if !role_ok(&u.role) {
+                        flags.push("role missing from config");
+                    }
+                    println!("{:<20} {:<12} {}", u.name, u.role, flags.join(", "));
+                }
+                ExitCode::SUCCESS
+            }
+        })
+    })();
+    result.unwrap_or_else(|e| fail(e.to_string()))
 }
