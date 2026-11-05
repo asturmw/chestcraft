@@ -7,9 +7,18 @@ dashboard with ZFS/SMART health and Telegram alerts. Replaces copyparty.
 
 ## Status
 
-Plan steps 1–2 done (skeleton, `docs/ui-handoff.md`, rustup stable + musl target). Step 3,
-slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions, 29
-tests. Next: slice 2, browse/download/zip.
+Plan steps 1–2 done. Step 3 (backend slices):
+- Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
+- Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
+  paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
+  zip (folder or selection), client origin through trusted proxies, security headers,
+  anonymous download limit, i18n (built-in de/en + extra files), embedded assets
+  (`build.rs`). Everyone is anonymous until slice 3.
+- Next: slice 3, auth/sessions/backoff (redb).
+
+The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
+3MF/G-code thumbnails, universal hardware discovery): see the addendum in
+`deploy/site/plan-2026-11-05.md`.
 
 ## Rules
 
@@ -28,7 +37,9 @@ tests. Next: slice 2, browse/download/zip.
   replacing a file moves the old one to the trash first (WebDAV PUT/MOVE are the exception).
 - **Install:** the binary on the server is root-owned because the root SMART collector runs
   it. It must never be writable by the service user.
-- Commit only when asked.
+- **Commits:** one per green slice (tests, clippy, C-free build) on `main`, staged by explicit
+  path. Never commit the design session's files (`design/`, its edits to `docs/`), never push
+  (Tibor, 2026-11-05).
 
 ## Layout (planned)
 

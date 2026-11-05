@@ -100,9 +100,15 @@ Austausch = "r"
 "WD-EXAMPLE0002" = "Bay 2"
 
 # ---- Alerts -----------------------------------------------------------------
+# Alerts go to every configured channel (Telegram, ntfy) plus the dashboard banner.
+# Tokens are secrets and live in the credentials file, not here.
 [alerts]
-language = "de"
+language = "de"        # language of alert messages
 digest = "Sun 10:00"   # weekly summary; also proves the alert path still works
 
 [alerts.telegram]
-chat_id = 0            # find it with `chestcraft telegram-setup`
+chat_id = 0            # 0 = off; find yours with `chestcraft telegram-setup`
+
+[alerts.ntfy]
+server = "https://ntfy.sh"
+topic = ""             # empty = off; pick a long, unguessable topic name

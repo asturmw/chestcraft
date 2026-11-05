@@ -1,0 +1,61 @@
+# English UI strings. Placeholders in braces are filled in by the server.
+# Plurals: key_one for 1, key_other otherwise.
+
+[meta]
+name = "English"
+
+[format]
+decimal = "."
+group = ","
+# Tokens: {d} day, {d2} two-digit day, {m2} two-digit month, {mon} month name, {y} year,
+# {H} hour, {M} minute.
+datetime = "{d} {mon} {y}, {H}:{M}"
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+[common]
+home = "Home"
+sign_in = "Sign in"
+sign_out = "Sign out"
+skip_to_content = "Skip to content"
+
+[landing]
+title = "Your folders"
+public_title = "Public folders"
+# {free} and {total} are sizes like "2.4 TB".
+free_of = "{free} free of {total}"
+none = "You don't have access to any folders yet. Ask the owner to give you access."
+none_public = "Nothing here is public. Sign in to see your folders."
+
+[browser]
+location = "Location"
+col_select = "Select"
+col_name = "Name"
+col_size = "Size"
+col_modified = "Modified"
+empty = "This folder is empty."
+download_folder = "Download folder as zip"
+download_selected = "Download selected as zip"
+select_item = "Select {name}"
+items_one = "{count} item"
+items_other = "{count} items"
+page_of = "Page {page} of {pages}"
+page_prev = "Previous page"
+page_next = "Next page"
+show_hidden = "Show hidden files"
+hide_hidden = "Hide hidden files"
+folder = "Folder"
+free_space = "{free} free"
+read_only = "You can view and download here, but not change anything."
+
+[error]
+back_home = "Back to the start page"
+not_found_title = "Not found"
+not_found_body = "This file or folder doesn't exist, or you don't have access to it."
+bad_request_title = "This address doesn't work"
+bad_request_body = "The address contains characters chestcraft doesn't accept. Check the link and try again."
+too_many_title = "Too many downloads at once"
+too_many_body = "Wait until one of your downloads finishes, then try again."
+server_error_title = "Something went wrong"
+server_error_body = "chestcraft couldn't finish this request. Try again in a moment, and tell the owner if it keeps happening."
+method_title = "Not supported"
+method_body = "chestcraft can't do that here."

@@ -145,17 +145,27 @@ pub struct RoleConfig {
     pub volumes: BTreeMap<String, Perms>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Lang {
-    De,
-    En,
-}
-
 #[derive(Debug, Clone)]
 pub struct AlertsConfig {
-    pub language: Lang,
+    /// Language code for alert messages ("de", "en", or an extra language file).
+    pub language: String,
     pub digest: WeeklyTime,
-    pub telegram_chat_id: Option<i64>,
+    /// Set when `alerts.telegram.chat_id` is configured; the bot token is a secret.
+    pub telegram: Option<TelegramConfig>,
+    /// Set when `alerts.ntfy.topic` is configured; an access token, if any, is a secret.
+    pub ntfy: Option<NtfyConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramConfig {
+    pub chat_id: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtfyConfig {
+    /// Server base URL, e.g. `https://ntfy.sh`.
+    pub server: String,
+    pub topic: String,
 }
 
 impl VolumeConfig {
@@ -363,14 +373,16 @@ struct RawAlerts {
     language: String,
     digest: String,
     telegram: RawTelegram,
+    ntfy: RawNtfy,
 }
 
 impl Default for RawAlerts {
     fn default() -> Self {
         RawAlerts {
-            language: "de".into(),
+            language: "en".into(),
             digest: "Sun 10:00".into(),
             telegram: RawTelegram::default(),
+            ntfy: RawNtfy::default(),
         }
     }
 }
@@ -379,6 +391,33 @@ impl Default for RawAlerts {
 #[serde(deny_unknown_fields, default)]
 struct RawTelegram {
     chat_id: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct RawNtfy {
+    server: String,
+    topic: String,
+}
+
+impl Default for RawNtfy {
+    fn default() -> Self {
+        RawNtfy {
+            server: "https://ntfy.sh".into(),
+            topic: String::new(),
+        }
+    }
+}
+
+/// "de", "en", "pt-BR" style codes.
+pub fn is_language_code(s: &str) -> bool {
+    let (lang, region) = match s.split_once('-') {
+        Some((l, r)) => (l, Some(r)),
+        None => (s, None),
+    };
+    (2..=3).contains(&lang.len())
+        && lang.chars().all(|c| c.is_ascii_lowercase())
+        && region.is_none_or(|r| r.len() == 2 && r.chars().all(|c| c.is_ascii_uppercase()))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -483,17 +522,46 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         }
     }
 
+    let language = raw.alerts.language.trim().to_string();
+    if !is_language_code(&language) {
+        errs.push(format!(
+            "alerts.language: \"{language}\" is not a language code like \"de\" or \"en\""
+        ));
+    }
+    let ntfy_topic = raw.alerts.ntfy.topic.trim().to_string();
+    let ntfy = if ntfy_topic.is_empty() {
+        None
+    } else {
+        if ntfy_topic.len() > 64
+            || !ntfy_topic
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            errs.push(format!(
+                "alerts.ntfy.topic: \"{ntfy_topic}\" may only use letters, digits, - and _ (max 64)"
+            ));
+        }
+        let server = raw
+            .alerts
+            .ntfy
+            .server
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        match server.parse::<http::Uri>() {
+            Ok(u)
+                if matches!(u.scheme_str(), Some("http" | "https")) && u.authority().is_some() => {}
+            _ => errs.push(format!(
+                "alerts.ntfy.server: \"{server}\" is not an http(s) URL"
+            )),
+        }
+        Some(NtfyConfig {
+            server,
+            topic: ntfy_topic,
+        })
+    };
     let alerts = AlertsConfig {
-        language: match raw.alerts.language.as_str() {
-            "de" => Lang::De,
-            "en" => Lang::En,
-            other => {
-                errs.push(format!(
-                    "alerts.language: \"{other}\" is not \"de\" or \"en\""
-                ));
-                Lang::De
-            }
-        },
+        language,
         digest: WeeklyTime::parse(&raw.alerts.digest)
             .map_err(|e| errs.push(format!("alerts.digest: {e}")))
             .unwrap_or(WeeklyTime {
@@ -503,7 +571,10 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
                     minute: 0,
                 },
             }),
-        telegram_chat_id: (raw.alerts.telegram.chat_id != 0).then_some(raw.alerts.telegram.chat_id),
+        telegram: (raw.alerts.telegram.chat_id != 0).then_some(TelegramConfig {
+            chat_id: raw.alerts.telegram.chat_id,
+        }),
+        ntfy,
     };
 
     Some(Config {
@@ -943,7 +1014,8 @@ mod tests {
         assert_eq!(cfg.trash.purge_at, TimeOfDay { hour: 4, minute: 0 });
         assert_eq!(cfg.uploads.chunk_mib, 32);
         assert_eq!(cfg.alerts.digest.weekday, Weekday::Sunday);
-        assert_eq!(cfg.alerts.telegram_chat_id, None);
+        assert!(cfg.alerts.telegram.is_none() && cfg.alerts.ntfy.is_none());
+        assert_eq!(cfg.alerts.language, "en");
         assert_eq!(cfg.paths.state_dir, PathBuf::from("/var/lib/chestcraft"));
     }
 
@@ -1087,9 +1159,17 @@ mod tests {
         );
         assert!(WeeklyTime::parse("Someday 10:00").is_err());
         let e = errors_of(
-            "[server]\npublic_url = \"http://x.org\"\n[uploads]\nchunk_mib = 100\n[alerts]\nlanguage = \"fr\"\n",
+            "[server]\npublic_url = \"http://x.org\"\n[uploads]\nchunk_mib = 100\n[alerts]\nlanguage = \"French\"\n[alerts.ntfy]\ntopic = \"bad topic!\"\n",
         );
         assert!(e.iter().any(|m| m.contains("chunk_mib")), "{e:?}");
         assert!(e.iter().any(|m| m.contains("language")), "{e:?}");
+        assert!(e.iter().any(|m| m.contains("ntfy.topic")), "{e:?}");
+        let cfg = Config::from_toml_str(
+            "[server]\npublic_url = \"http://x.org\"\n[alerts]\nlanguage = \"pt-BR\"\n[alerts.ntfy]\ntopic = \"nas-alerts\"\n[alerts.telegram]\nchat_id = -100123\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.alerts.ntfy.as_ref().unwrap().server, "https://ntfy.sh");
+        assert_eq!(cfg.alerts.telegram.as_ref().unwrap().chat_id, -100123);
+        assert!(is_language_code("de") && !is_language_code("DE") && !is_language_code("pt-br"));
     }
 }
