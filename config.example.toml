@@ -1,0 +1,108 @@
+# chestcraft configuration (example)
+# DRAFT: the schema is finalized while the backend is built.
+#
+# Install as /etc/chestcraft/config.toml (owned by root, readable by the service user).
+# Validate with `chestcraft check`, apply with `systemctl reload chestcraft`.
+# An invalid file is rejected and the running config stays in place.
+# Secrets (Telegram bot token, cookie key) are not in this file: they come from a
+# root-only file through systemd LoadCredential.
+
+[server]
+listen = "0.0.0.0:3923"
+public_url = "https://files.example.org"   # used in share links and messages
+# Proxies whose forwarding headers are trusted (X-Forwarded-For, CF-Connecting-IP).
+trusted_proxies = ["192.0.2.10", "192.0.2.11"]
+# Requests that arrive through these proxies, or carry Cloudflare headers, count as remote.
+remote_proxies = ["192.0.2.10"]
+# Other requests from these networks count as local (LAN, VPN).
+local_networks = ["192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "::1/128"]
+timezone = "Europe/Berlin"
+
+[paths]
+state_dir = "/var/lib/chestcraft"     # database; keep it off the pool being monitored
+cache_dir = "/var/cache/chestcraft"   # thumbnails
+backup_dir = "/srv/chestcraft"        # nightly copy of the database + this file
+
+[trash]
+days = 30            # default for all volumes; 0 = never purge
+purge_at = "04:00"
+
+[uploads]
+chunk_mib = 32
+parallel = 3
+abandoned_days = 7   # unfinished .part files are removed after this many days
+
+[thumbnails]
+cache_gib = 5
+max_ffmpeg = 2
+
+[sessions]
+user_days = 30            # sliding
+remote_admin_hours = 12
+
+[limits]
+anon_downloads_per_ip = 4
+
+# ---- Volumes ----------------------------------------------------------------
+# The table key is the URL name: [volumes.Dokumente] -> https://files.example.org/Dokumente/
+# Flags:
+#   public               anyone may read without an account
+#   remote               reachable from the internet (default true)
+#   read_only            nobody may change anything in the volume
+#   read_only_paths      areas nobody may change, relative to the volume
+#   trash_days           overrides [trash] days
+#   stage_folder_uploads folder uploads appear only once complete
+#   note.de / note.en    shown as a banner in the folder view
+
+[volumes.Dokumente]
+path = "/srv/dokumente"
+
+[volumes.Austausch]
+path = "/srv/austausch"
+public = true
+
+[volumes.Fotos]
+path = "/srv/fotos"
+read_only_paths = ["immich"]   # managed by another app
+
+[volumes.Backups]
+path = "/srv/backups"
+remote = false
+read_only_paths = ["pve"]
+
+[volumes.Eingang]
+path = "/srv/eingang"
+stage_folder_uploads = true
+trash_days = 14
+note.de = "Dateien hier werden alle 15 Minuten automatisch einsortiert."
+note.en = "Files here are sorted automatically every 15 minutes."
+
+# ---- Roles ------------------------------------------------------------------
+# Per-volume permissions: r = list/download/preview, w = upload/new folder,
+# m = rename/move, d = delete (to trash), s = create share links (never beyond own rights).
+# Every non-empty set includes r.
+# The built-in role "admin" has every permission on every volume, plus the dashboard,
+# user management, all shares and the audit log. Each user has exactly one role,
+# assigned in the admin UI.
+
+[roles.familie]
+Dokumente = "rwmds"
+Fotos = "rwmds"
+Austausch = "rwmd"
+
+[roles.gast]
+Austausch = "r"
+
+# ---- Disks ------------------------------------------------------------------
+# Bay labels by serial number, so alerts name the disk to pull.
+[disks]
+"WD-EXAMPLE0001" = "Bay 1 (left)"
+"WD-EXAMPLE0002" = "Bay 2"
+
+# ---- Alerts -----------------------------------------------------------------
+[alerts]
+language = "de"
+digest = "Sun 10:00"   # weekly summary; also proves the alert path still works
+
+[alerts.telegram]
+chat_id = 0            # find it with `chestcraft telegram-setup`
