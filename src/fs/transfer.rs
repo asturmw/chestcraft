@@ -633,8 +633,33 @@ fn holds_mount(parent: &OwnedFd, name: &str, st: &Stat) -> Result<bool, OpError>
 /// Move `src` of `src_vol` to `name` in the existing folder `dst_parent` of `dst_vol`.
 /// Never moves a volume root, read-only areas, other volumes or mount points. A move to
 /// another filesystem copies everything (dotfiles too) and sends the source to the trash.
+/// Shares of the entry (or of anything inside it) move along.
 #[allow(clippy::too_many_arguments)]
 pub fn move_entry(
+    db: &Arc<Db>,
+    src_vol: &VolumeRoot,
+    src: &RelPath,
+    dst_vol: &VolumeRoot,
+    dst_parent: &RelPath,
+    name: &str,
+    on_clash: OnClash,
+    actor: &str,
+    now: i64,
+) -> Result<Placed, OpError> {
+    let placed = move_inner(
+        db, src_vol, src, dst_vol, dst_parent, name, on_clash, actor, now,
+    )?;
+    if let Placed::Done { name, .. } = &placed {
+        let dst = dst_parent.join(name)?;
+        if let Err(e) = crate::shares::follow_move(db, src_vol.name(), src, dst_vol.name(), &dst) {
+            tracing::error!(volume = %src_vol.name(), path = %src, "shares didn't follow a move: {e}");
+        }
+    }
+    Ok(placed)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn move_inner(
     db: &Arc<Db>,
     src_vol: &VolumeRoot,
     src: &RelPath,

@@ -19,6 +19,10 @@ pub struct Ctx<'a> {
     /// CSRF token of the session, for forms.
     pub csrf: Option<&'a str>,
     pub tz: &'a jiff::tz::TimeZone,
+    /// Scripts the page loads (asset paths).
+    pub scripts: Vec<&'static str>,
+    /// This page's path: pages for visitors without an account get a language switch.
+    pub lang_switch: Option<String>,
 }
 
 impl<'a> Ctx<'a> {
@@ -65,8 +69,8 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                 @if let Some(href) = assets::skin_css(ctx.skin) {
                     link rel="stylesheet" href=(href);
                 }
-                @if ctx.csrf.is_some() {
-                    script src=(assets::url("upload.js")) defer {}
+                @for js in &ctx.scripts {
+                    script src=(assets::url(js)) defer {}
                 }
             }
             body {
@@ -82,6 +86,18 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                         }
                     } @else if !ctx.signed_in {
                         a class="app-header__sign-in" href="/.cc/login" { (ctx.t("common.sign_in")) }
+                    }
+                    @if let Some(here) = &ctx.lang_switch {
+                        nav class="lang-switch" aria-label=(ctx.t("common.language")) {
+                            @for (lang, code, name) in ctx.i18n.languages() {
+                                @if lang == ctx.lang {
+                                    span class="lang-switch__item" aria-current="true" lang=(code) { (name) }
+                                } @else {
+                                    a class="lang-switch__item" lang=(code) hreflang=(code)
+                                        href=(format!("/.cc/lang?set={code}&next={}", super::files::enc(here))) { (name) }
+                                }
+                            }
+                        }
                     }
                 }
                 main id="main" class="app-main" { (main) }
@@ -145,6 +161,33 @@ pub struct Row {
     pub is_dir: bool,
     pub size: String,
     pub modified: String,
+    /// The item has a share that is not revoked or expired.
+    pub shared: bool,
+    /// Where to create a share of it.
+    pub share_href: Option<String>,
+}
+
+/// Top of a share's pages: what is shared, by whom, until when.
+pub struct ShareHead {
+    pub name: String,
+    pub by: String,
+    pub note: Option<String>,
+    pub until: Option<String>,
+}
+
+pub fn share_head(ctx: &Ctx, h: &ShareHead) -> Markup {
+    html! {
+        header class="share-head" {
+            h1 class="share-head__name" { (h.name) }
+            p class="share-head__by" { (ctx.tf("share.shared_by", &[("name", &h.by)])) }
+            @if let Some(until) = &h.until {
+                p class="share-head__until" { (ctx.tf("share.available_until", &[("date", until)])) }
+            }
+            @if let Some(note) = &h.note {
+                p class="share-head__note" { (note) }
+            }
+        }
+    }
 }
 
 pub struct ListingView {
@@ -167,28 +210,44 @@ pub struct ListingView {
     pub showing_hidden: bool,
     /// Where the folder's forms post to.
     pub post_href: String,
+    /// CSRF token for the folder's change forms (a session's or a public uploader's).
+    pub form_csrf: Option<String>,
     pub can_write: bool,
     pub can_delete: bool,
     /// Present when the visitor may upload here (needs JS).
     pub upload: Option<UploadUi>,
     /// Days until deleted items are purged (0 = kept).
     pub trash_days: u32,
+    /// Set on share pages.
+    pub share: Option<ShareHead>,
+    /// Create a share of this folder.
+    pub share_here: Option<String>,
+    /// Why nothing here can be shared.
+    pub share_blocked: Option<String>,
+    /// Anonymous visitors: public uploads are open, enter the password here.
+    pub public_upload_href: Option<String>,
 }
 
 /// What the upload script needs to know about the folder.
 pub struct UploadUi {
     pub volume: String,
-    /// Folder path relative to the volume.
+    /// Folder path relative to the volume (or the share).
     pub dir: String,
     pub parallel: u32,
+    pub csrf: String,
+    /// Base of the upload API: `/.cc`, or `/s/<id>/.cc` for share visitors.
+    pub api: String,
+    /// Shown when uploads have a size limit.
+    pub limit: Option<String>,
 }
 
 /// The upload tray and the name-clash dialog. `upload.js` fills them in; the strings it
 /// shows come from `data-t-*` attributes, so all copy stays in the catalogs.
-fn upload_ui(ctx: &Ctx, u: &UploadUi, csrf: &str) -> Markup {
+pub fn upload_ui(ctx: &Ctx, u: &UploadUi) -> Markup {
     html! {
         div class="upload" data-js="upload" hidden
-            data-vol=(u.volume) data-dir=(u.dir) data-csrf=(csrf) data-parallel=(u.parallel)
+            data-vol=(u.volume) data-dir=(u.dir) data-csrf=(u.csrf) data-parallel=(u.parallel)
+            data-api=(u.api)
             data-t-queued=(ctx.t("upload.state_queued"))
             data-t-uploading=(ctx.t("upload.state_uploading"))
             data-t-done=(ctx.t("upload.state_done"))
@@ -206,6 +265,9 @@ fn upload_ui(ctx: &Ctx, u: &UploadUi, csrf: &str) -> Markup {
                 input class="upload__input" type="file" webkitdirectory multiple data-js="upload-folder";
             }
             p class="upload__hint" { (ctx.t("browser.drop_hint")) }
+            @if let Some(limit) = &u.limit {
+                p class="upload__limit" { (limit) }
+            }
         }
         section class="upload-tray" data-js="upload-tray" data-state="idle" hidden
             aria-labelledby="upload-tray-title" {
@@ -237,6 +299,9 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
         ctx,
         &v.title,
         html! {
+            @if let Some(h) = &v.share {
+                (share_head(ctx, h))
+            }
             nav class="breadcrumb" aria-label=(ctx.t("browser.location")) {
                 ol class="breadcrumb__list" {
                     @for (i, c) in v.crumbs.iter().enumerate() {
@@ -260,7 +325,7 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                 @if let Some(free) = &v.free {
                     span class="browser__free" { (free) }
                 }
-                @if let (true, Some(csrf)) = (v.can_write, ctx.csrf) {
+                @if let (true, Some(csrf)) = (v.can_write, &v.form_csrf) {
                     form class="new-folder" method="post" action=(v.post_href) {
                         input type="hidden" name="csrf" value=(csrf);
                         input type="hidden" name="op" value="mkdir";
@@ -277,15 +342,24 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                 @if let Some((label, href)) = &v.hidden_toggle {
                     a class="browser__hidden-toggle" href=(href) { (label) }
                 }
+                @if let Some(href) = &v.share_here {
+                    a class="browser__share" href=(href) { (ctx.t("browser.share_folder")) }
+                }
+                @if let Some(href) = &v.public_upload_href {
+                    a class="browser__public-upload" href=(href) { (ctx.t("browser.public_upload")) }
+                }
             }
-            @if let (Some(u), Some(csrf)) = (&v.upload, ctx.csrf) {
-                (upload_ui(ctx, u, csrf))
+            @if let Some(reason) = &v.share_blocked {
+                p class="banner" data-state="share-unavailable" { (reason) }
+            }
+            @if let Some(u) = &v.upload {
+                (upload_ui(ctx, u))
             }
             @if v.rows.is_empty() {
                 p class="browser__empty" { (ctx.t("browser.empty")) }
             } @else {
                 form class="browser" method="post" action=(v.post_href) {
-                    @if let Some(csrf) = ctx.csrf {
+                    @if let Some(csrf) = &v.form_csrf {
                         input type="hidden" name="csrf" value=(csrf);
                     }
                     @if v.showing_hidden {
@@ -309,9 +383,21 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                                         input type="checkbox" name="n" value=(r.name)
                                             aria-label=(ctx.tf("browser.select_item", &[("name", &r.name)]));
                                     }
-                                    th scope="row" class="browser__name" { a href=(r.href) { (r.name) } }
+                                    th scope="row" class="browser__name" {
+                                        a href=(r.href) { (r.name) }
+                                        @if r.shared {
+                                            " " span class="badge" data-state="shared" { (ctx.t("browser.shared")) }
+                                        }
+                                    }
                                     td class="browser__size" { (r.size) }
                                     td class="browser__modified" { (r.modified) }
+                                    @if let Some(href) = &r.share_href {
+                                        td class="browser__row-actions" {
+                                            a href=(href) aria-label=(ctx.tf("browser.share_item", &[("name", &r.name)])) {
+                                                (ctx.t("browser.share"))
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

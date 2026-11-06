@@ -15,6 +15,8 @@ pub struct ClientInfo {
     pub ip: IpAddr,
     pub origin: Origin,
     pub https: bool,
+    /// Two-letter country code from Cloudflare (`CF-IPCountry`), behind a trusted proxy.
+    pub country: Option<[u8; 2]>,
 }
 
 impl ClientInfo {
@@ -39,6 +41,15 @@ impl ClientInfo {
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"));
         }
+        let country = via_proxy
+            .then(|| headers.get("cf-ipcountry")?.to_str().ok())
+            .flatten()
+            .and_then(|v| match v.trim().as_bytes() {
+                [a, b] if a.is_ascii_alphabetic() && b.is_ascii_alphabetic() => {
+                    Some([a.to_ascii_uppercase(), b.to_ascii_uppercase()])
+                }
+                _ => None,
+            });
         let local = cfg.local_networks.iter().any(|n| n.contains(&ip));
         let remote = cfg.remote_proxies.contains(&peer) || cloudflare || !local;
         ClientInfo {
@@ -49,7 +60,15 @@ impl ClientInfo {
                 Origin::Local
             },
             https,
+            country,
         }
+    }
+
+    /// The country code as text ("" when unknown).
+    pub fn country_code(&self) -> String {
+        self.country
+            .map(|c| String::from_utf8_lossy(&c).into_owned())
+            .unwrap_or_default()
     }
 }
 
@@ -122,6 +141,7 @@ mod tests {
             ip("192.168.168.136"),
             &hdrs(&[
                 ("cf-connecting-ip", "203.0.113.7"),
+                ("cf-ipcountry", "de"),
                 ("x-forwarded-proto", "https"),
             ]),
         );
@@ -130,9 +150,11 @@ mod tests {
             ClientInfo {
                 ip: ip("203.0.113.7"),
                 origin: Origin::Remote,
-                https: true
+                https: true,
+                country: Some(*b"DE"),
             }
         );
+        assert_eq!(c.country_code(), "DE");
     }
 
     #[test]
@@ -150,7 +172,8 @@ mod tests {
             ClientInfo {
                 ip: ip("192.168.168.115"),
                 origin: Origin::Local,
-                https: true
+                https: true,
+                country: None,
             }
         );
     }

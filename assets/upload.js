@@ -12,6 +12,8 @@
   const q = (sel) => dialog.querySelector(`[data-js="${sel}"]`);
   const ds = root.dataset;
   const vol = ds.vol;
+  // /.cc, or /s/<id>/.cc for share visitors (dir is then relative to the share).
+  const base = ds.api || '/.cc';
   const dir = ds.dir;
   const csrf = ds.csrf;
   const parallel = Math.max(1, parseInt(ds.parallel, 10) || 3);
@@ -63,7 +65,7 @@
     return { status: res.status, ok: res.ok, data };
   }
 
-  const uploadUrl = (item, tail) => `/.cc/upload/${encodeURIComponent(item.id)}${tail || ''}`;
+  const uploadUrl = (item, tail) => `${base}/upload/${encodeURIComponent(item.id)}${tail || ''}`;
 
   function updateSummary() {
     const pct = totalBytes ? Math.floor((sentBytes / totalBytes) * 100) : 100;
@@ -153,7 +155,7 @@
 
   async function finishBatch(batch) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const r = await api('POST', `/.cc/batch/${encodeURIComponent(batch.id)}/done`);
+      const r = await api('POST', `${base}/batch/${encodeURIComponent(batch.id)}/done`);
       if (r.ok || (r.status >= 400 && r.status < 500 && r.status !== 409)) return;
       await sleep(1000 * (attempt + 1));
     }
@@ -214,7 +216,7 @@
         vol, dir, name: item.name, size: item.file.size, mtime: item.file.lastModified, clash,
       };
       if (item.batch) body.batch = item.batch.id;
-      const r = await api('POST', '/.cc/upload', body);
+      const r = await api('POST', `${base}/upload`, body);
       if (r.status === 201) {
         status = r.data;
         store.set(item.key, status.id);
@@ -367,7 +369,7 @@
     tray.hidden = false;
     let batch = null;
     if (entries.some((e) => e.name.includes('/'))) {
-      const r = await api('POST', '/.cc/batch', { vol, dir });
+      const r = await api('POST', `${base}/batch`, { vol, dir });
       if (r.ok && r.data) batch = { id: r.data.id, open: entries.length };
     }
     for (const e of entries) queue.push(addItem(e.file, e.name, batch));

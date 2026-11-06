@@ -99,6 +99,16 @@ Austausch = "rwmd"
 [roles.gast]
 Austausch = "r"
 
+# ---- Shares -------------------------------------------------------------------
+# Share links (/s/<id>) work only on volumes with remote = true, never grant more than
+# their creator has, and always have a password: four random words in the creator's
+# language (built in: English, German) or one the creator picks (8+ characters).
+# Public uploads into public volumes are opened by the admin on the Volumes page.
+#
+# More passphrase languages: one word per line (dice-numbered lists work as they are).
+# [shares.wordlists]
+# fr = "/etc/chestcraft/words-fr.txt"
+
 # ---- Disks ------------------------------------------------------------------
 # Bay labels by serial number, so alerts name the disk to pull.
 [disks]

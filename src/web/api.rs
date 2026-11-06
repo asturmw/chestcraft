@@ -13,13 +13,18 @@
 //! POST   /.cc/batch/{id}/done        200 {moved: [[staged name, final name], …]}
 //! ```
 //!
-//! Every call needs a session; changes also need the `X-CSRF-Token` header. Errors are
+//! Every call needs a session (an account's, or a public uploader's); changes also need the
+//! `X-CSRF-Token` header. Share visitors use the same calls under `/s/<id>/.cc/…`, with
+//! `dir` relative to the share (see `share.rs`). Visitors without an account never
+//! overwrite: a taken name always becomes `name (1)`, and uploads above a share's or public
+//! upload's size limit are refused (413 `too_large`). Errors are
 //! `{error: <code>, message: <text in the user's language>}`.
 
-use super::auth::{audit, csrf_ok, now};
+use super::auth::{audit, csrf_ok, now, same_origin, token_eq};
+use super::guest::{self, PublicGuest, ShareGuest};
 use super::views::Ctx;
-use super::{ClientInfo, Current, CurrentUser, Shared, page_ctx};
-use crate::auth::perm::{Perms, Principal, path_perms};
+use super::{AppState, ClientInfo, Current, CurrentUser, Shared, page_ctx};
+use crate::auth::perm::{Origin, Perms, Principal, path_perms, public_writer_perms};
 use crate::fs::ops::{Existing, OpError};
 use crate::fs::path::{RelPath, validate_new_name};
 use crate::fs::upload::{Clash, Created, Finished, NewUpload};
@@ -81,7 +86,7 @@ pub fn message(ctx: &Ctx, err: &OpError, name: &str) -> (StatusCode, &'static st
     (status, code, ctx.tf(key, &[("name", name)]))
 }
 
-fn json_error(status: StatusCode, code: &str, message: &str) -> Response {
+pub fn json_error(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "error": code, "message": message }))).into_response()
 }
 
@@ -90,7 +95,7 @@ fn op_error(ctx: &Ctx, err: &OpError, name: &str) -> Response {
     json_error(status, code, &msg)
 }
 
-fn invalid(ctx: &Ctx) -> Response {
+pub fn invalid(ctx: &Ctx) -> Response {
     json_error(StatusCode::BAD_REQUEST, "invalid", ctx.t("ops.invalid"))
 }
 
@@ -106,33 +111,127 @@ fn internal(ctx: &Ctx) -> Response {
     )
 }
 
-/// The signed-in user behind an API call; changes also need Origin + CSRF.
-fn api_user(
+/// Who is uploading.
+pub enum Uploader {
+    User {
+        cu: Arc<CurrentUser>,
+        principal: Principal,
+    },
+    Public(PublicGuest),
+    Share(Box<ShareGuest>),
+}
+
+impl Uploader {
+    /// Owner of uploads and batches: only the same session may continue them.
+    pub fn owner(&self) -> String {
+        match self {
+            Uploader::User { cu, .. } => format!("user:{}", cu.key),
+            Uploader::Public(g) => format!("public:{}", &g.hash[..16]),
+            Uploader::Share(g) => format!("share:{}:{}", g.share.id, &g.hash[..16]),
+        }
+    }
+
+    /// Actor in the audit log.
+    pub fn actor(&self) -> String {
+        match self {
+            Uploader::User { cu, .. } => format!("user:{}", cu.key),
+            Uploader::Public(g) => format!("public:{}", g.volume),
+            Uploader::Share(g) => format!("share:{}", g.share.id),
+        }
+    }
+
+    fn csrf(&self) -> &str {
+        match self {
+            Uploader::User { cu, .. } => &cu.csrf,
+            Uploader::Public(g) => &g.csrf,
+            Uploader::Share(g) => &g.session.csrf,
+        }
+    }
+
+    /// What this uploader may do at `rel` in `vol`.
+    pub fn perms(&self, st: &AppState, origin: Origin, vol: &str, rel: &RelPath) -> Perms {
+        match self {
+            Uploader::User { principal, .. } => path_perms(&st.cfg, principal, origin, vol, rel),
+            Uploader::Public(g) if g.volume == vol => {
+                public_writer_perms(&st.cfg, origin, vol, rel)
+            }
+            Uploader::Public(_) => path_perms(&st.cfg, &Principal::Anonymous, origin, vol, rel),
+            Uploader::Share(g) => {
+                let root = RelPath::parse(&g.share.path).unwrap_or_default();
+                match rel.strip_prefix(&root) {
+                    Some(sub) if g.share.volume == vol => {
+                        crate::shares::visitor_perms(&st.cfg, &g.owner, &g.share, &sub)
+                    }
+                    _ => Perms::empty(),
+                }
+            }
+        }
+    }
+
+    /// Visitors without an account: never overwrite, never replace.
+    fn is_guest(&self) -> bool {
+        !matches!(self, Uploader::User { .. })
+    }
+
+    fn max_file(&self) -> Option<u64> {
+        match self {
+            Uploader::User { .. } => None,
+            Uploader::Public(g) => g.max_file,
+            Uploader::Share(g) => g.share.max_file,
+        }
+    }
+
+    /// Origin and CSRF token check for a change.
+    pub fn change_ok(&self, headers: &HeaderMap, st: &AppState) -> bool {
+        match self {
+            Uploader::User { cu, .. } => csrf_ok(headers, st, cu, ""),
+            _ => {
+                let token = headers
+                    .get("x-csrf-token")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default();
+                same_origin(headers, &st.cfg.server.public_url) && token_eq(token, self.csrf())
+            }
+        }
+    }
+}
+
+fn signed_out(ctx: &Ctx) -> Response {
+    json_error(
+        StatusCode::UNAUTHORIZED,
+        "signed_out",
+        ctx.t("ops.signed_out"),
+    )
+}
+
+pub fn csrf_refused(ctx: &Ctx) -> Response {
+    json_error(StatusCode::FORBIDDEN, "csrf", ctx.t("error.forbidden_body"))
+}
+
+/// The uploader behind a call to `/.cc/upload…`: the signed-in user, else a public
+/// uploader. Changes also need Origin + CSRF.
+async fn uploader(
     st: &Shared,
-    ctx: &Ctx,
+    ctx: &Ctx<'_>,
+    principal: &Principal,
     current: &Current,
     headers: &HeaderMap,
     change: bool,
-) -> Result<Arc<CurrentUser>, Box<Response>> {
-    let Some(cu) = current.clone() else {
-        return Err(Box::new(json_error(
-            StatusCode::UNAUTHORIZED,
-            "signed_out",
-            ctx.t("ops.signed_out"),
-        )));
+) -> Result<Uploader, Box<Response>> {
+    let up = match current.clone() {
+        Some(cu) => Uploader::User {
+            cu,
+            principal: principal.clone(),
+        },
+        None => match guest::public_guest(st, headers).await {
+            Some(g) => Uploader::Public(g),
+            None => return Err(Box::new(signed_out(ctx))),
+        },
     };
-    if change && !csrf_ok(headers, st, &cu, "") {
-        return Err(Box::new(json_error(
-            StatusCode::FORBIDDEN,
-            "csrf",
-            ctx.t("error.forbidden_body"),
-        )));
+    if change && !up.change_ok(headers, st) {
+        return Err(Box::new(csrf_refused(ctx)));
     }
-    Ok(cu)
-}
-
-fn actor(cu: &CurrentUser) -> String {
-    format!("user:{}", cu.key)
+    Ok(up)
 }
 
 /// A name the user picked for something new, possibly with folders (`Scan/sub/a.pdf`).
@@ -171,18 +270,20 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 
 #[derive(Deserialize)]
 pub struct NewReq {
-    vol: String,
+    /// Ignored for share visitors.
     #[serde(default)]
-    dir: String,
-    name: String,
-    size: u64,
+    pub vol: String,
+    #[serde(default)]
+    pub dir: String,
+    pub name: String,
+    pub size: u64,
     /// Unix milliseconds.
     #[serde(default)]
-    mtime: Option<i64>,
+    pub mtime: Option<i64>,
     #[serde(default)]
-    clash: Option<String>,
+    pub clash: Option<String>,
     #[serde(default)]
-    batch: Option<String>,
+    pub batch: Option<String>,
 }
 
 /// Latest modification time accepted (end of year 9999), in milliseconds.
@@ -197,38 +298,70 @@ pub async fn create(
     body: Bytes,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let cu = match api_user(&st, &ctx, &current, &headers, true) {
-        Ok(cu) => cu,
+    let up = match uploader(&st, &ctx, &principal, &current, &headers, true).await {
+        Ok(up) => up,
         Err(r) => return *r,
     };
     let Ok(req) = serde_json::from_slice::<NewReq>(&body) else {
         return invalid(&ctx);
     };
-    let Some(vol) = st.volumes.get(&req.vol).cloned() else {
-        return op_error(&ctx, &OpError::NotFound, &req.vol);
-    };
-    let (Ok(dir), Some(name)) = (RelPath::parse(&req.dir), new_rel_name(&req.name)) else {
+    let Ok(dir) = RelPath::parse(&req.dir) else {
         return invalid(&ctx);
+    };
+    let vol = req.vol.clone();
+    create_in(&st, &ctx, &client, &up, &vol, dir, req).await
+}
+
+/// Start an upload into `dir` of `vol` (already resolved from the request).
+pub async fn create_in(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    client: &ClientInfo,
+    up: &Uploader,
+    vol_name: &str,
+    dir: RelPath,
+    req: NewReq,
+) -> Response {
+    let Some(vol) = st.volumes.get(vol_name).cloned() else {
+        return op_error(ctx, &OpError::NotFound, vol_name);
+    };
+    let Some(name) = new_rel_name(&req.name) else {
+        return invalid(ctx);
     };
     let Ok(target) = dir.join_path(&name) else {
-        return invalid(&ctx);
+        return invalid(ctx);
     };
-    let Some(clash) = Clash::parse(req.clash.as_deref().unwrap_or("ask")) else {
-        return invalid(&ctx);
+    let Some(mut clash) = Clash::parse(req.clash.as_deref().unwrap_or("ask")) else {
+        return invalid(ctx);
     };
-    let dir_perms = path_perms(&st.cfg, &principal, client.origin, vol.name(), &dir);
-    if !dir_perms.contains(Perms::READ) {
-        return op_error(&ctx, &OpError::NotFound, &req.dir);
+    if up.is_guest() {
+        clash = Clash::Rename;
     }
-    let perms = path_perms(&st.cfg, &principal, client.origin, vol.name(), &target);
+    let dir_perms = up.perms(st, client.origin, vol.name(), &dir);
+    if !dir_perms.intersects(Perms::READ | Perms::WRITE) {
+        return op_error(ctx, &OpError::NotFound, &req.dir);
+    }
+    let perms = up.perms(st, client.origin, vol.name(), &target);
     if !perms.contains(Perms::WRITE) {
-        return forbidden(&ctx);
+        return forbidden(ctx);
     }
-    let can_replace = perms.contains(Perms::DELETE);
+    let can_replace = perms.contains(Perms::DELETE) && !up.is_guest();
     if clash == Clash::Replace && !can_replace {
-        return forbidden(&ctx);
+        return forbidden(ctx);
     }
-    let owner = actor(&cu);
+    if let Some(max) = up.max_file()
+        && req.size > max
+    {
+        return json_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_large",
+            &ctx.tf(
+                "ops.too_large",
+                &[("name", name.as_str()), ("size", &ctx.size(max))],
+            ),
+        );
+    }
+    let owner = up.owner();
     let size = req.size;
     let mtime_ms = req
         .mtime
@@ -269,9 +402,9 @@ pub async fn create(
     match result {
         Some(Ok(Created::Started(s))) => (StatusCode::CREATED, Json(s)).into_response(),
         Some(Ok(Created::Skipped)) => Json(json!({ "skipped": true })).into_response(),
-        Some(Ok(Created::Clash(ex))) => clash_json(&ctx, &ex, Some(size), can_replace),
-        Some(Err(e)) => op_error(&ctx, &e, name.as_str()),
-        None => internal(&ctx),
+        Some(Ok(Created::Clash(ex))) => clash_json(ctx, &ex, Some(size), can_replace),
+        Some(Err(e)) => op_error(ctx, &e, name.as_str()),
+        None => internal(ctx),
     }
 }
 
@@ -283,16 +416,19 @@ pub async fn status(
     Path(id): Path<String>,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let cu = match api_user(&st, &ctx, &current, &headers, false) {
-        Ok(cu) => cu,
-        Err(r) => return *r,
-    };
-    let owner = actor(&cu);
+    match uploader(&st, &ctx, &principal, &current, &headers, false).await {
+        Ok(up) => status_in(&st, &ctx, &up, id).await,
+        Err(r) => *r,
+    }
+}
+
+pub async fn status_in(st: &Shared, ctx: &Ctx<'_>, up: &Uploader, id: String) -> Response {
+    let owner = up.owner();
     let st2 = st.clone();
     match blocking(move || st2.uploads.status(&st2.volumes, &id, &owner)).await {
         Some(Ok(s)) => Json(s).into_response(),
-        Some(Err(e)) => op_error(&ctx, &e, ""),
-        None => internal(&ctx),
+        Some(Err(e)) => op_error(ctx, &e, ""),
+        None => internal(ctx),
     }
 }
 
@@ -305,23 +441,34 @@ pub async fn chunk(
     body: Body,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let cu = match api_user(&st, &ctx, &current, &headers, true) {
-        Ok(cu) => cu,
-        Err(r) => return *r,
-    };
+    match uploader(&st, &ctx, &principal, &current, &headers, true).await {
+        Ok(up) => chunk_in(&st, &ctx, &up, &headers, id, n, body).await,
+        Err(r) => *r,
+    }
+}
+
+pub async fn chunk_in(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    up: &Uploader,
+    headers: &HeaderMap,
+    id: String,
+    n: u32,
+    body: Body,
+) -> Response {
     let len = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok());
-    let owner = actor(&cu);
+    let owner = up.owner();
     let ticket = {
         let st = st.clone();
         blocking(move || st.uploads.begin_chunk(&st.volumes, &id, &owner, n, len)).await
     };
     let ticket = match ticket {
         Some(Ok(t)) => Arc::new(t),
-        Some(Err(e)) => return op_error(&ctx, &e, ""),
-        None => return internal(&ctx),
+        Some(Err(e)) => return op_error(ctx, &e, ""),
+        None => return internal(ctx),
     };
 
     let mut stream = body.into_data_stream();
@@ -332,13 +479,13 @@ pub async fn chunk(
         let flush = match &next {
             Some(Ok(data)) => {
                 if written + (buf.len() + data.len()) as u64 > ticket.len {
-                    return invalid(&ctx);
+                    return invalid(ctx);
                 }
                 buf.extend_from_slice(data);
                 buf.len() >= WRITE_BUF
             }
             // The client went away or sent garbage; the ticket's drop releases the chunk.
-            Some(Err(_)) => return invalid(&ctx),
+            Some(Err(_)) => return invalid(ctx),
             None => !buf.is_empty(),
         };
         if flush {
@@ -349,8 +496,8 @@ pub async fn chunk(
                     data.clear();
                     buf = data;
                 }
-                Some(Err(e)) => return op_error(&ctx, &OpError::from(e), ""),
-                None => return internal(&ctx),
+                Some(Err(e)) => return op_error(ctx, &OpError::from(e), ""),
+                None => return internal(ctx),
             }
         }
         if next.is_none() {
@@ -358,15 +505,15 @@ pub async fn chunk(
         }
     }
     if written != ticket.len {
-        return invalid(&ctx);
+        return invalid(ctx);
     }
     let Ok(ticket) = Arc::try_unwrap(ticket) else {
-        return internal(&ctx);
+        return internal(ctx);
     };
     match blocking(move || ticket.complete(now())).await {
         Some(Ok(count)) => Json(json!({ "have": count })).into_response(),
-        Some(Err(e)) => op_error(&ctx, &e, ""),
-        None => internal(&ctx),
+        Some(Err(e)) => op_error(ctx, &e, ""),
+        None => internal(ctx),
     }
 }
 
@@ -386,44 +533,59 @@ pub async fn done(
     body: Bytes,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let cu = match api_user(&st, &ctx, &current, &headers, true) {
-        Ok(cu) => cu,
-        Err(r) => return *r,
-    };
+    match uploader(&st, &ctx, &principal, &current, &headers, true).await {
+        Ok(up) => done_in(&st, &ctx, &client, &up, id, body).await,
+        Err(r) => *r,
+    }
+}
+
+pub async fn done_in(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    client: &ClientInfo,
+    up: &Uploader,
+    id: String,
+    body: Bytes,
+) -> Response {
     let req: DoneReq = if body.is_empty() {
         DoneReq::default()
     } else {
         match serde_json::from_slice(&body) {
             Ok(r) => r,
-            Err(_) => return invalid(&ctx),
+            Err(_) => return invalid(ctx),
         }
     };
     let clash = match req.clash.as_deref().map(Clash::parse) {
-        Some(None) => return invalid(&ctx),
+        Some(None) => return invalid(ctx),
         Some(Some(c)) => Some(c),
         None => None,
     };
-    let owner = actor(&cu);
+    let clash = if up.is_guest() {
+        Some(Clash::Rename)
+    } else {
+        clash
+    };
+    let owner = up.owner();
     let rec = {
         let (st, id, owner) = (st.clone(), id.clone(), owner.clone());
         blocking(move || st.uploads.record(&st.volumes, &id, &owner)).await
     };
     let rec = match rec {
         Some(Ok(r)) => r,
-        Some(Err(e)) => return op_error(&ctx, &e, ""),
-        None => return internal(&ctx),
+        Some(Err(e)) => return op_error(ctx, &e, ""),
+        None => return internal(ctx),
     };
     // Rights may have changed since the upload started.
     let target = RelPath::parse(&rec.dir)
         .and_then(|d| d.join_path(&RelPath::parse(&rec.name)?))
         .unwrap_or_default();
-    let perms = path_perms(&st.cfg, &principal, client.origin, &rec.volume, &target);
+    let perms = up.perms(st, client.origin, &rec.volume, &target);
     if !perms.contains(Perms::WRITE) {
-        return forbidden(&ctx);
+        return forbidden(ctx);
     }
-    let can_replace = perms.contains(Perms::DELETE);
+    let can_replace = perms.contains(Perms::DELETE) && !up.is_guest();
     if clash == Some(Clash::Replace) && !can_replace {
-        return forbidden(&ctx);
+        return forbidden(ctx);
     }
     let result = {
         let (st, owner) = (st.clone(), owner.clone());
@@ -438,24 +600,58 @@ pub async fn done(
             let full = RelPath::parse(&rec.dir)
                 .and_then(|d| d.join_path(&path))
                 .unwrap_or_default();
-            audit(
-                &st,
-                owner,
-                client.ip,
-                "upload",
-                &format!("{}/{}", rec.volume, full.as_str()),
-                &format!(
-                    "{} bytes{}",
-                    rec.size,
-                    if rec.staged { ", staged" } else { "" }
-                ),
+            let detail = format!(
+                "{} bytes{}",
+                rec.size,
+                if rec.staged { ", staged" } else { "" }
             );
+            uploaded(st, client, up, &rec.volume, &full, &detail, !rec.staged).await;
             Json(json!({ "path": path.as_str(), "renamed": renamed })).into_response()
         }
         Some(Ok(Finished::Skipped)) => Json(json!({ "skipped": true })).into_response(),
-        Some(Ok(Finished::Clash(ex))) => clash_json(&ctx, &ex, Some(rec.size), can_replace),
-        Some(Err(e)) => op_error(&ctx, &e, &rec.name),
-        None => internal(&ctx),
+        Some(Ok(Finished::Clash(ex))) => clash_json(ctx, &ex, Some(rec.size), can_replace),
+        Some(Err(e)) => op_error(ctx, &e, &rec.name),
+        None => internal(ctx),
+    }
+}
+
+/// Audit a finished upload (or a staged folder that appeared), and for visitors note it in
+/// their session and the share's log. `listed`: show it in the visitor's upload list (staged
+/// files appear with their folder instead).
+async fn uploaded(
+    st: &Shared,
+    client: &ClientInfo,
+    up: &Uploader,
+    volume: &str,
+    full: &RelPath,
+    detail: &str,
+    listed: bool,
+) {
+    let target = format!("{volume}/{}", full.as_str());
+    match up {
+        Uploader::User { .. } => {
+            audit(st, up.actor(), client.ip, "upload", &target, detail);
+        }
+        Uploader::Public(g) => {
+            audit(st, up.actor(), client.ip, "public_upload", &target, detail);
+            if g.notify {
+                // Delivery to the alert channels comes with the alerts slice; the log line
+                // is the notification until then.
+                tracing::info!(volume, path = %full, ip = %client.ip, "public upload");
+            }
+            if listed {
+                guest::remember_uploads(st, &g.hash, vec![full.as_str().to_string()]).await;
+            }
+        }
+        Uploader::Share(g) => {
+            let root = RelPath::parse(&g.share.path).unwrap_or_default();
+            let rel = full.strip_prefix(&root).unwrap_or_default();
+            guest::share_event(st, &g.share, client, "upload", rel.as_str());
+            guest::bump(st, &g.share.id, |s| s.uploads += 1).await;
+            if listed {
+                guest::remember_uploads(st, &g.hash, vec![rel.as_str().to_string()]).await;
+            }
+        }
     }
 }
 
@@ -467,24 +663,29 @@ pub async fn cancel(
     Path(id): Path<String>,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let cu = match api_user(&st, &ctx, &current, &headers, true) {
-        Ok(cu) => cu,
-        Err(r) => return *r,
-    };
-    let owner = actor(&cu);
+    match uploader(&st, &ctx, &principal, &current, &headers, true).await {
+        Ok(up) => cancel_in(&st, &ctx, &up, id).await,
+        Err(r) => *r,
+    }
+}
+
+pub async fn cancel_in(st: &Shared, ctx: &Ctx<'_>, up: &Uploader, id: String) -> Response {
+    let owner = up.owner();
     let st2 = st.clone();
     match blocking(move || st2.uploads.cancel(&st2.volumes, &id, &owner)).await {
         Some(Ok(())) => StatusCode::NO_CONTENT.into_response(),
-        Some(Err(e)) => op_error(&ctx, &e, ""),
-        None => internal(&ctx),
+        Some(Err(e)) => op_error(ctx, &e, ""),
+        None => internal(ctx),
     }
 }
 
 #[derive(Deserialize)]
 pub struct BatchReq {
-    vol: String,
+    /// Ignored for share visitors.
     #[serde(default)]
-    dir: String,
+    pub vol: String,
+    #[serde(default)]
+    pub dir: String,
 }
 
 pub async fn batch_new(
@@ -496,25 +697,40 @@ pub async fn batch_new(
     body: Bytes,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let cu = match api_user(&st, &ctx, &current, &headers, true) {
-        Ok(cu) => cu,
+    let up = match uploader(&st, &ctx, &principal, &current, &headers, true).await {
+        Ok(up) => up,
         Err(r) => return *r,
     };
     let Ok(req) = serde_json::from_slice::<BatchReq>(&body) else {
         return invalid(&ctx);
     };
-    let (Some(vol), Ok(dir)) = (st.volumes.get(&req.vol).cloned(), RelPath::parse(&req.dir)) else {
+    let Ok(dir) = RelPath::parse(&req.dir) else {
         return op_error(&ctx, &OpError::NotFound, &req.dir);
     };
-    let perms = path_perms(&st.cfg, &principal, client.origin, vol.name(), &dir);
-    if !perms.contains(Perms::READ) {
-        return op_error(&ctx, &OpError::NotFound, &req.dir);
+    batch_new_in(&st, &ctx, &client, &up, &req.vol, dir).await
+}
+
+pub async fn batch_new_in(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    client: &ClientInfo,
+    up: &Uploader,
+    vol_name: &str,
+    dir: RelPath,
+) -> Response {
+    let Some(vol) = st.volumes.get(vol_name).cloned() else {
+        return op_error(ctx, &OpError::NotFound, dir.as_str());
+    };
+    let perms = up.perms(st, client.origin, vol.name(), &dir);
+    if !perms.intersects(Perms::READ | Perms::WRITE) {
+        return op_error(ctx, &OpError::NotFound, dir.as_str());
     }
     if !perms.contains(Perms::WRITE) {
-        return forbidden(&ctx);
+        return forbidden(ctx);
     }
-    let owner = actor(&cu);
+    let owner = up.owner();
     let st2 = st.clone();
+    let shown = dir.as_str().to_string();
     let made = blocking(move || st2.uploads.create_batch(&vol, &dir, &owner, now())).await;
     match made {
         Some(Ok(b)) => (
@@ -522,8 +738,8 @@ pub async fn batch_new(
             Json(json!({ "id": b.id, "staged": b.staged })),
         )
             .into_response(),
-        Some(Err(e)) => op_error(&ctx, &e, &req.dir),
-        None => internal(&ctx),
+        Some(Err(e)) => op_error(ctx, &e, &shown),
+        None => internal(ctx),
     }
 }
 
@@ -536,11 +752,20 @@ pub async fn batch_done(
     Path(id): Path<String>,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let cu = match api_user(&st, &ctx, &current, &headers, true) {
-        Ok(cu) => cu,
-        Err(r) => return *r,
-    };
-    let owner = actor(&cu);
+    match uploader(&st, &ctx, &principal, &current, &headers, true).await {
+        Ok(up) => batch_done_in(&st, &ctx, &client, &up, id).await,
+        Err(r) => *r,
+    }
+}
+
+pub async fn batch_done_in(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    client: &ClientInfo,
+    up: &Uploader,
+    id: String,
+) -> Response {
+    let owner = up.owner();
     let result = {
         let (st, owner) = (st.clone(), owner.clone());
         blocking(move || {
@@ -552,23 +777,25 @@ pub async fn batch_done(
     };
     match result {
         Some(Ok((b, moved))) => {
+            let dir = RelPath::parse(&b.dir).unwrap_or_default();
             for (_, used) in &moved {
-                let target = RelPath::parse(&b.dir)
-                    .and_then(|d| d.join(used))
-                    .unwrap_or_default();
-                audit(
-                    &st,
-                    owner.clone(),
-                    client.ip,
-                    "upload_folder",
-                    &format!("{}/{}", b.volume, target.as_str()),
-                    "",
-                );
+                let target = dir.join(used).unwrap_or_default();
+                match up {
+                    Uploader::User { .. } => audit(
+                        st,
+                        up.actor(),
+                        client.ip,
+                        "upload_folder",
+                        &format!("{}/{}", b.volume, target.as_str()),
+                        "",
+                    ),
+                    _ => uploaded(st, client, up, &b.volume, &target, "folder", true).await,
+                }
             }
             let moved: Vec<Value> = moved.into_iter().map(|(a, b)| json!([a, b])).collect();
             Json(json!({ "moved": moved })).into_response()
         }
-        Some(Err(e)) => op_error(&ctx, &e, ""),
-        None => internal(&ctx),
+        Some(Err(e)) => op_error(ctx, &e, ""),
+        None => internal(ctx),
     }
 }

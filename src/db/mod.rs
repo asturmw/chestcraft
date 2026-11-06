@@ -1,6 +1,6 @@
 //! The state database (redb, one file in `paths.state_dir`): accounts, sessions, app
-//! passwords, the audit log, the trash index, unfinished uploads and chestcraft's temporary
-//! files. Exactly one process may open it; a second open fails with [`DbError::Locked`].
+//! passwords, the audit log, the trash index, unfinished uploads, chestcraft's temporary
+//! files, share links with their access log, visitor sessions and public upload settings. Exactly one process may open it; a second open fails with [`DbError::Locked`].
 //!
 //! Records are JSON so they can grow fields without migrations; `meta.schema` versions the
 //! table layout. All calls block (and may fsync); async code runs them in `spawn_blocking`.
@@ -19,6 +19,10 @@ const UPLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("uploads");
 const BATCHES: TableDefinition<&str, &[u8]> = TableDefinition::new("upload_batches");
 const APP_PASSWORDS: TableDefinition<&str, &[u8]> = TableDefinition::new("app_passwords");
 const TEMPS: TableDefinition<&str, &[u8]> = TableDefinition::new("temps");
+const SHARES: TableDefinition<&str, &[u8]> = TableDefinition::new("shares");
+const SHARE_LOG: TableDefinition<(&str, u64), &[u8]> = TableDefinition::new("share_log");
+const GUESTS: TableDefinition<&str, &[u8]> = TableDefinition::new("guest_sessions");
+const PUBLIC_WRITE: TableDefinition<&str, &[u8]> = TableDefinition::new("public_write");
 
 pub const SCHEMA_VERSION: &str = "1";
 pub const FILE_NAME: &str = "state.redb";
@@ -223,6 +227,91 @@ pub struct TempRecord {
     pub created: i64,
 }
 
+/// A share link: `/s/<id>`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Share {
+    /// 12 base58 characters.
+    pub id: String,
+    /// User key of the creator.
+    pub owner: String,
+    pub volume: String,
+    /// Target relative to the volume (follows moves done through chestcraft).
+    pub path: String,
+    pub is_dir: bool,
+    /// "view", "view_upload" or "upload".
+    pub mode: String,
+    /// argon2id PHC string.
+    pub password_hash: String,
+    /// The password is a generated passphrase, checked without case and separators.
+    #[serde(default)]
+    pub passphrase: bool,
+    #[serde(default)]
+    pub note: String,
+    pub created: i64,
+    pub expires: Option<i64>,
+    /// Largest file a visitor may upload, in bytes.
+    #[serde(default)]
+    pub max_file: Option<u64>,
+    #[serde(default)]
+    pub revoked: Option<i64>,
+    #[serde(default)]
+    pub opens: u64,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub uploads: u64,
+    #[serde(default)]
+    pub last_opened: Option<i64>,
+}
+
+/// One visitor action on a share.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ShareLogEntry {
+    pub time: i64,
+    pub ip: String,
+    /// Two-letter code from Cloudflare, if the request came through it.
+    #[serde(default)]
+    pub country: String,
+    /// "unlock", "unlock_failed", "download", "zip" or "upload".
+    pub action: String,
+    /// Path relative to the share.
+    #[serde(default)]
+    pub file: String,
+}
+
+/// A visitor who unlocked a share or a public upload with its password. Stored under the
+/// SHA-256 of the cookie value.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GuestSession {
+    /// "share:<id>" or "public:<volume>".
+    pub scope: String,
+    pub created: i64,
+    pub csrf: String,
+    pub ip: String,
+    /// What this visitor uploaded, relative to the share or volume (newest last).
+    #[serde(default)]
+    pub uploads: Vec<String>,
+}
+
+/// Public uploads into a public volume, opened by the admin. No record = closed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PublicWrite {
+    pub volume: String,
+    pub password_hash: String,
+    #[serde(default)]
+    pub passphrase: bool,
+    pub opened: i64,
+    /// Closes itself at this time.
+    pub until: Option<i64>,
+    #[serde(default)]
+    pub max_file: Option<u64>,
+    /// Send every upload to the alert channels.
+    #[serde(default)]
+    pub notify: bool,
+    /// User key of the admin who opened it.
+    pub by: String,
+}
+
 pub struct Db {
     db: Database,
     /// Last audit key handed out; keys are unique, increasing nanoseconds.
@@ -247,6 +336,10 @@ impl Db {
             tx.open_table(BATCHES)?;
             tx.open_table(APP_PASSWORDS)?;
             tx.open_table(TEMPS)?;
+            tx.open_table(SHARES)?;
+            tx.open_table(SHARE_LOG)?;
+            tx.open_table(GUESTS)?;
+            tx.open_table(PUBLIC_WRITE)?;
             let mut meta = tx.open_table(META)?;
             let current = meta.get("schema")?.map(|v| v.value().to_string());
             match current.as_deref() {
@@ -479,27 +572,182 @@ impl Db {
         self.delete_key_with(TEMPS, id, false)
     }
 
+    // --- shares ----------------------------------------------------------------------
+
+    pub fn put_share(&self, share: &Share) -> Result<()> {
+        self.put_json(SHARES, &share.id, share, true)
+    }
+
+    pub fn share(&self, id: &str) -> Result<Option<Share>> {
+        self.get_json(SHARES, id)
+    }
+
+    pub fn shares(&self) -> Result<Vec<Share>> {
+        self.all_json(SHARES)
+    }
+
+    /// Change one share in a single transaction; returns the new record. `durable = false`
+    /// for counters.
+    pub fn update_share(
+        &self,
+        id: &str,
+        durable: bool,
+        f: impl FnOnce(&mut Share),
+    ) -> Result<Option<Share>> {
+        let mut tx = self.db.begin_write()?;
+        if !durable {
+            tx.set_durability(Durability::None)?;
+        }
+        let updated = {
+            let mut t = tx.open_table(SHARES)?;
+            let current: Option<Share> = match t.get(id)? {
+                Some(v) => Some(serde_json::from_slice(v.value())?),
+                None => None,
+            };
+            match current {
+                Some(mut s) => {
+                    f(&mut s);
+                    t.insert(id, serde_json::to_vec(&s)?.as_slice())?;
+                    Some(s)
+                }
+                None => None,
+            }
+        };
+        tx.commit()?;
+        Ok(updated)
+    }
+
+    /// Change every share `f` returns true for, in one transaction; returns how many.
+    pub fn update_shares(&self, mut f: impl FnMut(&mut Share) -> bool) -> Result<usize> {
+        let tx = self.db.begin_write()?;
+        let mut changed = 0;
+        {
+            let mut t = tx.open_table(SHARES)?;
+            let mut out = Vec::new();
+            for row in t.iter()? {
+                let (k, v) = row?;
+                let mut s: Share = serde_json::from_slice(v.value())?;
+                if f(&mut s) {
+                    out.push((k.value().to_string(), serde_json::to_vec(&s)?));
+                }
+            }
+            for (k, v) in out {
+                t.insert(k.as_str(), v.as_slice())?;
+                changed += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    pub fn share_log(&self, id: &str, entry: &ShareLogEntry) -> Result<()> {
+        let bytes = serde_json::to_vec(entry)?;
+        let key = self.next_log_key();
+        let tx = self.db.begin_write()?;
+        tx.open_table(SHARE_LOG)?
+            .insert((id, key), bytes.as_slice())?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A share's access log, newest first, at most `limit`.
+    pub fn share_log_of(&self, id: &str, limit: usize) -> Result<Vec<ShareLogEntry>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(SHARE_LOG)?;
+        let mut out = Vec::new();
+        for row in t.range((id, 0)..=(id, u64::MAX))?.rev().take(limit) {
+            let (_, v) = row?;
+            out.push(serde_json::from_slice(v.value())?);
+        }
+        Ok(out)
+    }
+
+    // --- visitor sessions ----------------------------------------------------------------
+
+    pub fn put_guest(&self, hash: &str, s: &GuestSession) -> Result<()> {
+        self.put_json(GUESTS, hash, s, true)
+    }
+
+    pub fn guest(&self, hash: &str) -> Result<Option<GuestSession>> {
+        self.get_json(GUESTS, hash)
+    }
+
+    /// Change one visitor session (not durably: it only lists uploads).
+    pub fn update_guest(&self, hash: &str, f: impl FnOnce(&mut GuestSession)) -> Result<()> {
+        let mut tx = self.db.begin_write()?;
+        tx.set_durability(Durability::None)?;
+        {
+            let mut t = tx.open_table(GUESTS)?;
+            let current: Option<GuestSession> = match t.get(hash)? {
+                Some(v) => Some(serde_json::from_slice(v.value())?),
+                None => None,
+            };
+            if let Some(mut s) = current {
+                f(&mut s);
+                t.insert(hash, serde_json::to_vec(&s)?.as_slice())?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Drop visitor sessions `keep` rejects; returns how many went.
+    pub fn retain_guests(&self, mut keep: impl FnMut(&GuestSession) -> bool) -> Result<usize> {
+        let tx = self.db.begin_write()?;
+        let mut removed = 0;
+        {
+            let mut t = tx.open_table(GUESTS)?;
+            t.retain(|_, bytes| {
+                let k = serde_json::from_slice::<GuestSession>(bytes).is_ok_and(|s| keep(&s));
+                if !k {
+                    removed += 1;
+                }
+                k
+            })?;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    // --- public uploads ------------------------------------------------------------------
+
+    pub fn put_public_write(&self, pw: &PublicWrite) -> Result<()> {
+        self.put_json(PUBLIC_WRITE, &pw.volume, pw, true)
+    }
+
+    pub fn public_write(&self, volume: &str) -> Result<Option<PublicWrite>> {
+        self.get_json(PUBLIC_WRITE, volume)
+    }
+
+    pub fn public_writes(&self) -> Result<Vec<PublicWrite>> {
+        self.all_json(PUBLIC_WRITE)
+    }
+
+    pub fn delete_public_write(&self, volume: &str) -> Result<()> {
+        self.delete_key(PUBLIC_WRITE, volume)
+    }
+
     // --- audit -----------------------------------------------------------------------
+
+    /// Unique, increasing log keys even for events in the same nanosecond.
+    fn next_log_key(&self) -> u64 {
+        let now = now_nanos();
+        let mut prev = self.audit_seq.load(Ordering::Relaxed);
+        loop {
+            let next = now.max(prev + 1);
+            match self
+                .audit_seq
+                .compare_exchange(prev, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return next,
+                Err(p) => prev = p,
+            }
+        }
+    }
 
     pub fn audit(&self, ev: &AuditEvent) -> Result<()> {
         let bytes = serde_json::to_vec(ev)?;
-        // Unique, increasing keys even for events in the same nanosecond.
-        let key = {
-            let now = now_nanos();
-            let mut prev = self.audit_seq.load(Ordering::Relaxed);
-            loop {
-                let next = now.max(prev + 1);
-                match self.audit_seq.compare_exchange(
-                    prev,
-                    next,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => break next,
-                    Err(p) => prev = p,
-                }
-            }
-        };
+        let key = self.next_log_key();
         let tx = self.db.begin_write()?;
         tx.open_table(AUDIT)?.insert(key, bytes.as_slice())?;
         tx.commit()?;
@@ -623,6 +871,76 @@ mod tests {
         assert_eq!(db.temps().unwrap(), vec![t]);
         db.delete_temp("t1").unwrap();
         assert!(db.temps().unwrap().is_empty());
+    }
+
+    #[test]
+    fn share_logs_stay_apart_and_shares_update_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join(FILE_NAME)).unwrap();
+        let entry = |action: &str| ShareLogEntry {
+            time: 1,
+            ip: "203.0.113.1".into(),
+            country: String::new(),
+            action: action.into(),
+            file: String::new(),
+        };
+        for (id, action) in [
+            ("a", "unlock"),
+            ("ab", "zip"),
+            ("a", "download"),
+            ("b", "x"),
+        ] {
+            db.share_log(id, &entry(action)).unwrap();
+        }
+        let actions = |id: &str| -> Vec<String> {
+            db.share_log_of(id, 10)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.action)
+                .collect()
+        };
+        assert_eq!(actions("a"), ["download", "unlock"]);
+        assert_eq!(actions("ab"), ["zip"]);
+        assert!(actions("c").is_empty());
+
+        let share = Share {
+            id: "a".into(),
+            owner: "jana".into(),
+            volume: "V".into(),
+            path: "x".into(),
+            is_dir: true,
+            mode: "view".into(),
+            password_hash: "h".into(),
+            passphrase: true,
+            note: String::new(),
+            created: 1,
+            expires: None,
+            max_file: None,
+            revoked: None,
+            opens: 0,
+            downloads: 0,
+            uploads: 0,
+            last_opened: None,
+        };
+        db.put_share(&share).unwrap();
+        db.put_share(&Share {
+            id: "b".into(),
+            path: "y".into(),
+            ..share.clone()
+        })
+        .unwrap();
+        let s = db
+            .update_share("a", false, |s| s.opens += 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(s.opens, 1);
+        assert!(
+            db.update_share("zz", true, |s| s.opens += 1)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(db.update_shares(|s| s.path == "y").unwrap(), 1);
+        assert_eq!(db.shares().unwrap().len(), 2);
     }
 
     #[test]

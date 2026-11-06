@@ -168,6 +168,19 @@ pub fn path_perms(
     }
 }
 
+/// Permissions of an anonymous visitor who entered the public upload password of `volume`:
+/// read like everyone, plus upload and new folders where the volume may change. Never
+/// rename, move or delete.
+pub fn public_writer_perms(cfg: &Config, origin: Origin, volume: &str, path: &RelPath) -> Perms {
+    let read = path_perms(cfg, &Principal::Anonymous, origin, volume, path);
+    match cfg.volumes.get(volume) {
+        Some(vol) if vol.public && read.contains(Perms::READ) && !in_read_only_area(vol, path) => {
+            read | Perms::WRITE
+        }
+        _ => read,
+    }
+}
+
 /// Is `path` inside (or equal to) one of the volume's read-only areas?
 pub fn in_read_only_area(vol: &VolumeConfig, path: &RelPath) -> bool {
     vol.read_only || vol.read_only_paths.iter().any(|ro| path.starts_with(ro))
@@ -312,6 +325,16 @@ mod tests {
         assert_eq!(rw, Perms::all());
         let whole = path_perms(&c, &admin(), Origin::Local, "Archiv", &p("a/b"));
         assert_eq!(whole, Perms::READ | Perms::SHARE);
+    }
+
+    #[test]
+    fn public_writers_may_only_add_to_public_volumes() {
+        let c = cfg();
+        let w = |vol: &str, path: &str| public_writer_perms(&c, Origin::Remote, vol, &p(path));
+        assert_eq!(w("Share", "Eingang"), Perms::READ | Perms::WRITE);
+        assert_eq!(w("Share", ".versteckt"), Perms::empty());
+        assert_eq!(w("Medien", ""), Perms::empty());
+        assert_eq!(w("Archiv", ""), Perms::empty());
     }
 
     #[test]

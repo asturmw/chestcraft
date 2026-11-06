@@ -13,6 +13,7 @@ datetime = "{d} {mon} {y}, {H}:{M}"
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 [common]
+language = "Language"
 signed_in_as = "Signed in as {name}"
 home = "Home"
 sign_in = "Sign in"
@@ -29,6 +30,12 @@ none = "You don't have access to any folders yet. Ask the owner to give you acce
 none_public = "Nothing here is public. Sign in to see your folders."
 
 [browser]
+share = "Share"
+share_item = "Share {name}"
+share_folder = "Share this folder"
+shared = "Shared"
+share_local_only = "This volume is only reachable at home, so it can't be shared."
+public_upload = "Upload files"
 location = "Location"
 col_select = "Select"
 col_name = "Name"
@@ -97,6 +104,8 @@ wrong_current = "Your current password is wrong."
 saved = "Password saved. Your other devices are signed out."
 
 [upload]
+# Shown when uploads have a size limit; {size} like "500 MB".
+limit = "Files up to {size} each."
 tray_title = "Uploads"
 state_queued = "Waiting"
 state_uploading = "Uploading"
@@ -149,6 +158,7 @@ gone = "This item isn't in the trash anymore."
 no_write = "You can't restore “{name}” because you can no longer change that folder."
 
 [ops]
+too_large = "“{name}” is larger than the limit of {size}."
 failed_title = "That didn't work"
 back = "Back"
 exists = "“{name}” already exists here."
@@ -168,3 +178,177 @@ forbidden = "You can't change anything here."
 signed_out = "You're signed out. Sign in again to continue."
 failed = "Something went wrong. Try again, and tell the owner if it keeps happening."
 trash_failed = "Some items couldn't go to the trash:"
+
+# Share pages for visitors (/s/<id>).
+[share]
+password_title = "Protected share"
+password_intro = "Enter the password you got with the link."
+password = "Password"
+open = "Open"
+wrong = "That password is wrong."
+slowed_down = "Too many wrong passwords. Try again in {minutes} min."
+session_ended = "Your access has ended. Reload the page and enter the password again."
+shared_by = "Shared by {name}"
+available_until = "Available until {date}"
+download = "Download"
+dropbox_intro = "Add your files here. You only see what you upload yourself."
+needs_js = "Uploading needs JavaScript. Turn it on for this page and reload."
+your_uploads = "Your uploads"
+no_uploads = "Nothing uploaded yet."
+unavailable_title = "This share isn't available"
+unavailable_not_found = "This link doesn't lead to a share. Check that you copied all of it."
+unavailable_expired = "This share has expired. Ask the person who sent it for a new link."
+unavailable_revoked = "The person who created this share has ended it."
+unavailable_paused = "This share is paused right now. Try again later, or ask the person who sent it."
+unavailable_missing = "What was shared here isn't there anymore. Ask the person who sent the link."
+
+# My shares / all shares.
+[shares]
+title = "My shares"
+all_title = "All shares"
+show_all = "Show everyone's shares"
+show_mine = "Show only my shares"
+empty = "No shares yet. Open a folder and choose Share next to a file or folder."
+col_target = "Shared"
+col_owner = "Owner"
+col_mode = "Access"
+col_created = "Created"
+col_expires = "Expires"
+col_status = "Status"
+col_last_opened = "Last opened"
+col_activity = "Activity"
+col_actions = "Actions"
+never_opened = "never"
+counts = "{opens} opens, {downloads} downloads, {uploads} uploads"
+open_target = "Open"
+back = "Back to my shares"
+
+[share_mode]
+view = "View and download"
+view_upload = "View, download and upload"
+upload = "Upload only"
+
+[share_expiry]
+day = "1 day"
+week = "7 days"
+month = "30 days"
+never = "Never"
+
+[share_status]
+active = "Active"
+expired = "Expired"
+revoked = "Ended"
+paused_owner = "Paused: the creator's account is disabled"
+paused_rights = "Paused: the creator can no longer share this"
+paused_volume = "Paused: the volume is gone"
+paused_trash = "Paused: it's in the trash"
+missing = "Missing: moved or deleted outside chestcraft"
+
+[share_create]
+title = "Share"
+# Followed by a link to the folder it's in.
+target = "“{name}” in"
+mode = "Access"
+expiry = "Available for"
+password = "Password"
+use_passphrase = "Use this passphrase:"
+regenerate = "Another passphrase"
+use_own = "Use my own password"
+own_password = "Own password"
+own_hint = "At least {min} characters."
+note = "Note for the recipient (optional)"
+max_size = "Size limit per file in MB (optional)"
+max_size_hint = "Only for uploads. Leave empty for no limit."
+submit = "Create share link"
+not_found = "This file or folder doesn't exist (anymore)."
+no_rights = "You can't share this with that access."
+upload_needs_folder = "Uploads only work into a folder."
+password_too_short = "Use a password with at least {min} characters."
+note_too_long = "The note is too long."
+too_many = "You have too many shares. End some you no longer need."
+bad_size = "Enter the size limit as a whole number of MB, or leave it empty."
+
+# Shown once after creating a share or setting a new password.
+[share_created]
+title = "Share link created"
+once = "Copy the password now: chestcraft can't show it again. If it gets lost, set a new one in the share's details."
+link = "Link"
+password = "Password"
+until = "Available until"
+copy_link = "Copy link"
+copy_password = "Copy password"
+copy_message = "Copy message"
+# {language} is the language's own name, like "Deutsch".
+message = "Message ({language})"
+# Ready-to-send text. {date} like "5 Nov 2026, 18:30".
+message_text = """Hi! Here are the files I shared with you:
+{link}
+Password: {password}
+The link works until {date}."""
+message_text_never = """Hi! Here are the files I shared with you:
+{link}
+Password: {password}"""
+to_details = "Go to the share's details"
+
+[share_detail]
+title = "Share of {name}"
+saved = "Changes saved."
+not_found = "This share doesn't exist, or it isn't yours."
+is_revoked = "This share has ended and can't be changed anymore."
+new_expiry = "Available for (counted from now)"
+keep_expiry = "Keep the current date"
+save = "Save changes"
+new_password = "Set a new password"
+new_password_hint = "The old password stops working, and everyone who opened the share has to enter the new one."
+revoke = "End share"
+revoke_confirm = "End this share for good (the link stops working)"
+confirm_missing = "Tick the box to confirm that the share ends."
+password_title = "New password"
+log = "Access log"
+log_empty = "Nobody has opened this share yet."
+col_time = "Time"
+col_ip = "Address"
+col_country = "Country"
+col_action = "What"
+col_file = "File"
+
+[share_log]
+unlock = "Opened"
+unlock_failed = "Wrong password"
+download = "Downloaded"
+zip = "Downloaded as zip"
+upload = "Uploaded"
+other = "Other"
+
+# Password prompt for public uploads.
+[public_write]
+title = "Upload to {volume}"
+intro = "Uploads here need a password. Enter the one you got from the owner."
+closed = "Uploads to this folder are closed right now."
+submit = "Continue"
+
+# Admin: volumes and public uploads.
+[volumes]
+title = "Volumes"
+flag_public = "Public (anyone can read)"
+flag_local = "Only reachable at home"
+flag_read_only = "Read-only"
+flag_read_only_path = "Read-only area: {path}"
+flag_staged = "Folder uploads appear when complete"
+flag_trash_days_one = "Trash kept for {count} day"
+flag_trash_days_other = "Trash kept for {count} days"
+flag_trash_kept = "Trash kept until emptied"
+public_upload = "Public uploads"
+closed = "Closed"
+open_until = "Open until {date}"
+open_forever = "Open until you close it"
+open_for = "Open for"
+own_password = "Own password (optional)"
+own_password_hint = "Leave empty for a generated passphrase. At least {min} characters."
+notify = "Send a notification for every upload"
+open = "Open uploads"
+reopen = "Set a new password and time"
+close = "Close uploads"
+not_public = "Only public volumes can take public uploads."
+opened_title = "Uploads to {volume} are open"
+back = "Back to volumes"

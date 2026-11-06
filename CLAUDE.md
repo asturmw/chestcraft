@@ -33,8 +33,25 @@ Plan steps 1–2 done. Step 3 (backend slices):
   (`fs/transfer.rs`: no-overwrite renames, cross-filesystem move = copy + source to trash,
   temp entries recorded in the DB and swept at startup/daily), advisory LOCK/UNLOCK.
   Verified with rclone copy/check/sync/moveto/copyto/about and an rclone FUSE mount.
-- Next: slice 6, shares + public write. The account page (app passwords in the UI) and
-  rename/move/copy in the UI come with the UI integration; the primitives exist.
+- Slice 6 done: shares (`src/shares/`, `web/share.rs` visitors, `web/shares.rs` owners):
+  `/s/<12 base58>`, modes view / view_upload / upload (visitor sees only own uploads),
+  password always (4-word passphrase from `src/shares/words/` in the creator's language,
+  checked without case/separators, or own ≥ 8), expiry 1d/7d/30d/never, note, per-file size
+  limit, guest session 12h (cookie path `/s/<id>`, ended by new password/revoke), visitor
+  upload API under `/s/<id>/.cc/…` (same `web/api.rs` code via `Uploader`), visitors never
+  overwrite. Creator's rights (as seen from the internet) checked on every request →
+  paused when disabled/rights lost/volume gone/target in trash; follows moves (inside
+  `transfer::move_entry`) and "(restored)" renames; otherwise "missing". Access log
+  (`share_log`, IP + CF country) + audit; my shares / all shares (admin) / details with
+  edit, new password, revoke; share links + badges in listings, reason on home-only volumes.
+  Public write: admin `/.cc/admin/volumes` (open 1d/7d/30d/never with password, size limit,
+  notify flag; reopen = new password; close), visitors unlock at `/.cc/public-write` →
+  upload + new folder, never overwrite. Same backoff as sign-in for both passwords.
+  Language switch `/.cc/lang` on pages without an account. Delivery of the public-upload
+  notify flag, "share locked" and "target missing" notifications wait for the alerts slice.
+- Next: slice 7, thumbnails/previews (incl. STL/3MF/G-code/SVG). The account page (app
+  passwords in the UI) and rename/move/copy in the UI come with the UI integration; the
+  primitives exist.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in

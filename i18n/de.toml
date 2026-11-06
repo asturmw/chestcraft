@@ -11,6 +11,7 @@ datetime = "{d2}.{m2}.{y}, {H}:{M}"
 months = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."]
 
 [common]
+language = "Sprache"
 signed_in_as = "Angemeldet als {name}"
 home = "Start"
 sign_in = "Anmelden"
@@ -26,6 +27,12 @@ none = "Du hast noch keinen Zugriff auf Ordner. Bitte den Besitzer, dir Zugriff 
 none_public = "Hier ist nichts öffentlich. Melde dich an, um deine Ordner zu sehen."
 
 [browser]
+share = "Teilen"
+share_item = "{name} teilen"
+share_folder = "Diesen Ordner teilen"
+shared = "Geteilt"
+share_local_only = "Dieser Bereich ist nur von zu Hause erreichbar, deshalb kann er nicht geteilt werden."
+public_upload = "Dateien hochladen"
 location = "Ort"
 col_select = "Auswählen"
 col_name = "Name"
@@ -94,6 +101,8 @@ wrong_current = "Dein aktuelles Passwort ist falsch."
 saved = "Passwort gespeichert. Deine anderen Geräte sind abgemeldet."
 
 [upload]
+# Wird bei einem Größenlimit gezeigt; {size} etwa "500 MB".
+limit = "Dateien bis je {size}."
 tray_title = "Uploads"
 state_queued = "Wartet"
 state_uploading = "Lädt hoch"
@@ -144,6 +153,7 @@ gone = "Das ist nicht mehr im Papierkorb."
 no_write = "Du kannst „{name}“ nicht wiederherstellen, weil du den Ordner nicht mehr ändern darfst."
 
 [ops]
+too_large = "„{name}“ ist größer als das Limit von {size}."
 failed_title = "Das hat nicht geklappt"
 back = "Zurück"
 exists = "„{name}“ gibt es hier schon."
@@ -163,3 +173,177 @@ forbidden = "Hier darfst du nichts ändern."
 signed_out = "Du bist abgemeldet. Melde dich wieder an, um weiterzumachen."
 failed = "Etwas ist schiefgelaufen. Versuch es noch einmal und sag dem Besitzer Bescheid, wenn es weiter passiert."
 trash_failed = "Einiges konnte nicht in den Papierkorb:"
+
+# Freigabeseiten für Besucher (/s/<id>).
+[share]
+password_title = "Geschützte Freigabe"
+password_intro = "Gib das Passwort ein, das du mit dem Link bekommen hast."
+password = "Passwort"
+open = "Öffnen"
+wrong = "Das Passwort stimmt nicht."
+slowed_down = "Zu viele falsche Passwörter. Versuch es in {minutes} Min. wieder."
+session_ended = "Dein Zugang ist abgelaufen. Lade die Seite neu und gib das Passwort noch einmal ein."
+shared_by = "Geteilt von {name}"
+available_until = "Verfügbar bis {date}"
+download = "Herunterladen"
+dropbox_intro = "Leg deine Dateien hier ab. Du siehst nur, was du selbst hochlädst."
+needs_js = "Zum Hochladen braucht es JavaScript. Schalte es für diese Seite ein und lade sie neu."
+your_uploads = "Deine Uploads"
+no_uploads = "Noch nichts hochgeladen."
+unavailable_title = "Diese Freigabe ist nicht verfügbar"
+unavailable_not_found = "Dieser Link führt zu keiner Freigabe. Prüf, ob du ihn vollständig kopiert hast."
+unavailable_expired = "Diese Freigabe ist abgelaufen. Frag die Person, die sie dir geschickt hat, nach einem neuen Link."
+unavailable_revoked = "Die Person, die diese Freigabe erstellt hat, hat sie beendet."
+unavailable_paused = "Diese Freigabe ist gerade pausiert. Versuch es später noch einmal oder frag die Person, die sie dir geschickt hat."
+unavailable_missing = "Was hier geteilt wurde, ist nicht mehr da. Frag die Person, die dir den Link geschickt hat."
+
+# Meine Freigaben / alle Freigaben.
+[shares]
+title = "Meine Freigaben"
+all_title = "Alle Freigaben"
+show_all = "Freigaben aller zeigen"
+show_mine = "Nur meine Freigaben zeigen"
+empty = "Noch keine Freigaben. Öffne einen Ordner und wähle „Teilen“ neben einer Datei oder einem Ordner."
+col_target = "Geteilt"
+col_owner = "Erstellt von"
+col_mode = "Zugriff"
+col_created = "Erstellt"
+col_expires = "Läuft ab"
+col_status = "Status"
+col_last_opened = "Zuletzt geöffnet"
+col_activity = "Aktivität"
+col_actions = "Aktionen"
+never_opened = "nie"
+counts = "{opens}× geöffnet, {downloads} Downloads, {uploads} Uploads"
+open_target = "Öffnen"
+back = "Zurück zu meinen Freigaben"
+
+[share_mode]
+view = "Ansehen und herunterladen"
+view_upload = "Ansehen, herunterladen und hochladen"
+upload = "Nur hochladen"
+
+[share_expiry]
+day = "1 Tag"
+week = "7 Tage"
+month = "30 Tage"
+never = "Unbegrenzt"
+
+[share_status]
+active = "Aktiv"
+expired = "Abgelaufen"
+revoked = "Beendet"
+paused_owner = "Pausiert: das Konto der Person, die sie erstellt hat, ist gesperrt"
+paused_rights = "Pausiert: die Person, die sie erstellt hat, darf das nicht mehr teilen"
+paused_volume = "Pausiert: den Bereich gibt es nicht mehr"
+paused_trash = "Pausiert: liegt im Papierkorb"
+missing = "Fehlt: außerhalb von chestcraft verschoben oder gelöscht"
+
+[share_create]
+title = "Teilen"
+# Danach folgt ein Link auf den Ordner, in dem es liegt.
+target = "„{name}“ in"
+mode = "Zugriff"
+expiry = "Verfügbar für"
+password = "Passwort"
+use_passphrase = "Diese Passphrase verwenden:"
+regenerate = "Andere Passphrase"
+use_own = "Eigenes Passwort verwenden"
+own_password = "Eigenes Passwort"
+own_hint = "Mindestens {min} Zeichen."
+note = "Notiz für die Empfänger (optional)"
+max_size = "Größenlimit pro Datei in MB (optional)"
+max_size_hint = "Nur für Uploads. Leer lassen für kein Limit."
+submit = "Freigabelink erstellen"
+not_found = "Diese Datei oder diesen Ordner gibt es nicht (mehr)."
+no_rights = "Du darfst das nicht mit diesem Zugriff teilen."
+upload_needs_folder = "Hochladen geht nur in einen Ordner."
+password_too_short = "Nimm ein Passwort mit mindestens {min} Zeichen."
+note_too_long = "Die Notiz ist zu lang."
+too_many = "Du hast zu viele Freigaben. Beende welche, die du nicht mehr brauchst."
+bad_size = "Gib das Größenlimit als ganze Zahl in MB an oder lass das Feld leer."
+
+# Wird einmal gezeigt, nach dem Erstellen oder einem neuen Passwort.
+[share_created]
+title = "Freigabelink erstellt"
+once = "Kopier das Passwort jetzt: chestcraft kann es nicht noch einmal zeigen. Geht es verloren, setz in den Details der Freigabe ein neues."
+link = "Link"
+password = "Passwort"
+until = "Verfügbar bis"
+copy_link = "Link kopieren"
+copy_password = "Passwort kopieren"
+copy_message = "Nachricht kopieren"
+# {language} ist der Name der Sprache in ihr selbst, etwa "English".
+message = "Nachricht ({language})"
+# Fertiger Text zum Verschicken. {date} etwa "05.11.2026, 18:30".
+message_text = """Hallo! Hier sind die Dateien, die ich mit dir teile:
+{link}
+Passwort: {password}
+Der Link funktioniert bis {date}."""
+message_text_never = """Hallo! Hier sind die Dateien, die ich mit dir teile:
+{link}
+Passwort: {password}"""
+to_details = "Zu den Details der Freigabe"
+
+[share_detail]
+title = "Freigabe von {name}"
+saved = "Änderungen gespeichert."
+not_found = "Diese Freigabe gibt es nicht, oder sie gehört nicht dir."
+is_revoked = "Diese Freigabe ist beendet und lässt sich nicht mehr ändern."
+new_expiry = "Verfügbar für (ab jetzt)"
+keep_expiry = "Aktuelles Datum behalten"
+save = "Änderungen speichern"
+new_password = "Neues Passwort setzen"
+new_password_hint = "Das alte Passwort gilt dann nicht mehr, und alle, die die Freigabe geöffnet haben, müssen das neue eingeben."
+revoke = "Freigabe beenden"
+revoke_confirm = "Diese Freigabe endgültig beenden (der Link funktioniert dann nicht mehr)"
+confirm_missing = "Setz das Häkchen, um zu bestätigen, dass die Freigabe endet."
+password_title = "Neues Passwort"
+log = "Zugriffsprotokoll"
+log_empty = "Diese Freigabe hat noch niemand geöffnet."
+col_time = "Zeit"
+col_ip = "Adresse"
+col_country = "Land"
+col_action = "Was"
+col_file = "Datei"
+
+[share_log]
+unlock = "Geöffnet"
+unlock_failed = "Falsches Passwort"
+download = "Heruntergeladen"
+zip = "Als ZIP heruntergeladen"
+upload = "Hochgeladen"
+other = "Sonstiges"
+
+# Passwortabfrage für öffentliche Uploads.
+[public_write]
+title = "Hochladen nach {volume}"
+intro = "Zum Hochladen braucht es hier ein Passwort. Gib das ein, das du vom Besitzer bekommen hast."
+closed = "Hochladen in diesen Ordner ist gerade nicht möglich."
+submit = "Weiter"
+
+# Admin: Bereiche und öffentliche Uploads.
+[volumes]
+title = "Bereiche"
+flag_public = "Öffentlich (alle können lesen)"
+flag_local = "Nur von zu Hause erreichbar"
+flag_read_only = "Schreibgeschützt"
+flag_read_only_path = "Schreibgeschützter Bereich: {path}"
+flag_staged = "Ordner-Uploads erscheinen erst, wenn sie vollständig sind"
+flag_trash_days_one = "Papierkorb hält {count} Tag"
+flag_trash_days_other = "Papierkorb hält {count} Tage"
+flag_trash_kept = "Papierkorb hält, bis er geleert wird"
+public_upload = "Öffentliche Uploads"
+closed = "Geschlossen"
+open_until = "Offen bis {date}"
+open_forever = "Offen, bis du es schließt"
+open_for = "Offen für"
+own_password = "Eigenes Passwort (optional)"
+own_password_hint = "Leer lassen für eine erzeugte Passphrase. Mindestens {min} Zeichen."
+notify = "Bei jedem Upload benachrichtigen"
+open = "Uploads öffnen"
+reopen = "Neues Passwort und neue Zeit setzen"
+close = "Uploads schließen"
+not_public = "Öffentliche Uploads gehen nur in öffentliche Bereiche."
+opened_title = "Uploads nach {volume} sind offen"
+back = "Zurück zu den Bereichen"
