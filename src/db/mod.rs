@@ -2,8 +2,8 @@
 //! passwords, the audit log, the trash index, unfinished uploads, chestcraft's temporary
 //! files, share links with their access log, visitor sessions, public upload settings,
 //! the health monitor's state (active alerts, counter baselines, alert history, hourly
-//! readings, delivery status per alert channel), the admin's appearance settings and the
-//! background image sets. Exactly one process may open it; a second open fails with
+//! readings, delivery status per alert channel), the admin's appearance settings, the
+//! background image sets and the status API tokens. Exactly one process may open it; a second open fails with
 //! [`DbError::Locked`].
 //!
 //! Records are JSON so they can grow fields without migrations; `meta.schema` versions the
@@ -37,6 +37,7 @@ const HISTORY: TableDefinition<u64, &[u8]> = TableDefinition::new("history");
 const CHANNELS: TableDefinition<&str, &[u8]> = TableDefinition::new("alert_channels");
 const SETTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("settings");
 const BACKGROUNDS: TableDefinition<&str, &[u8]> = TableDefinition::new("backgrounds");
+const API_TOKENS: TableDefinition<&str, &[u8]> = TableDefinition::new("api_tokens");
 
 pub const SCHEMA_VERSION: &str = "1";
 pub const FILE_NAME: &str = "state.redb";
@@ -300,6 +301,22 @@ pub struct AppPassword {
     pub last_ip: Option<String>,
 }
 
+/// A read-only token for the status API (`/api/v1/status`), stored under the SHA-256 of
+/// the token. Not tied to an account: whoever holds it reads the machine's status.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApiToken {
+    /// Short random id, for revoking.
+    pub id: String,
+    pub label: String,
+    pub created: i64,
+    /// Who created it: `user:<key>` or `cli`.
+    pub created_by: String,
+    #[serde(default)]
+    pub last_used: Option<i64>,
+    #[serde(default)]
+    pub last_ip: Option<String>,
+}
+
 /// A temporary file or folder chestcraft is writing in
 /// `<fs_root>/.chestcraft-uploads/<name>` (a WebDAV upload, a copy being built). Nothing
 /// outlives the request that made it, so leftovers after a crash are removed.
@@ -439,6 +456,7 @@ impl Db {
             tx.open_table(CHANNELS)?;
             tx.open_table(SETTINGS)?;
             tx.open_table(BACKGROUNDS)?;
+            tx.open_table(API_TOKENS)?;
             let mut meta = tx.open_table(META)?;
             let current = meta.get("schema")?.map(|v| v.value().to_string());
             match current.as_deref() {
@@ -722,6 +740,53 @@ impl Db {
 
     pub fn delete_app_password(&self, hash: &str) -> Result<()> {
         self.delete_key(APP_PASSWORDS, hash)
+    }
+
+    // --- status API tokens -------------------------------------------------------------
+
+    /// `durable = false` for bookkeeping like `last_used`.
+    pub fn put_api_token(&self, hash: &str, rec: &ApiToken, durable: bool) -> Result<()> {
+        self.put_json(API_TOKENS, hash, rec, durable)
+    }
+
+    pub fn api_token(&self, hash: &str) -> Result<Option<ApiToken>> {
+        self.get_json(API_TOKENS, hash)
+    }
+
+    /// `(hash, record)` of every token, oldest first.
+    pub fn api_tokens(&self) -> Result<Vec<(String, ApiToken)>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(API_TOKENS)?;
+        let mut out = Vec::new();
+        for row in t.iter()? {
+            let (k, v) = row?;
+            out.push((k.value().to_string(), serde_json::from_slice(v.value())?));
+        }
+        out.sort_by(|(_, a): &(String, ApiToken), (_, b)| {
+            (a.created, &a.id).cmp(&(b.created, &b.id))
+        });
+        Ok(out)
+    }
+
+    pub fn delete_api_token(&self, hash: &str) -> Result<()> {
+        self.delete_key(API_TOKENS, hash)
+    }
+
+    // --- liveness ----------------------------------------------------------------------
+
+    /// A durable write and a read back: proves the database file still takes writes and
+    /// syncs (`/healthz`).
+    pub fn heartbeat(&self, now: i64) -> Result<()> {
+        let value = now.to_string();
+        let tx = self.db.begin_write()?;
+        tx.open_table(META)?.insert("heartbeat", value.as_str())?;
+        tx.commit()?;
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(META)?;
+        match t.get("heartbeat")? {
+            Some(v) if v.value() == value => Ok(()),
+            _ => Err(DbError::Redb("heartbeat did not read back".into())),
+        }
     }
 
     // --- temporary files ---------------------------------------------------------------

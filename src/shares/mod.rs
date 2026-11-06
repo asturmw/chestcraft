@@ -20,6 +20,7 @@
 pub mod words;
 
 use crate::auth::perm::{Origin, Perms, Principal, path_perms};
+use crate::auth::random::BASE58;
 use crate::auth::{password, random, session};
 use crate::config::Config;
 use crate::db::{Db, DbError, GuestSession, PublicWrite, Share, User};
@@ -30,7 +31,6 @@ use std::io;
 use std::net::IpAddr;
 
 pub const ID_LEN: usize = 12;
-const BASE58: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 /// Cookie of a share visitor (path `/s/<id>`).
 pub const SHARE_COOKIE: &str = "cc_share";

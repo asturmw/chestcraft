@@ -115,11 +115,24 @@ Plan steps 1–2 done. Step 3 (backend slices):
   a forced change; `ah-alg` hashes get a one-time password; empty password, invalid name,
   case duplicate or existing account → skipped (`Db::insert_user` never overwrites); audited
   as `user_imported` (actor `cli`). `/dev/stdin` works (`ssh host cat … | chestcraft …`).
-- Next: slice 11, `/healthz` + status API. The account page still lacks app passwords and "sign
-  out everywhere", and rename/move/copy in the UI come with the UI integration; the
-  primitives exist. A thumbnail that fails to load needs a JS fallback to the type icon (UI
-  integration). The dashboard/alerts markup is provisional until the design session
-  delivers those screens. The nightly state backup (not built yet) must include
+- Slice 11 done: `/healthz` + status API (`web/status.rs`, `docs/api.md`). `/healthz` sits
+  outside the session layer and answers from memory: `ok`, or 503 with `starting` / `db`
+  (heartbeat: synced write + read back every minute, none for 3 min) / `monitor` (snapshot
+  > 5 min old) / `collector` (`smart:*` or `probe:*` alert active); the machine's own
+  alerts never make it 503. `/api/v1/status` (`api: 1`, fields only added): LAN/Tailscale
+  only (remote → 404), `Authorization: Bearer ccs_…` (`auth/apitoken.rs`: 257-bit base58,
+  SHA-256 stored, ≤ 20, label, last used + IP, not tied to an account), wrong tokens →
+  backoff scope `api:status` + audit; JSON with verdict, alerts (titles in the alert
+  language), sources, pools, datasets, md, disks, host, app, channels (no destinations: an
+  ntfy topic is a secret). Tokens: section on `/.cc/admin/volumes`, POST
+  `/.cc/admin/api-tokens` (add → shown once / revoke), audited; `chestcraft api-token
+  add|list|revoke` (service stopped). The future `install.sh` must treat `collector` as
+  "not the binary's fault" (a fresh install says it until `collect` has run).
+- Next: slice 12, MCP server for agents (Addendum 2). The account page still lacks app
+  passwords and "sign out everywhere", and rename/move/copy in the UI come with the UI
+  integration; the primitives exist. A thumbnail that fails to load needs a JS fallback to
+  the type icon (UI integration). The dashboard/alerts and volumes/API-token markup is
+  provisional until the design session delivers those screens. The nightly state backup (not built yet) must include
   `<state_dir>/backgrounds`.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/

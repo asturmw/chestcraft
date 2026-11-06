@@ -538,7 +538,17 @@ pub struct PublicState {
 pub struct VolumesView {
     pub csrf: String,
     pub rows: Vec<VolumeRow>,
+    /// Status API tokens.
+    pub tokens: Vec<TokenRow>,
     pub error: Option<String>,
+}
+
+pub struct TokenRow {
+    pub id: String,
+    pub label: String,
+    pub created: String,
+    /// "Never" or date (and address) of the last use.
+    pub last_used: String,
 }
 
 pub fn admin_volumes(ctx: &Ctx, v: &VolumesView) -> Markup {
@@ -606,6 +616,74 @@ pub fn admin_volumes(ctx: &Ctx, v: &VolumesView) -> Markup {
                     }
                 }
             }
+            section class="api-tokens" id="api-tokens" aria-labelledby="api-tokens-title" {
+                h2 id="api-tokens-title" { (ctx.t("api_tokens.title")) }
+                p class="api-tokens__intro" { (ctx.t("api_tokens.intro")) }
+                @if v.tokens.is_empty() {
+                    p class="api-tokens__empty" { (ctx.t("api_tokens.none")) }
+                } @else {
+                    table class="api-tokens__list" {
+                        thead {
+                            tr {
+                                th scope="col" { (ctx.t("api_tokens.label")) }
+                                th scope="col" { (ctx.t("api_tokens.created")) }
+                                th scope="col" { (ctx.t("api_tokens.last_used")) }
+                                th scope="col" { span class="visually-hidden" { (ctx.t("api_tokens.actions")) } }
+                            }
+                        }
+                        tbody {
+                            @for t in &v.tokens {
+                                tr data-id=(t.id) {
+                                    td { (t.label) }
+                                    td { (t.created) }
+                                    td { (t.last_used) }
+                                    td {
+                                        form method="post" action="/.cc/admin/api-tokens" {
+                                            input type="hidden" name="csrf" value=(v.csrf);
+                                            input type="hidden" name="op" value="revoke";
+                                            input type="hidden" name="id" value=(t.id);
+                                            button type="submit" { (ctx.t("api_tokens.revoke")) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                form class="api-tokens__add" method="post" action="/.cc/admin/api-tokens" {
+                    input type="hidden" name="csrf" value=(v.csrf);
+                    input type="hidden" name="op" value="add";
+                    label class="field" {
+                        span class="field__label" { (ctx.t("api_tokens.label")) }
+                        input class="field__input" type="text" name="label" required maxlength=(crate::auth::apitoken::MAX_LABEL_CHARS)
+                            autocomplete="off" placeholder=(ctx.t("api_tokens.label_example"));
+                    }
+                    button type="submit" { (ctx.t("api_tokens.add")) }
+                }
+            }
+        },
+    )
+}
+
+/// A new status API token, shown once.
+pub fn api_token_created(ctx: &Ctx, label: &str, token: &str) -> Markup {
+    let title = ctx.tf("api_tokens.created_title", &[("label", label)]);
+    layout(
+        ctx,
+        &title,
+        html! {
+            h1 class="share-secret__title" { (title) }
+            p class="banner" data-state="warning" role="status" { (ctx.t("api_tokens.once")) }
+            dl class="share-secret" {
+                dt { (ctx.t("api_tokens.token")) }
+                dd {
+                    input class="field__input" id="secret-token" type="text" readonly value=(token);
+                    " " button type="button" data-js="copy" data-copy="secret-token" { (ctx.t("api_tokens.copy")) }
+                }
+            }
+            p { (ctx.t("api_tokens.usage")) }
+            pre { code { "curl -H 'Authorization: Bearer " (token) "' http://<host>/api/v1/status" } }
+            p { a href="/.cc/admin/volumes#api-tokens" { (ctx.t("volumes.back")) } }
         },
     )
 }

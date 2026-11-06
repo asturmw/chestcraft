@@ -1,5 +1,8 @@
 //! Randomness from the OS (getrandom) and small encoders.
 
+/// Base58 (Bitcoin alphabet): no 0, O, I or l.
+pub const BASE58: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
 /// `N` random bytes. Panics only if the OS random source fails, which leaves nothing safe
 /// to do anyway.
 pub fn bytes<const N: usize>() -> [u8; N] {
