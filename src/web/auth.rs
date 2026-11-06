@@ -6,6 +6,7 @@ use crate::auth::perm::{ADMIN_ROLE, Origin, Principal};
 use crate::auth::{apppass, password, session};
 use crate::dav::{DavAuth, DavUser};
 use crate::db::{AuditEvent, Session, User, UserSettings};
+use crate::health::alerts::{Msg, Severity};
 use axum::extract::{Extension, Form, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
@@ -198,6 +199,7 @@ async fn check_basic(
                 &account,
                 "webdav",
             );
+            stuffing_alert(st, &account);
         }
         return Err(Box::new(crate::dav::unauthorized()));
     };
@@ -308,6 +310,18 @@ pub fn safe_next(next: &str) -> String {
 }
 
 /// Write an audit event without holding up the request.
+/// Alert: one account gets wrong passwords from many addresses (once per hour, like the
+/// backoff signal itself).
+pub fn stuffing_alert(st: &AppState, account: &str) {
+    super::raise(
+        st,
+        &format!("stuffing:{account}"),
+        3600,
+        Severity::Critical,
+        Msg::new("stuffing").text("account", account),
+    );
+}
+
 pub fn audit(st: &AppState, actor: String, ip: IpAddr, action: &str, target: &str, detail: &str) {
     let ev = AuditEvent {
         time: now(),
@@ -424,6 +438,7 @@ pub async fn login_submit(
                 &account,
                 "",
             );
+            stuffing_alert(&st, &account);
         }
         let msg = if f.wait > 0 {
             slowed_down(&ctx, f.wait)
@@ -435,6 +450,7 @@ pub async fn login_submit(
 
     st.backoff.succeed(client.ip, &account);
     let admin = user.role == ADMIN_ROLE;
+    let user_name = user.name.clone();
     let must_change = user.must_change_password;
     let remote = client.origin == Origin::Remote;
     let created = session::create(&account, client.ip, remote, now);
@@ -483,6 +499,21 @@ pub async fn login_submit(
     if admin && new_remote_ip {
         tracing::warn!(account, ip = %client.ip, "admin signed in from a new remote address");
         audit(&st, actor, client.ip, "admin_new_remote_ip", &account, "");
+        let country = client.country_code();
+        super::raise(
+            &st,
+            &format!("admin_ip:{account}:{}", client.ip),
+            0,
+            Severity::Warning,
+            Msg::new(if country.is_empty() {
+                "admin_new_ip"
+            } else {
+                "admin_new_ip_country"
+            })
+            .text("user", &user_name)
+            .text("ip", client.ip.to_string())
+            .text("country", country),
+        );
     }
 
     let target = if must_change {

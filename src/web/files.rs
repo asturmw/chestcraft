@@ -170,7 +170,11 @@ pub async fn landing(
             }),
         })
         .collect();
-    views::landing(&ctx, &cards).into_response()
+    let health = principal.is_admin().then(|| views::HealthLine {
+        verdict: st.health.verdict(super::now()).as_str(),
+        alerts: st.health.active().len(),
+    });
+    views::landing(&ctx, &cards, health).into_response()
 }
 
 /// Everything below `/<Volume>/`.

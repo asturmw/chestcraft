@@ -1,12 +1,18 @@
 //! The state database (redb, one file in `paths.state_dir`): accounts, sessions, app
 //! passwords, the audit log, the trash index, unfinished uploads, chestcraft's temporary
-//! files, share links with their access log, visitor sessions and public upload settings. Exactly one process may open it; a second open fails with [`DbError::Locked`].
+//! files, share links with their access log, visitor sessions, public upload settings,
+//! and the health monitor's state (active alerts, counter baselines, alert history, hourly
+//! readings, delivery status per alert channel). Exactly one process may open it; a second
+//! open fails with [`DbError::Locked`].
 //!
 //! Records are JSON so they can grow fields without migrations; `meta.schema` versions the
 //! table layout. All calls block (and may fsync); async code runs them in `spawn_blocking`.
 
-use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{
+    Database, Durability, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -23,6 +29,11 @@ const SHARES: TableDefinition<&str, &[u8]> = TableDefinition::new("shares");
 const SHARE_LOG: TableDefinition<(&str, u64), &[u8]> = TableDefinition::new("share_log");
 const GUESTS: TableDefinition<&str, &[u8]> = TableDefinition::new("guest_sessions");
 const PUBLIC_WRITE: TableDefinition<&str, &[u8]> = TableDefinition::new("public_write");
+const ALERTS: TableDefinition<&str, &[u8]> = TableDefinition::new("alerts");
+const BASELINES: TableDefinition<&str, &[u8]> = TableDefinition::new("alert_baselines");
+const ALERT_LOG: TableDefinition<u64, &[u8]> = TableDefinition::new("alert_log");
+const HISTORY: TableDefinition<u64, &[u8]> = TableDefinition::new("history");
+const CHANNELS: TableDefinition<&str, &[u8]> = TableDefinition::new("alert_channels");
 
 pub const SCHEMA_VERSION: &str = "1";
 pub const FILE_NAME: &str = "state.redb";
@@ -312,6 +323,12 @@ pub struct PublicWrite {
     pub by: String,
 }
 
+fn json_map<T: Serialize>(m: &BTreeMap<String, T>) -> Result<BTreeMap<String, Vec<u8>>> {
+    m.iter()
+        .map(|(k, v)| Ok((k.clone(), serde_json::to_vec(v)?)))
+        .collect()
+}
+
 pub struct Db {
     db: Database,
     /// Last audit key handed out; keys are unique, increasing nanoseconds.
@@ -340,6 +357,11 @@ impl Db {
             tx.open_table(SHARE_LOG)?;
             tx.open_table(GUESTS)?;
             tx.open_table(PUBLIC_WRITE)?;
+            tx.open_table(ALERTS)?;
+            tx.open_table(BASELINES)?;
+            tx.open_table(ALERT_LOG)?;
+            tx.open_table(HISTORY)?;
+            tx.open_table(CHANNELS)?;
             let mut meta = tx.open_table(META)?;
             let current = meta.get("schema")?.map(|v| v.value().to_string());
             match current.as_deref() {
@@ -440,6 +462,11 @@ impl Db {
     /// `durable = false` for bookkeeping like `last_seen`, which may be lost in a crash.
     pub fn put_session(&self, id_hash: &str, session: &Session, durable: bool) -> Result<()> {
         self.put_json(SESSIONS, id_hash, session, durable)
+    }
+
+    pub fn session_count(&self) -> Result<u64> {
+        let tx = self.db.begin_read()?;
+        Ok(tx.open_table(SESSIONS)?.len()?)
     }
 
     pub fn delete_session(&self, id_hash: &str) -> Result<()> {
@@ -752,6 +779,140 @@ impl Db {
         tx.open_table(AUDIT)?.insert(key, bytes.as_slice())?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Events at or after `since` (Unix seconds), oldest first.
+    pub fn audit_since(&self, since: i64) -> Result<Vec<AuditEvent>> {
+        let from = (since.max(0) as u64).saturating_mul(1_000_000_000);
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(AUDIT)?;
+        let mut out = Vec::new();
+        for row in t.range(from..)? {
+            let (_, v) = row?;
+            out.push(serde_json::from_slice(v.value())?);
+        }
+        Ok(out)
+    }
+
+    // --- health monitor ----------------------------------------------------------------
+
+    /// Active alerts and counter baselines, by key.
+    pub fn alert_state<A: DeserializeOwned, B: DeserializeOwned>(
+        &self,
+    ) -> Result<(BTreeMap<String, A>, BTreeMap<String, B>)> {
+        fn read<T: DeserializeOwned>(
+            tx: &redb::ReadTransaction,
+            def: TableDefinition<&str, &[u8]>,
+        ) -> Result<BTreeMap<String, T>> {
+            let t = tx.open_table(def)?;
+            let mut out = BTreeMap::new();
+            for row in t.iter()? {
+                let (k, v) = row?;
+                out.insert(k.value().to_string(), serde_json::from_slice(v.value())?);
+            }
+            Ok(out)
+        }
+        let tx = self.db.begin_read()?;
+        Ok((read(&tx, ALERTS)?, read(&tx, BASELINES)?))
+    }
+
+    /// Replace the active alerts and baselines and append `log` entries, in one transaction.
+    pub fn put_alert_state<A: Serialize, B: Serialize, L: Serialize>(
+        &self,
+        active: &BTreeMap<String, A>,
+        baselines: &BTreeMap<String, B>,
+        log: &[L],
+    ) -> Result<()> {
+        let mut keys = Vec::with_capacity(log.len());
+        for _ in log {
+            keys.push(self.next_log_key());
+        }
+        let tx = self.db.begin_write()?;
+        {
+            for (def, map) in [
+                (ALERTS, json_map(active)?),
+                (BASELINES, json_map(baselines)?),
+            ] {
+                let mut t = tx.open_table(def)?;
+                t.retain(|k, _| map.contains_key(k))?;
+                for (k, v) in &map {
+                    t.insert(k.as_str(), v.as_slice())?;
+                }
+            }
+            let mut t = tx.open_table(ALERT_LOG)?;
+            for (key, entry) in keys.into_iter().zip(log) {
+                t.insert(key, serde_json::to_vec(entry)?.as_slice())?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Append to the alert history (one-shot events from the web side).
+    pub fn log_alert<L: Serialize>(&self, entry: &L) -> Result<()> {
+        let bytes = serde_json::to_vec(entry)?;
+        let key = self.next_log_key();
+        let tx = self.db.begin_write()?;
+        tx.open_table(ALERT_LOG)?.insert(key, bytes.as_slice())?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Alert history, newest first, at most `limit`.
+    pub fn alert_log<L: DeserializeOwned>(&self, limit: usize) -> Result<Vec<L>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(ALERT_LOG)?;
+        let mut out = Vec::new();
+        for row in t.iter()?.rev().take(limit) {
+            let (_, v) = row?;
+            out.push(serde_json::from_slice(v.value())?);
+        }
+        Ok(out)
+    }
+
+    /// Drop alert history and hourly readings older than the given Unix times.
+    pub fn prune_health(&self, log_before: i64, history_before: i64) -> Result<()> {
+        let log_key = (log_before.max(0) as u64).saturating_mul(1_000_000_000);
+        let tx = self.db.begin_write()?;
+        {
+            let mut t = tx.open_table(ALERT_LOG)?;
+            t.retain(|k, _| k >= log_key)?;
+            let mut t = tx.open_table(HISTORY)?;
+            t.retain(|k, _| k >= history_before.max(0) as u64)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Store the reading for the hour starting at `hour` (Unix seconds).
+    pub fn put_history<S: Serialize>(&self, hour: i64, sample: &S) -> Result<()> {
+        let bytes = serde_json::to_vec(sample)?;
+        let mut tx = self.db.begin_write()?;
+        tx.set_durability(Durability::None)?;
+        tx.open_table(HISTORY)?
+            .insert(hour.max(0) as u64, bytes.as_slice())?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Hourly readings since `since`, oldest first.
+    pub fn history<S: DeserializeOwned>(&self, since: i64) -> Result<Vec<(i64, S)>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(HISTORY)?;
+        let mut out = Vec::new();
+        for row in t.range(since.max(0) as u64..)? {
+            let (k, v) = row?;
+            out.push((k.value() as i64, serde_json::from_slice(v.value())?));
+        }
+        Ok(out)
+    }
+
+    pub fn channel_status<C: DeserializeOwned>(&self, name: &str) -> Result<Option<C>> {
+        self.get_json(CHANNELS, name)
+    }
+
+    pub fn put_channel_status<C: Serialize>(&self, name: &str, status: &C) -> Result<()> {
+        self.put_json(CHANNELS, name, status, false)
     }
 
     /// Newest first, at most `limit`.

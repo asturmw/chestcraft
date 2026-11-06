@@ -1,0 +1,107 @@
+{
+ "output_version": {
+  "command": "zpool list",
+  "vers_major": 0,
+  "vers_minor": 1
+ },
+ "pools": {
+  "fast": {
+   "name": "fast",
+   "type": "POOL",
+   "state": "DEGRADED",
+   "properties": {
+    "size": {
+     "value": 2000000000000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "allocated": {
+     "value": 1660000000000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "free": {
+     "value": 340000000000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "fragmentation": {
+     "value": 11,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "capacity": {
+     "value": 83,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "health": {
+     "value": "DEGRADED",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "backup": {
+   "name": "backup",
+   "type": "POOL",
+   "state": "ONLINE",
+   "properties": {
+    "size": {
+     "value": 4000000000000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "allocated": {
+     "value": 1000000000000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "free": {
+     "value": 3000000000000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "fragmentation": {
+     "value": 1,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "capacity": {
+     "value": 25,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "health": {
+     "value": "ONLINE",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  }
+ }
+}

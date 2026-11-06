@@ -1,0 +1,40 @@
+# chestcraft: read SMART data of every disk for the dashboard and the alerts.
+# Runs as root (smartctl needs it), has no network, and may write only its output folder.
+# The server (service user) reads the result; nothing it can write is read here.
+# If you change paths.smart_file, change RuntimeDirectory and ReadWritePaths to match.
+[Unit]
+Description=chestcraft SMART collector
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/chestcraft --config /etc/chestcraft/config.toml collect
+User=root
+UMask=0022
+RuntimeDirectory=chestcraft-smart
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/chestcraft-smart
+
+# smartctl talks to the disks: no PrivateDevices; SG_IO and NVMe admin commands need these.
+CapabilityBoundingSet=CAP_SYS_RAWIO CAP_SYS_ADMIN
+NoNewPrivileges=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+TimeoutStartSec=15min

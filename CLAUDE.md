@@ -63,10 +63,34 @@ Plan steps 1–2 done. Step 3 (backend slices):
   dropped), prev/next by name, info, download/share/delete. Listings: icon type
   (`data-type`), thumbnail `<img>`, name → viewer, download link, `?layout=grid`. Share
   folders get the same; the single-file share card shows the preview.
-- Next: slice 8, collector + dashboard (auto-detected hardware) + alerts + Telegram/ntfy.
-  The account page (app passwords in the UI) and rename/move/copy in the UI come with the
-  UI integration; the primitives exist. A thumbnail that fails to load needs a JS fallback
-  to the type icon (UI integration).
+- Slice 8 done: health (`src/health/`): every minute the server reads `zpool status/list -j`,
+  `zfs list -j` (datasets + snapshots), `/proc/mdstat`, `/sys/block` (disks; vdev paths and
+  md members resolved to their disk), /proc + hwmon (host) and the SMART file that
+  `chestcraft collect` (root, `deploy/units/chestcraft-collect.{service,timer}`, every
+  30 min, `-n standby` keeps the last reading of sleeping disks) writes to
+  `paths.smart_file` (folder and file must belong to root). Tools run with an empty env,
+  a timeout, and never twice while one hangs. Absent hardware = no section. Alerts
+  (`health/alerts.rs`): rules → conditions with stable keys + events (counter rises);
+  fire/resolve messages, criticals repeat every 24 h, escalation, hysteresis; a source
+  that fails keeps its alerts (and raises its own); thresholds + snapshot ages in
+  `[alerts.thresholds]` / `[alerts.snapshots]`. State, baselines, alert log (365 d),
+  hourly history (90 d) and channel status in redb. Channels (`src/notify/`): Telegram +
+  ntfy via curl with config + token on stdin, retries 1/5/15/60 min, secrets from
+  `secrets.toml` / `$CREDENTIALS_DIRECTORY/secrets`; `chestcraft telegram-setup`. Events
+  from requests: admin from a new remote IP, credential stuffing, share/public-upload
+  password lockout (6 h cooldown), public uploads with notify (one per volume per 10 min).
+  Pages: `/.cc/admin/dashboard` (verdict, alerts, pools with vdev tree + fill chart and
+  projection, datasets with trash, disks with temp sparklines, md, host, app; 30-s
+  refresh in `assets/dashboard.js`), `/.cc/admin/alerts` (active, channels + test button,
+  history); verdict line on the admin landing page; weekly digest at `alerts.digest`.
+  Fixtures: anonymized zpool/zfs output from the NAS, smartctl NVMe from another host,
+  ATA hand-written (no SATA disk had smartctl yet). Not yet run as root against real
+  disks: `collect` needs smartmontools on the NAS (setup step 4).
+- Next: slice 9, user preferences + appearance (skins, backgrounds, rotation). The account
+  page (app passwords in the UI) and rename/move/copy in the UI come with the UI
+  integration; the primitives exist. A thumbnail that fails to load needs a JS fallback to
+  the type icon (UI integration). The dashboard/alerts markup is provisional until the
+  design session delivers those screens.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in

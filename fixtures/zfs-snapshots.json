@@ -1,0 +1,128 @@
+{
+ "output_version": {
+  "command": "zfs list",
+  "vers_major": 0,
+  "vers_minor": 1
+ },
+ "datasets": {
+  "tank/docs@autosnap_2026-11-06_07:00:00_hourly": {
+   "name": "tank/docs@autosnap_2026-11-06_07:00:00_hourly",
+   "type": "SNAPSHOT",
+   "pool": "tank",
+   "createtxg": 1,
+   "dataset": "tank/docs",
+   "snapshot_name": "autosnap_2026-11-06_07:00:00_hourly",
+   "properties": {
+    "creation": {
+     "value": 1793948400,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/docs@autosnap_2026-11-06_08:00:00_hourly": {
+   "name": "tank/docs@autosnap_2026-11-06_08:00:00_hourly",
+   "type": "SNAPSHOT",
+   "pool": "tank",
+   "createtxg": 1,
+   "dataset": "tank/docs",
+   "snapshot_name": "autosnap_2026-11-06_08:00:00_hourly",
+   "properties": {
+    "creation": {
+     "value": 1793952000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/docs@autosnap_2026-11-06_09:00:00_hourly": {
+   "name": "tank/docs@autosnap_2026-11-06_09:00:00_hourly",
+   "type": "SNAPSHOT",
+   "pool": "tank",
+   "createtxg": 1,
+   "dataset": "tank/docs",
+   "snapshot_name": "autosnap_2026-11-06_09:00:00_hourly",
+   "properties": {
+    "creation": {
+     "value": 1793955600,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/docs@autosnap_2026-11-05_00:00:00_daily": {
+   "name": "tank/docs@autosnap_2026-11-05_00:00:00_daily",
+   "type": "SNAPSHOT",
+   "pool": "tank",
+   "createtxg": 1,
+   "dataset": "tank/docs",
+   "snapshot_name": "autosnap_2026-11-05_00:00:00_daily",
+   "properties": {
+    "creation": {
+     "value": 1793840400,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/media/video@autosnap_2026-11-03_00:00:00_daily": {
+   "name": "tank/media/video@autosnap_2026-11-03_00:00:00_daily",
+   "type": "SNAPSHOT",
+   "pool": "tank",
+   "createtxg": 1,
+   "dataset": "tank/media/video",
+   "snapshot_name": "autosnap_2026-11-03_00:00:00_daily",
+   "properties": {
+    "creation": {
+     "value": 1793667600,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/media/video@autosnap_2026-11-02_00:00:00_daily": {
+   "name": "tank/media/video@autosnap_2026-11-02_00:00:00_daily",
+   "type": "SNAPSHOT",
+   "pool": "tank",
+   "createtxg": 1,
+   "dataset": "tank/media/video",
+   "snapshot_name": "autosnap_2026-11-02_00:00:00_daily",
+   "properties": {
+    "creation": {
+     "value": 1793581200,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank@pre-restructure": {
+   "name": "tank@pre-restructure",
+   "type": "SNAPSHOT",
+   "pool": "tank",
+   "createtxg": 1,
+   "dataset": "tank",
+   "snapshot_name": "pre-restructure",
+   "properties": {
+    "creation": {
+     "value": 1791363600,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  }
+ }
+}

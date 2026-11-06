@@ -89,6 +89,7 @@ pub struct VolumeRoot {
 
 /// The open volumes. Volumes whose directory can't be opened are left out (and logged),
 /// so one unmounted dataset doesn't take down the rest.
+#[derive(Clone)]
 pub struct Volumes {
     map: BTreeMap<String, Arc<VolumeRoot>>,
 }
