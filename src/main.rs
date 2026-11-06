@@ -41,6 +41,31 @@ enum Cmd {
     /// Manage accounts (run as the service user while the service is stopped)
     #[command(subcommand)]
     User(UserCmd),
+    /// Create accounts from a copyparty config file; each keeps its copyparty password until
+    /// it picks a new one at the first sign-in. Existing accounts are never changed. Run as
+    /// the service user while the service is stopped; the file is only read.
+    ImportCopyparty {
+        /// copyparty config file
+        file: PathBuf,
+        /// Role for an account ("admin" or one from [roles]); once per account
+        #[arg(long = "role", value_name = "NAME=ROLE", value_parser = parse_role)]
+        roles: Vec<(String, String)>,
+        /// Leave an account out; once per account
+        #[arg(long, value_name = "NAME")]
+        skip: Vec<String>,
+        /// Only show what would happen
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+fn parse_role(s: &str) -> Result<(String, String), String> {
+    match s.rsplit_once('=') {
+        Some((name, role)) if !name.trim().is_empty() && !role.trim().is_empty() => {
+            Ok((name.trim().to_string(), role.trim().to_string()))
+        }
+        _ => Err("use NAME=ROLE, e.g. --role jana=familie".to_string()),
+    }
 }
 
 #[derive(Subcommand)]
@@ -89,7 +114,122 @@ fn main() -> ExitCode {
         Cmd::User(cmd) => user(&cli.config, cmd),
         Cmd::Collect => collect(&cli.config),
         Cmd::TelegramSetup { secrets } => telegram_setup(&cli.config, secrets),
+        Cmd::ImportCopyparty {
+            file,
+            roles,
+            skip,
+            dry_run,
+        } => import_copyparty(&cli.config, &file, roles, skip, dry_run),
     }
+}
+
+/// State commands must not create files that the service (another user) can't open.
+fn refuse_root(what: &str) -> Option<ExitCode> {
+    if !rustix::process::geteuid().is_root() {
+        return None;
+    }
+    eprintln!(
+        "Run this as the service user (e.g. `sudo -u chestcraft chestcraft {what} ...`), not as root:"
+    );
+    eprintln!("a database file created by root can't be opened by the service.");
+    Some(ExitCode::FAILURE)
+}
+
+fn import_copyparty(
+    path: &Path,
+    file: &Path,
+    roles: Vec<(String, String)>,
+    skip: Vec<String>,
+    dry_run: bool,
+) -> ExitCode {
+    use chestcraft::import::{self, Action, Choices};
+    if let Some(code) = refuse_root("import-copyparty") {
+        return code;
+    }
+    let cfg = match Config::load(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{}:\n{e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let parsed = match import::copyparty::parse_file(file) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let db = match chestcraft::web::open_db(&cfg) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let plan = match import::plan(&parsed, &cfg, &db, &Choices { roles, skip }) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    print!("{}", import::report(&plan, file));
+    println!();
+    let missing = plan.needs_role();
+    if !missing.is_empty() {
+        let mut available = vec![chestcraft::auth::perm::ADMIN_ROLE.to_string()];
+        available.extend(cfg.roles.keys().cloned());
+        println!(
+            "Give each of {} a role with --role NAME=ROLE (roles: {}) or leave it out with --skip NAME.",
+            missing.join(", "),
+            available.join(", ")
+        );
+        if dry_run {
+            return ExitCode::SUCCESS;
+        }
+        eprintln!("Nothing imported.");
+        return ExitCode::FAILURE;
+    }
+    let count = plan
+        .entries
+        .iter()
+        .filter(|e| matches!(e.action, Action::Import { .. }))
+        .count();
+    if dry_run {
+        println!("Dry run: {count} account(s) would be imported; nothing changed.");
+        return ExitCode::SUCCESS;
+    }
+    if count == 0 {
+        println!("Nothing to import.");
+        return ExitCode::SUCCESS;
+    }
+    let now = jiff::Timestamp::now().as_second();
+    let done = match import::apply(&plan, &db, now) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let list: Vec<String> = done
+        .iter()
+        .map(|i| format!("{} ({})", i.name, i.role))
+        .collect();
+    println!("Imported {}: {}.", done.len(), list.join(", "));
+    for i in done.iter().filter(|i| i.one_time.is_some()) {
+        println!(
+            "One-time password for {} (changed at first sign-in): {}",
+            i.name,
+            i.one_time.as_deref().unwrap_or_default()
+        );
+    }
+    println!(
+        "They sign in with name + password and must pick a new password (at least {} characters).",
+        chestcraft::auth::password::MIN_ACCOUNT_PASSWORD
+    );
+    println!("WebDAV clients need an app password: chestcraft user app-password add NAME LABEL");
+    ExitCode::SUCCESS
 }
 
 fn init_logging() {
@@ -281,22 +421,9 @@ fn telegram_setup(path: &Path, secrets: Option<PathBuf>) -> ExitCode {
     }
 }
 
-fn valid_username(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 32
-        && !name.starts_with(['.', '-'])
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-}
-
 fn user(path: &Path, cmd: UserCmd) -> ExitCode {
-    if rustix::process::geteuid().is_root() {
-        eprintln!(
-            "Run this as the service user (e.g. `sudo -u chestcraft chestcraft user ...`), not as root:"
-        );
-        eprintln!("a database file created by root can't be opened by the service.");
-        return ExitCode::FAILURE;
+    if let Some(code) = refuse_root("user") {
+        return code;
     }
     let cfg = match Config::load(path) {
         Ok(cfg) => cfg,
@@ -322,7 +449,7 @@ fn user(path: &Path, cmd: UserCmd) -> ExitCode {
     let result: Result<ExitCode, chestcraft::db::DbError> = (|| {
         Ok(match cmd {
             UserCmd::Add { name, role } => {
-                if !valid_username(&name) {
+                if !chestcraft::auth::valid_username(&name) {
                     return Ok(fail(format!(
                         "\"{name}\": use 1–32 of a–z, A–Z, 0–9, . _ -"
                     )));

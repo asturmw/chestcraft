@@ -530,6 +530,24 @@ impl Db {
         self.all_json(USERS)
     }
 
+    /// Store a new account unless one with the same key exists; `Ok(false)` leaves the
+    /// existing account untouched.
+    pub fn insert_user(&self, user: &User) -> Result<bool> {
+        let key = User::key(&user.name);
+        let tx = self.db.begin_write()?;
+        let inserted = {
+            let mut t = tx.open_table(USERS)?;
+            if t.get(key.as_str())?.is_some() {
+                false
+            } else {
+                t.insert(key.as_str(), serde_json::to_vec(user)?.as_slice())?;
+                true
+            }
+        };
+        tx.commit()?;
+        Ok(inserted)
+    }
+
     /// Read, change and write one account in a single transaction. `Ok(None)`: no such
     /// account.
     pub fn update_user(&self, name: &str, f: impl FnOnce(&mut User)) -> Result<Option<User>> {
