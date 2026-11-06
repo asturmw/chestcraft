@@ -1412,3 +1412,661 @@ async fn daily_cleanup_purges_what_is_due() {
     );
     let _ = fam;
 }
+
+// ---------------------------------------------------------------------------------------
+// WebDAV
+
+fn base64(data: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in data.chunks(3) {
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
+        for i in 0..4 {
+            if i <= c.len() {
+                out.push(A[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn basic(user: &str, secret: &str) -> String {
+    format!("Basic {}", base64(format!("{user}:{secret}").as_bytes()))
+}
+
+const PROPFIND_RCLONE: &str = r#"<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+ <d:prop><d:displayname/><d:getlastmodified/><d:getcontentlength/><d:resourcetype/>
+ <d:getcontenttype/><oc:checksums/><oc:permissions/></d:prop>
+</d:propfind>"#;
+
+impl Env {
+    /// An account with an app password; returns the `Authorization` value.
+    fn dav_user(&self, name: &str, role: &str) -> String {
+        self.add_user(name, role, PW, false);
+        let (secret, _) =
+            crate::auth::apppass::create(&self.state.db, name, "laptop rclone", 0).unwrap();
+        basic(name, &secret)
+    }
+
+    async fn dav(
+        &self,
+        auth: &str,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Res {
+        let mut h = vec![("authorization", auth)];
+        h.extend_from_slice(headers);
+        self.send_body(method, uri, "127.0.0.1", &h, body.to_string())
+            .await
+    }
+
+    async fn propfind(&self, auth: &str, uri: &str, depth: &str) -> Res {
+        self.dav(auth, "PROPFIND", uri, &[("depth", depth)], PROPFIND_RCLONE)
+            .await
+    }
+}
+
+fn hrefs(r: &Res) -> Vec<String> {
+    let t = r.text();
+    t.split("<D:href>")
+        .skip(1)
+        .map(|s| s.split("</D:href>").next().unwrap().to_string())
+        .collect()
+}
+
+fn mtime_of(p: &std::path::Path) -> i64 {
+    std::fs::metadata(p)
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[tokio::test]
+async fn webdav_needs_an_app_password_from_the_local_network() {
+    let e = env();
+    let auth = e.dav_user("Tibor", "admin");
+    // Nothing, the web password, a session cookie: all 401 with a Basic challenge.
+    let r = e.send("PROPFIND", "/", "127.0.0.1", &[]).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(r.header("www-authenticate").starts_with("Basic realm="));
+    let r = e
+        .dav(&basic("Tibor", PW), "PROPFIND", "/", &[("depth", "0")], "")
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let cookie = cookie_of(&e.login("Tibor", PW).await);
+    let r = e
+        .send("PROPFIND", "/Medien/", "127.0.0.1", &[("cookie", &cookie)])
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    // Another account's name with Tibor's secret.
+    e.add_user("jana", "familie", PW, false);
+    let (secret, _) = crate::auth::apppass::create(&e.state.db, "Tibor", "phone", 0).unwrap();
+    let r = e
+        .dav(&basic("jana", &secret), "PROPFIND", "/", &[], "")
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = e
+        .dav(&basic("tibor", &secret), "PROPFIND", "/", &[], "")
+        .await;
+    assert_eq!(r.status, StatusCode::MULTI_STATUS, "user names ignore case");
+
+    assert_eq!(
+        e.propfind(&auth, "/", "1").await.status,
+        StatusCode::MULTI_STATUS
+    );
+    // The internet is refused even with the right password, by Cloudflare headers or by
+    // the tunnel's address.
+    let h = [
+        ("authorization", auth.as_str()),
+        ("cf-connecting-ip", "203.0.113.5"),
+    ];
+    let r = e.send("PROPFIND", "/", "192.0.2.10", &h).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = e.send("PROPFIND", "/", "127.0.0.1", &h).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    // OPTIONS needs credentials like everything else.
+    let r = e.dav(&auth, "OPTIONS", "/Medien/", &[], "").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.header("dav"), "1, 2");
+    assert!(r.header("allow").contains("PROPFIND"));
+    // GET and HEAD go to the web handler, which takes the same credentials.
+    let r = e.dav(&auth, "GET", "/Backups/dump.bin", &[], "").await;
+    assert_eq!((r.status, r.text().as_str()), (StatusCode::OK, "x"));
+    let actions = e.audited(&["webdav_login_failed"]).await;
+    assert!(actions.iter().any(|a| a == "webdav_login_failed"));
+}
+
+#[tokio::test]
+async fn webdav_sign_in_failures_back_off_and_revoked_passwords_stop_working() {
+    let e = env();
+    let auth = e.dav_user("jana", "familie");
+    let wrong = basic("jana", "aaaaa-bbbbb-ccccc-ddddd-eeeee-fffff");
+    for _ in 0..5 {
+        let r = e.dav(&wrong, "PROPFIND", "/", &[], "").await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    let r = e.dav(&auth, "PROPFIND", "/", &[], "").await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(!r.header("retry-after").is_empty());
+    // Another address isn't slowed down.
+    let h = [("authorization", auth.as_str())];
+    let r = e.send("PROPFIND", "/", "192.168.1.30", &h).await;
+    assert_eq!(r.status, StatusCode::MULTI_STATUS);
+
+    // Revoked → refused. A reset password stops WebDAV too.
+    let e = env();
+    let auth = e.dav_user("jana", "familie");
+    let key = crate::db::User::key("jana");
+    let second = crate::auth::apppass::create(&e.state.db, "jana", "phone", 0)
+        .unwrap()
+        .0;
+    crate::auth::apppass::revoke(&e.state.db, &key, "laptop rclone")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        e.dav(&auth, "PROPFIND", "/", &[], "").await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let phone = basic("jana", &second);
+    assert_eq!(
+        e.dav(&phone, "PROPFIND", "/", &[], "").await.status,
+        StatusCode::MULTI_STATUS
+    );
+    let mut u = e.state.db.user("jana").unwrap().unwrap();
+    u.must_change_password = true;
+    e.state.db.put_user(&u).unwrap();
+    assert_eq!(
+        e.dav(&phone, "PROPFIND", "/", &[], "").await.status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn webdav_listings_follow_the_web_rules() {
+    let e = env();
+    let admin = e.dav_user("Tibor", "admin");
+    let jana = e.dav_user("jana", "familie");
+
+    let r = e.propfind(&jana, "/", "1").await;
+    assert_eq!(r.status, StatusCode::MULTI_STATUS);
+    assert_eq!(hrefs(&r), ["/", "/Eingang/", "/Medien/", "/Share/"]);
+    let r = e.propfind(&admin, "/", "1").await;
+    assert!(hrefs(&r).contains(&"/Backups/".to_string()));
+    assert_eq!(hrefs(&e.propfind(&jana, "/", "0").await), ["/"]);
+    // `rclone about` asks the root for its space.
+    let q = r#"<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:quota-available-bytes/><D:quota-used-bytes/></D:prop></D:propfind>"#;
+    let t = e
+        .dav(&jana, "PROPFIND", "/", &[("depth", "0")], q)
+        .await
+        .text();
+    assert!(
+        t.contains("<D:quota-available-bytes>") && !t.contains("404"),
+        "{t}"
+    );
+
+    let r = e.propfind(&jana, "/Medien/", "1").await;
+    let t = r.text();
+    let mut h = hrefs(&r);
+    h.sort();
+    assert_eq!(
+        h,
+        [
+            "/Medien/",
+            "/Medien/Urlaub%20Gardasee/",
+            "/Medien/a.txt",
+            "/Medien/page.html"
+        ]
+    );
+    assert!(
+        t.contains("<D:getcontentlength>10</D:getcontentlength>"),
+        "{t}"
+    );
+    assert!(
+        t.contains("<D:resourcetype><D:collection/></D:resourcetype>"),
+        "{t}"
+    );
+    // Unknown properties are listed as missing after the found ones.
+    let found = t.find("HTTP/1.1 200 OK").unwrap();
+    let missing = t.find("HTTP/1.1 404 Not Found").unwrap();
+    assert!(found < missing && t.contains("checksums"), "{t}");
+
+    // The admin also sees dot-names; nobody sees chestcraft's own folders.
+    let h = hrefs(&e.propfind(&admin, "/Medien/", "1").await);
+    assert!(h.contains(&"/Medien/.git/".to_string()), "{h:?}");
+    assert!(!h.iter().any(|x| x.contains("chestcraft")), "{h:?}");
+    assert_eq!(
+        e.propfind(&jana, "/Medien/.git/", "0").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        e.propfind(&admin, "/Medien/.chestcraft-trash/", "0")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // No role on Backups → as if it didn't exist. Traversal and escapes too.
+    for uri in [
+        "/Backups/",
+        "/Medien/escape",
+        "/Medien/%2e%2e/outside.txt",
+        "/Nope/",
+    ] {
+        assert_eq!(
+            e.propfind(&jana, uri, "0").await.status,
+            StatusCode::NOT_FOUND,
+            "{uri}"
+        );
+    }
+    let r = e.propfind(&jana, "/Medien/", "infinity").await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert!(r.text().contains("propfind-finite-depth"));
+    // A file, and allprop.
+    let r = e
+        .dav(&jana, "PROPFIND", "/Medien/a.txt", &[("depth", "0")], "")
+        .await;
+    let t = r.text();
+    assert!(t.contains("<D:getetag>") && t.contains("text/plain"), "{t}");
+    // Entities are refused, not expanded.
+    let evil = r#"<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><D:propfind xmlns:D="DAV:"><D:prop><D:a>&a;</D:a></D:prop></D:propfind>"#;
+    let r = e
+        .dav(&jana, "PROPFIND", "/Medien/", &[("depth", "0")], evil)
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webdav_put_keeps_the_mtime_and_replaces_in_place() {
+    let e = env();
+    let jana = e.dav_user("jana", "familie");
+    let path = e.root().join("medien/Urlaub Gardasee/notes.txt");
+    let oc = [("x-oc-mtime", "1700000000")];
+    let r = e
+        .dav(
+            &jana,
+            "PUT",
+            "/Medien/Urlaub%20Gardasee/notes.txt",
+            &oc,
+            "first",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.header("x-oc-mtime"), "accepted");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "first");
+    assert_eq!(mtime_of(&path), 1_700_000_000);
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    // Nothing half-written stays behind.
+    let uploads = e.root().join("medien/.chestcraft-uploads");
+    assert!(std::fs::read_dir(&uploads).map_or(true, |mut d| d.next().is_none()));
+    assert!(e.state.db.temps().unwrap().is_empty());
+
+    // Replace: in place, nothing goes to the trash (snapshots keep history).
+    let r = e
+        .dav(
+            &jana,
+            "PUT",
+            "/Medien/Urlaub%20Gardasee/notes.txt",
+            &[],
+            "second",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+    assert!(e.state.db.trash_items().unwrap().is_empty());
+    // Conditional writes.
+    let r = e
+        .dav(
+            &jana,
+            "PUT",
+            "/Medien/Urlaub%20Gardasee/notes.txt",
+            &[("if-none-match", "*")],
+            "third",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::PRECONDITION_FAILED);
+    let r = e
+        .dav(
+            &jana,
+            "PUT",
+            "/Medien/a.txt",
+            &[("if-match", "\"nope\"")],
+            "x",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        std::fs::read_to_string(e.root().join("medien/a.txt")).unwrap(),
+        "0123456789"
+    );
+    // Missing parent, a folder in the way, a reserved name, a dot-name for a non-admin.
+    for (uri, code) in [
+        ("/Medien/nope/x.txt", StatusCode::CONFLICT),
+        ("/Medien/Urlaub%20Gardasee", StatusCode::METHOD_NOT_ALLOWED),
+        ("/Medien/.chestcraft-uploads", StatusCode::FORBIDDEN),
+        ("/Medien/.hidden", StatusCode::FORBIDDEN),
+        ("/Medien/", StatusCode::METHOD_NOT_ALLOWED),
+    ] {
+        assert_eq!(
+            e.dav(&jana, "PUT", uri, &[], "x").await.status,
+            code,
+            "{uri}"
+        );
+    }
+    assert!(!e.root().join("medien/.hidden").exists());
+    let r = e
+        .dav(
+            &jana,
+            "PUT",
+            "/Medien/b.txt",
+            &[("content-range", "bytes 0-0/1")],
+            "x",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    // A body shorter than announced (a client that went away) leaves nothing behind.
+    let r = e
+        .dav(
+            &jana,
+            "PUT",
+            "/Medien/short.txt",
+            &[("content-length", "100")],
+            "x",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(!e.root().join("medien/short.txt").exists());
+    for _ in 0..100 {
+        if e.state.db.temps().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(e.state.db.temps().unwrap().is_empty());
+    assert_eq!(std::fs::read_dir(&uploads).unwrap().count(), 0);
+    e.audited(&["upload"]).await;
+}
+
+#[tokio::test]
+async fn webdav_rights_decide_what_may_be_replaced() {
+    let e = env();
+    // familie has "rw" on Eingang: write, but no delete, so only empty files are replaced.
+    let jana = e.dav_user("jana", "familie");
+    let leser = e.dav_user("lena", "leser");
+    std::fs::write(e.root().join("eingang/full.txt"), "data").unwrap();
+    std::fs::write(e.root().join("eingang/empty.txt"), "").unwrap();
+    let r = e.dav(&jana, "PUT", "/Eingang/full.txt", &[], "new").await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        std::fs::read_to_string(e.root().join("eingang/full.txt")).unwrap(),
+        "data"
+    );
+    // Windows and Finder create an empty file first, then write it.
+    let r = e.dav(&jana, "PUT", "/Eingang/empty.txt", &[], "new").await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = e.dav(&jana, "PUT", "/Eingang/neu.txt", &[], "new").await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    for (method, uri) in [("DELETE", "/Eingang/neu.txt"), ("MOVE", "/Eingang/neu.txt")] {
+        let h = [("destination", "/Eingang/other.txt")];
+        assert_eq!(
+            e.dav(&jana, method, uri, &h, "").await.status,
+            StatusCode::FORBIDDEN
+        );
+    }
+    // Read only: no changes at all, but reading works.
+    assert_eq!(
+        e.dav(&leser, "PUT", "/Medien/x.txt", &[], "x").await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        e.dav(&leser, "MKCOL", "/Medien/neu", &[], "").await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        e.dav(&leser, "DELETE", "/Medien/a.txt", &[], "")
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    let h = [("destination", "/Medien/b.txt")];
+    assert_eq!(
+        e.dav(&leser, "COPY", "/Medien/a.txt", &h, "").await.status,
+        StatusCode::FORBIDDEN
+    );
+    // A volume without access can't be a destination either.
+    let h = [("destination", "/Backups/a.txt")];
+    assert_eq!(
+        e.dav(&jana, "COPY", "/Medien/a.txt", &h, "").await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert!(!e.root().join("backups/a.txt").exists());
+    assert_eq!(
+        e.dav(&jana, "PROPPATCH", "/Medien/a.txt", &[], "")
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn webdav_mkcol_move_copy_and_delete() {
+    let e = env();
+    let jana = e.dav_user("jana", "familie");
+    let m = |p: &str| e.root().join("medien").join(p);
+    assert_eq!(
+        e.dav(&jana, "MKCOL", "/Medien/Neu", &[], "").await.status,
+        StatusCode::CREATED
+    );
+    assert!(m("Neu").is_dir());
+    assert_eq!(
+        e.dav(&jana, "MKCOL", "/Medien/Neu", &[], "").await.status,
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    assert_eq!(
+        e.dav(&jana, "MKCOL", "/Medien/a/b", &[], "").await.status,
+        StatusCode::CONFLICT
+    );
+    // MOVE into the new folder, with an absolute URL as rclone sends it.
+    let h = [(
+        "destination",
+        "http://files.local:3923/Medien/Neu/a%20moved.txt",
+    )];
+    let r = e.dav(&jana, "MOVE", "/Medien/a.txt", &h, "").await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    assert!(!m("a.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(m("Neu/a moved.txt")).unwrap(),
+        "0123456789"
+    );
+    // COPY a folder; Overwrite: F refuses an existing destination.
+    let h = [("destination", "/Medien/Kopie/")];
+    let r = e
+        .dav(&jana, "COPY", "/Medien/Urlaub%20Gardasee/", &h, "")
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    assert_eq!(std::fs::read(m("Kopie/IMG_2041.jpg")).unwrap(), b"jpegdata");
+    assert!(m("Urlaub Gardasee/IMG_2041.jpg").exists());
+    let h = [("destination", "/Medien/Kopie"), ("overwrite", "F")];
+    let r = e.dav(&jana, "COPY", "/Medien/Neu", &h, "").await;
+    assert_eq!(r.status, StatusCode::PRECONDITION_FAILED);
+    // MOVE over a file replaces it in place.
+    std::fs::write(m("Neu/b.txt"), "b").unwrap();
+    let h = [("destination", "/Medien/Neu/b.txt")];
+    let r = e
+        .dav(&jana, "MOVE", "/Medien/Neu/a%20moved.txt", &h, "")
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        std::fs::read_to_string(m("Neu/b.txt")).unwrap(),
+        "0123456789"
+    );
+    // COPY over a folder sends the old one to the trash.
+    let h = [("destination", "/Medien/Kopie")];
+    let r = e.dav(&jana, "COPY", "/Medien/Neu", &h, "").await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert!(m("Kopie/b.txt").exists() && !m("Kopie/IMG_2041.jpg").exists());
+    let trashed = e.state.db.trash_items().unwrap();
+    assert_eq!(trashed.len(), 1);
+    assert_eq!(
+        (trashed[0].path.as_str(), trashed[0].reason.as_str()),
+        ("Kopie", "replaced")
+    );
+    // Refused: onto itself, into a reserved name, the volume root, missing parents.
+    for (method, src, dst, code) in [
+        ("MOVE", "/Medien/Neu", "/Medien/Neu", StatusCode::FORBIDDEN),
+        (
+            "MOVE",
+            "/Medien/Neu",
+            "/Medien/.chestcraft-trash",
+            StatusCode::FORBIDDEN,
+        ),
+        ("MOVE", "/Medien/", "/Medien/x", StatusCode::FORBIDDEN),
+        (
+            "COPY",
+            "/Medien/Neu",
+            "/Medien/nope/x",
+            StatusCode::CONFLICT,
+        ),
+        ("MOVE", "/Medien/nope", "/Medien/x", StatusCode::NOT_FOUND),
+    ] {
+        let h = [("destination", dst)];
+        assert_eq!(
+            e.dav(&jana, method, src, &h, "").await.status,
+            code,
+            "{method} {src} {dst}"
+        );
+    }
+    assert_eq!(
+        e.dav(&jana, "MOVE", "/Medien/Neu", &[], "").await.status,
+        StatusCode::BAD_REQUEST
+    );
+
+    // DELETE → trash.
+    assert_eq!(
+        e.dav(&jana, "DELETE", "/Medien/Neu", &[], "").await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert!(!m("Neu").exists());
+    let items = e.state.db.trash_items().unwrap();
+    let item = items.iter().find(|i| i.path == "Neu").unwrap();
+    assert_eq!(
+        (item.reason.as_str(), item.deleted_by.as_str()),
+        ("delete", "user:jana")
+    );
+    assert_eq!(
+        e.dav(&jana, "DELETE", "/Medien/", &[], "").await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        e.dav(&jana, "DELETE", "/Medien/Neu", &[], "").await.status,
+        StatusCode::NOT_FOUND
+    );
+    let actions = e.audited(&["mkdir", "move", "copy", "trash"]).await;
+    for a in ["mkdir", "move", "copy", "trash"] {
+        assert!(actions.iter().any(|x| x == a), "{a}: {actions:?}");
+    }
+    let ev = e.state.db.recent_audit(50).unwrap();
+    assert!(
+        ev.iter()
+            .any(|a| a.action == "move" && a.detail.contains("webdav laptop rclone"))
+    );
+}
+
+#[tokio::test]
+async fn webdav_proppatch_sets_the_mtime_and_locks_are_advisory() {
+    let e = env();
+    let jana = e.dav_user("jana", "familie");
+    let leser = e.dav_user("lena", "leser");
+    let a = e.root().join("medien/a.txt");
+    let body = r#"<?xml version="1.0"?><d:propertyupdate xmlns:d="DAV:"><d:set><d:prop><d:lastmodified xmlns="DAV:">1600000000</d:lastmodified></d:prop></d:set></d:propertyupdate>"#;
+    let r = e.dav(&jana, "PROPPATCH", "/Medien/a.txt", &[], body).await;
+    assert_eq!(r.status, StatusCode::MULTI_STATUS);
+    assert!(r.text().contains("HTTP/1.1 200 OK"), "{}", r.text());
+    assert_eq!(mtime_of(&a), 1_600_000_000);
+    // Without the right to write, or for a property chestcraft doesn't keep: nothing changes.
+    let r = e
+        .dav(
+            &leser,
+            "PROPPATCH",
+            "/Medien/a.txt",
+            &[],
+            &body.replace("16", "15"),
+        )
+        .await;
+    assert!(r.text().contains("403"), "{}", r.text());
+    let both = r#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:" xmlns:Z="urn:x"><D:set><D:prop><D:lastmodified>1500000000</D:lastmodified><Z:color>red</Z:color></D:prop></D:set></D:propertyupdate>"#;
+    let r = e.dav(&jana, "PROPPATCH", "/Medien/a.txt", &[], both).await;
+    let t = r.text();
+    assert!(
+        t.contains("424 Failed Dependency") && t.contains("403 Forbidden"),
+        "{t}"
+    );
+    assert_eq!(mtime_of(&a), 1_600_000_000);
+
+    let lock = r#"<?xml version="1.0"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype><D:owner>me</D:owner></D:lockinfo>"#;
+    let r = e
+        .dav(&jana, "LOCK", "/Medien/a.txt", &[("depth", "0")], lock)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let token = r.header("lock-token").to_string();
+    assert!(token.starts_with("<opaquelocktoken:"), "{token}");
+    assert!(r.text().contains(&token[1..token.len() - 1]));
+    // A refresh keeps the token.
+    let r = e
+        .dav(
+            &jana,
+            "LOCK",
+            "/Medien/a.txt",
+            &[("if", &format!("({token})"))],
+            "",
+        )
+        .await;
+    assert_eq!(r.header("lock-token"), token);
+    let r = e
+        .dav(
+            &jana,
+            "UNLOCK",
+            "/Medien/a.txt",
+            &[("lock-token", &token)],
+            "",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn startup_sweeps_temporaries_left_by_a_crash() {
+    let e = env();
+    let vol = e.state.volumes.get("Medien").unwrap().clone();
+    let mut f = crate::fs::transfer::NewFile::create(
+        &e.state.db,
+        &vol,
+        &crate::fs::path::RelPath::root(),
+        "big.iso",
+        None,
+        0,
+    )
+    .unwrap();
+    f.write_all(b"half").unwrap();
+    // A crash: the temp entry and its record stay.
+    std::mem::forget(f);
+    assert_eq!(e.state.db.temps().unwrap().len(), 1);
+    let uploads = e.root().join("medien/.chestcraft-uploads");
+    assert_eq!(std::fs::read_dir(&uploads).unwrap().count(), 1);
+    super::jobs::sweep_leftovers(e.state.clone()).await;
+    assert!(e.state.db.temps().unwrap().is_empty());
+    assert_eq!(std::fs::read_dir(&uploads).unwrap().count(), 0);
+    assert!(!e.root().join("medien/big.iso").exists());
+}

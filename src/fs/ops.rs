@@ -46,6 +46,10 @@ pub enum OpError {
     NoSpace,
     #[error("contains a read-only area")]
     ReadOnlyInside,
+    #[error("is or contains another volume")]
+    VolumeInside,
+    #[error("not allowed")]
+    Denied,
     #[error("is or contains another filesystem")]
     MountPoint,
     #[error("can't use {path}: {source}")]

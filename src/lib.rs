@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod dav;
 pub mod db;
 pub mod fs;
 pub mod i18n;

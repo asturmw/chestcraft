@@ -3,7 +3,8 @@
 use super::views::{self, Ctx, LoginView, PasswordView};
 use super::{AppState, ClientInfo, Shared, cookie, page_ctx};
 use crate::auth::perm::{ADMIN_ROLE, Origin, Principal};
-use crate::auth::{password, session};
+use crate::auth::{apppass, password, session};
+use crate::dav::{DavAuth, DavUser};
 use crate::db::{AuditEvent, Session, User, UserSettings};
 use axum::extract::{Extension, Form, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -53,8 +54,26 @@ pub async fn principal_layer(
     if let Some(p) = test_override {
         req.extensions_mut().insert(p);
         req.extensions_mut().insert(None::<Arc<CurrentUser>>);
+        req.extensions_mut().insert(None::<Arc<DavUser>>);
         return next.run(req).await;
     }
+    // WebDAV clients send Basic auth with an app password. From the internet the header is
+    // ignored (WebDAV refuses those requests anyway, and pages fall back to the session).
+    if client.origin == Origin::Local
+        && let Some((user, secret)) = basic_credentials(req.headers())
+    {
+        return match check_basic(&st, &client, &user, &secret).await {
+            Ok(dav) => {
+                req.extensions_mut()
+                    .insert(Principal::from_account(&dav.0.name, &dav.0.role));
+                req.extensions_mut().insert(None::<Arc<CurrentUser>>);
+                req.extensions_mut().insert(Some(dav.1) as DavAuth);
+                next.run(req).await
+            }
+            Err(res) => *res,
+        };
+    }
+    req.extensions_mut().insert(None::<Arc<DavUser>>);
     let resolved = match cookie(req.headers(), session::COOKIE) {
         Some(v) if session::plausible(v) => resolve(&st, client.origin, v).await,
         _ => None,
@@ -74,6 +93,121 @@ pub async fn principal_layer(
     req.extensions_mut().insert(principal);
     req.extensions_mut().insert(current);
     next.run(req).await
+}
+
+/// User name and password from `Authorization: Basic …`.
+pub fn basic_credentials(headers: &HeaderMap) -> Option<(String, String)> {
+    let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?.trim();
+    let (scheme, data) = v.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("basic") {
+        return None;
+    }
+    let decoded = String::from_utf8(base64_decode(data.trim())?).ok()?;
+    let (user, pass) = decoded.split_once(':')?;
+    Some((user.to_string(), pass.to_string()))
+}
+
+/// Standard base64 with padding (what Basic auth uses).
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let b = s.as_bytes();
+    if !b.len().is_multiple_of(4) || b.len() > 4096 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(b.len() / 4 * 3);
+    for (i, chunk) in b.chunks(4).enumerate() {
+        let last = i == b.len() / 4 - 1;
+        let pad = chunk.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 || (pad > 0 && !last) {
+            return None;
+        }
+        let mut n = 0u32;
+        for &c in &chunk[..4 - pad] {
+            n = (n << 6) | val(c)?;
+        }
+        n <<= 6 * pad as u32;
+        let bytes = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+        out.extend_from_slice(&bytes[..3 - pad]);
+    }
+    Some(out)
+}
+
+/// Verify a WebDAV sign-in, with the same backoff as the sign-in form.
+async fn check_basic(
+    st: &Shared,
+    client: &ClientInfo,
+    user: &str,
+    secret: &str,
+) -> Result<(User, Arc<DavUser>), Box<Response>> {
+    let account = User::key(user.trim());
+    let now = now();
+    let wait = st.backoff.wait(client.ip, &account, now);
+    if wait > 0 {
+        let mut res = (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many wrong passwords; wait a moment.\n",
+        )
+            .into_response();
+        if let Ok(v) = HeaderValue::from_str(&wait.to_string()) {
+            res.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return Err(Box::new(res));
+    }
+    let verified = {
+        let (st, user, secret, ip) = (
+            st.clone(),
+            user.to_string(),
+            secret.to_string(),
+            client.ip.to_string(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let v = apppass::verify(&st.db, &user, &secret).ok().flatten()?;
+            apppass::touch(&st.db, &v, &ip, now);
+            Some(v)
+        })
+        .await
+        .ok()
+        .flatten()
+    };
+    let Some(v) = verified else {
+        let f = st.backoff.fail(client.ip, &account, true, now);
+        audit(
+            st,
+            "anon".into(),
+            client.ip,
+            "webdav_login_failed",
+            &account,
+            "",
+        );
+        if f.stuffing {
+            tracing::warn!(account, "many failed WebDAV sign-ins from many addresses");
+            audit(
+                st,
+                "anon".into(),
+                client.ip,
+                "credential_stuffing",
+                &account,
+                "webdav",
+            );
+        }
+        return Err(Box::new(crate::dav::unauthorized()));
+    };
+    st.backoff.succeed(client.ip, &account);
+    let dav = Arc::new(DavUser {
+        key: v.pass.user.clone(),
+        name: v.user.name.clone(),
+        label: v.pass.label.clone(),
+    });
+    Ok((v.user, dav))
 }
 
 async fn resolve(st: &Shared, origin: Origin, cookie_value: &str) -> Option<CurrentUser> {
@@ -565,6 +699,42 @@ mod tests {
         ] {
             assert_eq!(safe_next(bad), "/", "{bad:?}");
         }
+    }
+
+    #[test]
+    fn basic_auth_header() {
+        let mut h = HeaderMap::new();
+        // "jana:k3m7q-abc" and "Tibor:pä:ss"
+        h.insert(
+            header::AUTHORIZATION,
+            "Basic amFuYTprM203cS1hYmM=".parse().unwrap(),
+        );
+        assert_eq!(
+            basic_credentials(&h),
+            Some(("jana".into(), "k3m7q-abc".into()))
+        );
+        h.insert(
+            header::AUTHORIZATION,
+            "basic VGlib3I6cMOkOnNz".parse().unwrap(),
+        );
+        assert_eq!(
+            basic_credentials(&h),
+            Some(("Tibor".into(), "pä:ss".into()))
+        );
+        for bad in [
+            "Bearer abc",
+            "Basic !!!!",
+            "Basic amFuYQ==",
+            "Basic a=bc",
+            "Basic",
+        ] {
+            h.insert(header::AUTHORIZATION, bad.parse().unwrap());
+            assert_eq!(basic_credentials(&h), None, "{bad}");
+        }
+        assert_eq!(base64_decode("").unwrap(), b"");
+        assert_eq!(base64_decode("YQ==").unwrap(), b"a");
+        assert_eq!(base64_decode("YWI=").unwrap(), b"ab");
+        assert!(base64_decode("YQ==YQ==").is_none());
     }
 
     #[test]

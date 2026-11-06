@@ -1,5 +1,6 @@
-//! The state database (redb, one file in `paths.state_dir`): accounts, sessions, the audit
-//! log, the trash index and unfinished uploads. Exactly one process may open it; a second open fails with [`DbError::Locked`].
+//! The state database (redb, one file in `paths.state_dir`): accounts, sessions, app
+//! passwords, the audit log, the trash index, unfinished uploads and chestcraft's temporary
+//! files. Exactly one process may open it; a second open fails with [`DbError::Locked`].
 //!
 //! Records are JSON so they can grow fields without migrations; `meta.schema` versions the
 //! table layout. All calls block (and may fsync); async code runs them in `spawn_blocking`.
@@ -16,6 +17,8 @@ const AUDIT: TableDefinition<u64, &[u8]> = TableDefinition::new("audit");
 const TRASH: TableDefinition<&str, &[u8]> = TableDefinition::new("trash");
 const UPLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("uploads");
 const BATCHES: TableDefinition<&str, &[u8]> = TableDefinition::new("upload_batches");
+const APP_PASSWORDS: TableDefinition<&str, &[u8]> = TableDefinition::new("app_passwords");
+const TEMPS: TableDefinition<&str, &[u8]> = TableDefinition::new("temps");
 
 pub const SCHEMA_VERSION: &str = "1";
 pub const FILE_NAME: &str = "state.redb";
@@ -192,6 +195,34 @@ pub struct BatchRecord {
     pub touched: i64,
 }
 
+/// A WebDAV app password, stored under the SHA-256 of the secret.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppPassword {
+    /// Short random id, for revoking.
+    pub id: String,
+    /// User key.
+    pub user: String,
+    pub label: String,
+    pub created: i64,
+    #[serde(default)]
+    pub last_used: Option<i64>,
+    #[serde(default)]
+    pub last_ip: Option<String>,
+}
+
+/// A temporary file or folder chestcraft is writing in
+/// `<fs_root>/.chestcraft-uploads/<name>` (a WebDAV upload, a copy being built). Nothing
+/// outlives the request that made it, so leftovers after a crash are removed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TempRecord {
+    pub id: String,
+    pub volume: String,
+    pub fs_root: String,
+    /// Name inside the uploads folder.
+    pub name: String,
+    pub created: i64,
+}
+
 pub struct Db {
     db: Database,
     /// Last audit key handed out; keys are unique, increasing nanoseconds.
@@ -214,6 +245,8 @@ impl Db {
             tx.open_table(TRASH)?;
             tx.open_table(UPLOADS)?;
             tx.open_table(BATCHES)?;
+            tx.open_table(APP_PASSWORDS)?;
+            tx.open_table(TEMPS)?;
             let mut meta = tx.open_table(META)?;
             let current = meta.get("schema")?.map(|v| v.value().to_string());
             match current.as_deref() {
@@ -273,7 +306,19 @@ impl Db {
     }
 
     fn delete_key(&self, table: TableDefinition<&str, &[u8]>, key: &str) -> Result<()> {
-        let tx = self.db.begin_write()?;
+        self.delete_key_with(table, key, true)
+    }
+
+    fn delete_key_with(
+        &self,
+        table: TableDefinition<&str, &[u8]>,
+        key: &str,
+        durable: bool,
+    ) -> Result<()> {
+        let mut tx = self.db.begin_write()?;
+        if !durable {
+            tx.set_durability(Durability::None)?;
+        }
         tx.open_table(table)?.remove(key)?;
         tx.commit()?;
         Ok(())
@@ -387,6 +432,53 @@ impl Db {
         self.delete_key(BATCHES, id)
     }
 
+    // --- app passwords -----------------------------------------------------------------
+
+    /// `durable = false` for bookkeeping like `last_used`.
+    pub fn put_app_password(&self, hash: &str, rec: &AppPassword, durable: bool) -> Result<()> {
+        self.put_json(APP_PASSWORDS, hash, rec, durable)
+    }
+
+    pub fn app_password(&self, hash: &str) -> Result<Option<AppPassword>> {
+        self.get_json(APP_PASSWORDS, hash)
+    }
+
+    /// `(hash, record)` of every app password of `user_key`, oldest first.
+    pub fn app_passwords_of(&self, user_key: &str) -> Result<Vec<(String, AppPassword)>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(APP_PASSWORDS)?;
+        let mut out = Vec::new();
+        for row in t.iter()? {
+            let (k, v) = row?;
+            let rec: AppPassword = serde_json::from_slice(v.value())?;
+            if rec.user == user_key {
+                out.push((k.value().to_string(), rec));
+            }
+        }
+        out.sort_by_key(|(_, r)| (r.created, r.id.clone()));
+        Ok(out)
+    }
+
+    pub fn delete_app_password(&self, hash: &str) -> Result<()> {
+        self.delete_key(APP_PASSWORDS, hash)
+    }
+
+    // --- temporary files ---------------------------------------------------------------
+
+    /// Written durably before the file is created, so a crash can't leave an unknown one.
+    pub fn put_temp(&self, rec: &TempRecord) -> Result<()> {
+        self.put_json(TEMPS, &rec.id, rec, true)
+    }
+
+    pub fn temps(&self) -> Result<Vec<TempRecord>> {
+        self.all_json(TEMPS)
+    }
+
+    /// Not durable: a record that survives a crash only points at a name that's gone.
+    pub fn delete_temp(&self, id: &str) -> Result<()> {
+        self.delete_key_with(TEMPS, id, false)
+    }
+
     // --- audit -----------------------------------------------------------------------
 
     pub fn audit(&self, ev: &AuditEvent) -> Result<()> {
@@ -489,6 +581,48 @@ mod tests {
         assert!(db.session("a").unwrap().is_some() && db.session("b").unwrap().is_none());
         db.delete_session("c").unwrap();
         assert!(db.session("c").unwrap().is_none());
+    }
+
+    #[test]
+    fn app_passwords_by_user_and_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join(FILE_NAME)).unwrap();
+        let ap = |id: &str, user: &str, created| AppPassword {
+            id: id.into(),
+            user: user.into(),
+            label: format!("label {id}"),
+            created,
+            last_used: None,
+            last_ip: None,
+        };
+        db.put_app_password("h2", &ap("b", "tibor", 2), true)
+            .unwrap();
+        db.put_app_password("h1", &ap("a", "tibor", 1), false)
+            .unwrap();
+        db.put_app_password("h3", &ap("c", "jana", 1), true)
+            .unwrap();
+        let mine: Vec<String> = db
+            .app_passwords_of("tibor")
+            .unwrap()
+            .into_iter()
+            .map(|(h, r)| format!("{h}:{}", r.id))
+            .collect();
+        assert_eq!(mine, ["h1:a", "h2:b"]);
+        assert_eq!(db.app_password("h3").unwrap().unwrap().user, "jana");
+        db.delete_app_password("h3").unwrap();
+        assert!(db.app_password("h3").unwrap().is_none());
+
+        let t = TempRecord {
+            id: "t1".into(),
+            volume: "V".into(),
+            fs_root: String::new(),
+            name: "t1.part".into(),
+            created: 5,
+        };
+        db.put_temp(&t).unwrap();
+        assert_eq!(db.temps().unwrap(), vec![t]);
+        db.delete_temp("t1").unwrap();
+        assert!(db.temps().unwrap().is_empty());
     }
 
     #[test]

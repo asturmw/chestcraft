@@ -55,6 +55,23 @@ enum UserCmd {
     Enable { name: String },
     /// List accounts
     List,
+    /// Manage an account's WebDAV app passwords (one per device)
+    #[command(subcommand, name = "app-password")]
+    AppPassword(AppPasswordCmd),
+}
+
+#[derive(Subcommand)]
+enum AppPasswordCmd {
+    /// Create an app password; prints the secret once
+    Add {
+        name: String,
+        /// Which device it is for, e.g. "laptop rclone"
+        label: String,
+    },
+    /// List an account's app passwords
+    List { name: String },
+    /// Revoke an app password by its id or label
+    Revoke { name: String, which: String },
 }
 
 fn main() -> ExitCode {
@@ -159,7 +176,7 @@ fn valid_username(name: &str) -> bool {
 fn user(path: &Path, cmd: UserCmd) -> ExitCode {
     if rustix::process::geteuid().is_root() {
         eprintln!(
-            "Run this as the service user (e.g. `sudo -u nasdebian chestcraft user ...`), not as root:"
+            "Run this as the service user (e.g. `sudo -u chestcraft chestcraft user ...`), not as root:"
         );
         eprintln!("a database file created by root can't be opened by the service.");
         return ExitCode::FAILURE;
@@ -274,7 +291,78 @@ fn user(path: &Path, cmd: UserCmd) -> ExitCode {
                 }
                 ExitCode::SUCCESS
             }
+            UserCmd::AppPassword(cmd) => app_password(&db, cmd, &cfg.server.timezone, now)?,
         })
     })();
     result.unwrap_or_else(|e| fail(e.to_string()))
+}
+
+fn app_password(
+    db: &chestcraft::db::Db,
+    cmd: AppPasswordCmd,
+    tz: &jiff::tz::TimeZone,
+    now: i64,
+) -> Result<ExitCode, chestcraft::db::DbError> {
+    use chestcraft::auth::apppass::{self, CreateError};
+    let fail = |msg: String| {
+        eprintln!("{msg}");
+        ExitCode::FAILURE
+    };
+    let date = |t: i64| {
+        jiff::Timestamp::from_second(t)
+            .map(|ts| {
+                ts.to_zoned(tz.clone())
+                    .strftime("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_default()
+    };
+    Ok(match cmd {
+        AppPasswordCmd::Add { name, label } => match apppass::create(db, &name, &label, now) {
+            Ok((secret, rec)) => {
+                let user = db.user(&name)?.map(|u| u.name).unwrap_or(name);
+                println!("App password \"{}\" (id {}) for {user}:", rec.label, rec.id);
+                println!("{secret}");
+                println!("It is shown only now. Use it with the user name {user} for WebDAV.");
+                ExitCode::SUCCESS
+            }
+            Err(CreateError::Db(e)) => return Err(e),
+            Err(CreateError::NoUser) => fail(format!("no account named \"{name}\"")),
+            Err(e) => fail(e.to_string()),
+        },
+        AppPasswordCmd::List { name } => match db.user(&name)? {
+            Some(u) => {
+                let mut all = db.app_passwords_of(&chestcraft::db::User::key(&u.name))?;
+                all.sort_by_key(|(_, r)| r.created);
+                if all.is_empty() {
+                    println!("{} has no app passwords", u.name);
+                }
+                for (_, r) in all {
+                    let used = match (r.last_used, &r.last_ip) {
+                        (Some(t), Some(ip)) => format!("last used {} from {ip}", date(t)),
+                        (Some(t), None) => format!("last used {}", date(t)),
+                        _ => "never used".to_string(),
+                    };
+                    println!(
+                        "{:<12} {:<30} created {}, {used}",
+                        r.id,
+                        r.label,
+                        date(r.created)
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            None => fail(format!("no account named \"{name}\"")),
+        },
+        AppPasswordCmd::Revoke { name, which } => match db.user(&name)? {
+            Some(u) => match apppass::revoke(db, &chestcraft::db::User::key(&u.name), &which)? {
+                Some(r) => {
+                    println!("Revoked \"{}\" (id {}) of {}", r.label, r.id, u.name);
+                    ExitCode::SUCCESS
+                }
+                None => fail(format!("{} has no app password \"{which}\"", u.name)),
+            },
+            None => fail(format!("no account named \"{name}\"")),
+        },
+    })
 }

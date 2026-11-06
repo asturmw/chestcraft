@@ -1,9 +1,10 @@
 //! Daily maintenance at `trash.purge_at` (server time zone): purge trash items older than
-//! their volume's `trash_days`, and clean up uploads abandoned for `uploads.abandoned_days`.
+//! their volume's `trash_days`, and clean up uploads (and temporary WebDAV entries) abandoned
+//! for `uploads.abandoned_days`.
 
 use super::Shared;
 use crate::config::TimeOfDay;
-use crate::fs::trash;
+use crate::fs::{transfer, trash};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::time::Duration;
@@ -46,17 +47,33 @@ pub async fn run(st: Shared) {
         let (purged, failed) = trash::purge_due(&st.db, &st.volumes, &st.cfg, now);
         let max_age = i64::from(st.cfg.uploads.abandoned_days) * 86_400;
         let (uploads, batches) = st.uploads.sweep(&st.volumes, max_age, now);
+        let temps = transfer::sweep_temps(&st.db, &st.volumes, Some(max_age), now);
         tracing::info!(
             purged,
             failed,
             abandoned_uploads = uploads,
             abandoned_folders = batches,
+            abandoned_temps = temps,
             "daily cleanup done"
         );
     })
     .await;
     if done.is_err() {
         tracing::error!("daily cleanup crashed");
+    }
+}
+
+/// At startup: no request is running yet, so every temporary entry of a WebDAV upload, copy
+/// or move is left over from a crash.
+pub async fn sweep_leftovers(st: Shared) {
+    let swept = tokio::task::spawn_blocking(move || {
+        transfer::sweep_temps(&st.db, &st.volumes, None, Timestamp::now().as_second())
+    })
+    .await;
+    match swept {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(removed = n, "removed temporary entries left by a crash"),
+        Err(_) => tracing::error!("sweeping temporary entries crashed"),
     }
 }
 
