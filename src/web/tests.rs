@@ -2990,3 +2990,297 @@ async fn language_switch_sets_a_cookie_and_stays_on_the_site() {
     assert_eq!(r.header("location"), "/");
     assert!(r.header("set-cookie").is_empty());
 }
+
+// ---- Thumbnails and the viewer ---------------------------------------------------------
+
+fn jpeg(w: u32, h: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        w,
+        h,
+        image::Rgb([90, 140, 200]),
+    ))
+    .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Jpeg)
+    .unwrap();
+    out
+}
+
+fn img_dims(body: &[u8]) -> (u32, u32) {
+    use image::GenericImageView;
+    image::load_from_memory(body).unwrap().dimensions()
+}
+
+impl Env {
+    fn put(&self, rel: &str, bytes: &[u8]) {
+        let p = self.root().join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, bytes).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn listings_link_files_to_the_viewer_with_thumbnails_or_icons() {
+    let e = env();
+    e.put("medien/Urlaub Gardasee/IMG_2041.jpg", &jpeg(1200, 800));
+    e.put("medien/Urlaub Gardasee/Halterung_v3.step", b"ISO-10303-21;");
+    e.act_as(Some(admin()));
+    let t = e.get("/Medien/Urlaub%20Gardasee/").await.text();
+    assert!(t.contains(r#"href="IMG_2041.jpg?view""#), "{t}");
+    assert!(t.contains(r#"href="IMG_2041.jpg?dl""#), "{t}");
+    assert!(
+        t.contains(r#"class="thumb" src="IMG_2041.jpg?thumb&amp;v="#),
+        "{t}"
+    );
+    assert!(
+        t.contains(r#"data-type="model""#) && t.contains(r#"class="ficon" data-type="model""#),
+        "{t}"
+    );
+    assert!(t.contains(r#"data-view="list""#), "{t}");
+    let t = e
+        .get("/Medien/Urlaub%20Gardasee/?layout=grid&sort=size")
+        .await
+        .text();
+    assert!(t.contains(r#"data-view="grid""#), "{t}");
+    // Sorting and paging links keep the layout.
+    assert!(t.contains("?layout=grid&amp;sort=modified"), "{t}");
+}
+
+#[tokio::test]
+async fn thumbnails_are_cached_by_version_and_revalidate() {
+    let e = env();
+    e.put("medien/Urlaub Gardasee/IMG_2041.jpg", &jpeg(1200, 800));
+    e.put("medien/broken.jpg", b"not a picture");
+    e.act_as(Some(admin()));
+    let page = e.get("/Medien/Urlaub%20Gardasee/").await.text();
+    let src = attr_after(&page, "class=\"thumb\"", "src").replace("&amp;", "&");
+    let url = format!("/Medien/Urlaub%20Gardasee/{src}");
+    let r = e.get(&url).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.header("content-type"), "image/jpeg");
+    assert!(
+        r.header("cache-control").contains("immutable"),
+        "{}",
+        r.header("cache-control")
+    );
+    assert_eq!(img_dims(&r.body), (480, 320));
+    // Without the version the browser has to ask again; the ETag answers 304.
+    let plain = e.get("/Medien/Urlaub%20Gardasee/IMG_2041.jpg?thumb").await;
+    assert_eq!(plain.header("cache-control"), "private, no-cache");
+    let etag = plain.header("etag").to_string();
+    let r = e
+        .get_h(
+            "/Medien/Urlaub%20Gardasee/IMG_2041.jpg?thumb",
+            &[("if-none-match", &etag)],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_MODIFIED);
+    let big = e
+        .get("/Medien/Urlaub%20Gardasee/IMG_2041.jpg?thumb=view")
+        .await;
+    assert_eq!(img_dims(&big.body), (1200, 800));
+    assert_ne!(big.header("etag"), etag);
+
+    assert_eq!(
+        e.get("/Medien/broken.jpg?thumb").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        e.get("/Medien/a.txt?thumb").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        e.get("/Medien/Urlaub%20Gardasee/IMG_2041.jpg?thumb=huge")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn svg_thumbnails_are_pictures_not_documents() {
+    let e = env();
+    e.put(
+        "medien/Schild Werkstatt.svg",
+        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><script>alert(1)</script><rect width="10" height="10"/></svg>"#,
+    );
+    e.act_as(Some(admin()));
+    let r = e.get("/Medien/Schild%20Werkstatt.svg?thumb").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.header("content-type").starts_with("image/"),
+        "{}",
+        r.header("content-type")
+    );
+    assert!(!r.header("content-type").contains("svg"));
+    assert!(!r.text().contains("<script"));
+}
+
+#[tokio::test]
+async fn private_thumbnails_need_access() {
+    let e = env();
+    e.put("medien/Urlaub Gardasee/IMG_2041.jpg", &jpeg(64, 64));
+    let r = e.get("/Medien/Urlaub%20Gardasee/IMG_2041.jpg?thumb").await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let r = e.get("/Medien/Urlaub%20Gardasee/IMG_2041.jpg?view").await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn anonymous_visitors_get_a_limited_number_of_new_thumbnails() {
+    let e = env();
+    e.put("share/a.jpg", &jpeg(32, 32));
+    e.put("share/b.jpg", &jpeg(32, 32));
+    let r = e.get("/Share/a.jpg?thumb").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    while e.state.thumb_limiter.check_key(&ip).is_ok() {}
+    // Cached thumbnails still come; new ones wait.
+    assert_eq!(e.get("/Share/a.jpg?thumb").await.status, StatusCode::OK);
+    let r = e.get("/Share/b.jpg?thumb").await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(!r.header("retry-after").is_empty());
+    // Another address isn't affected, and neither are signed-in users.
+    let r = e
+        .send("GET", "/Share/b.jpg?thumb", "192.168.1.20", &[])
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn viewer_shows_pictures_text_and_markdown_safely() {
+    let e = env();
+    e.put("medien/Urlaub Gardasee/IMG_2040.jpg", &jpeg(64, 64));
+    e.put("medien/Urlaub Gardasee/IMG_2041.jpg", &jpeg(64, 64));
+    e.put("medien/Urlaub Gardasee/IMG_2042.jpg", &jpeg(64, 64));
+    e.put(
+        "medien/notes.md",
+        b"# Werkbank\n\n<script>alert(1)</script>\n\n[link](javascript:alert(1)) **fett**\n",
+    );
+    e.put("medien/README", b"plain <b>text</b>\n");
+    e.put("medien/blob", b"\0\x01\x02binary");
+    let leser = e.session("Leser", "leser").await;
+    let cookie = [("cookie", leser.cookie.as_str())];
+
+    let t = e
+        .get_h("/Medien/Urlaub%20Gardasee/IMG_2041.jpg?view", &cookie)
+        .await
+        .text();
+    assert!(t.contains(r#"data-state="image""#), "{t}");
+    assert!(t.contains("IMG_2041.jpg?thumb=view&amp;v="), "{t}");
+    assert!(
+        t.contains(r#"href="/Medien/Urlaub%20Gardasee/IMG_2040.jpg?view""#),
+        "{t}"
+    );
+    assert!(
+        t.contains(r#"href="/Medien/Urlaub%20Gardasee/IMG_2042.jpg?view""#),
+        "{t}"
+    );
+    assert!(
+        t.contains(r#"href="/Medien/Urlaub%20Gardasee/""#),
+        "close: {t}"
+    );
+    assert!(t.contains("IMG_2041.jpg?dl"), "{t}");
+    // Read-only role: no delete, no share.
+    assert!(
+        !t.contains("viewer__delete") && !t.contains("viewer__share"),
+        "{t}"
+    );
+
+    let t = e.get_h("/Medien/notes.md?view", &cookie).await.text();
+    assert!(
+        t.contains("<h1>Werkbank</h1>") && t.contains("<strong>fett</strong>"),
+        "{t}"
+    );
+    assert!(
+        !t.contains("<script>alert") && !t.contains("javascript:"),
+        "{t}"
+    );
+
+    let t = e.get_h("/Medien/README?view", &cookie).await.text();
+    assert!(
+        t.contains(r#"data-state="text""#) && t.contains("plain &lt;b&gt;text"),
+        "{t}"
+    );
+    let t = e.get_h("/Medien/blob?view", &cookie).await.text();
+    assert!(t.contains(r#"data-state="none""#), "{t}");
+    let t = e.get_h("/Medien/a.txt?view", &cookie).await.text();
+    assert!(t.contains("0123456789"), "{t}");
+}
+
+#[tokio::test]
+async fn viewer_offers_delete_and_share_to_those_who_may() {
+    let e = env();
+    let teiler = e.session("Teiler", "teiler").await;
+    let t = e
+        .get_h("/Medien/a.txt?view", &[("cookie", &teiler.cookie)])
+        .await
+        .text();
+    assert!(
+        t.contains("viewer__delete") && t.contains(r#"action="/Medien/""#),
+        "{t}"
+    );
+    assert!(
+        t.contains("/.cc/shares/new?vol=Medien&amp;path=a.txt"),
+        "{t}"
+    );
+    // The delete form posts to the folder like the listing does.
+    let r = e
+        .form_post(&teiler, "/Medien/", &[("op", "delete"), ("n", "a.txt")])
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    assert!(!e.root().join("medien/a.txt").exists());
+}
+
+#[tokio::test]
+async fn share_visitors_get_thumbnails_and_the_viewer() {
+    let e = env();
+    e.put("medien/Urlaub Gardasee/IMG_2041.jpg", &jpeg(900, 600));
+    let admin = e.session("Admin", "admin").await;
+    let (id, pw) = e
+        .create_share(&admin, "Medien", "Urlaub Gardasee", &[])
+        .await;
+    // Locked: the password page, no picture.
+    let r = e.get(&format!("/s/{id}/IMG_2041.jpg?thumb")).await;
+    assert!(
+        r.header("content-type").starts_with("text/html"),
+        "{}",
+        r.header("content-type")
+    );
+    assert!(r.text().contains("/.cc/unlock"));
+    let cookie = e.visit(&id, &pw).await;
+    let h = [("cookie", cookie.as_str())];
+    let t = e.get_h(&format!("/s/{id}/"), &h).await.text();
+    assert!(t.contains("IMG_2041.jpg?thumb&amp;v="), "{t}");
+    let r = e.get_h(&format!("/s/{id}/IMG_2041.jpg?thumb"), &h).await;
+    assert_eq!((r.status, img_dims(&r.body)), (StatusCode::OK, (480, 320)));
+    let t = e
+        .get_h(&format!("/s/{id}/IMG_2041.jpg?view"), &h)
+        .await
+        .text();
+    assert!(
+        t.contains("share-head") && t.contains(r#"data-state="image""#),
+        "{t}"
+    );
+    assert!(
+        !t.contains("viewer__delete") && !t.contains("/.cc/shares/new"),
+        "{t}"
+    );
+    // Thumbnails and the viewer aren't downloads.
+    assert_eq!(e.share(&id).downloads, 0);
+
+    // A single shared picture: the card shows it.
+    let (id, pw) = e
+        .create_share(&admin, "Medien", "Urlaub Gardasee/IMG_2041.jpg", &[])
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let h = [("cookie", cookie.as_str())];
+    let t = e.get_h(&format!("/s/{id}"), &h).await.text();
+    assert!(
+        t.contains("file-card") && t.contains("IMG_2041.jpg?thumb=view&amp;v="),
+        "{t}"
+    );
+    let r = e
+        .get_h(&format!("/s/{id}/IMG_2041.jpg?thumb=view"), &h)
+        .await;
+    assert_eq!((r.status, img_dims(&r.body)), (StatusCode::OK, (900, 600)));
+}

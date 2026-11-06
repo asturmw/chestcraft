@@ -11,6 +11,7 @@ use super::api::{self, NewReq, Uploader};
 use super::auth::same_origin;
 use super::files::{self, Fail, Frame, anon_guard, enc, fail};
 use super::guest::{self, Opened, ShareGuest, Unlock};
+use super::preview::{self, ViewerReq};
 use super::query::Query;
 use super::share_views::{self, FileCard};
 use super::views::{Ctx, ShareHead, UploadUi};
@@ -332,14 +333,34 @@ async fn content(
         };
         if !wants_file {
             let href = format!("{base}/{}", enc(&name));
+            let body = preview::body_for(&name, &href, &meta, fd).await;
             let card = FileCard {
                 size: ctx.size(meta.size),
                 modified: ctx.datetime(meta.mtime),
                 download_href: format!("{href}?dl"),
+                ftype: crate::fs::filetype::icon_type(&name),
                 open_href: href,
                 name,
+                body,
             };
             return share_views::share_file(&ctx, &head, &card).into_response();
+        }
+        if q.has("thumb") {
+            return preview::thumb(
+                st,
+                client,
+                true,
+                headers,
+                fd,
+                &meta,
+                &name,
+                q.get("thumb"),
+                q.get("v"),
+            )
+            .await;
+        }
+        if q.has("view") {
+            return Redirect::to(base).into_response();
         }
         let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
             return fail(&ctx, Fail::TooMany);
@@ -438,6 +459,38 @@ async fn content(
             if *method == Method::POST {
                 return fail(&ctx, Fail::Method);
             }
+            let name = abs.name().unwrap_or("download").to_string();
+            if q.has("thumb") {
+                return preview::thumb(
+                    st,
+                    client,
+                    true,
+                    headers,
+                    fd,
+                    &meta,
+                    &name,
+                    q.get("thumb"),
+                    q.get("v"),
+                )
+                .await;
+            }
+            if q.has("view") {
+                let root = (share_name.clone(), format!("{base}/"));
+                let req = ViewerReq {
+                    vol,
+                    crumbs: files::crumbs(&root, &sub.parent().unwrap_or_default()),
+                    rel: abs,
+                    meta,
+                    fd,
+                    href: raw_path.to_string(),
+                    show_hidden: false,
+                    delete_csrf: None,
+                    share_href: None,
+                    share: Some(head),
+                    siblings: true,
+                };
+                return preview::viewer(&ctx, req).await;
+            }
             let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
                 return fail(&ctx, Fail::TooMany);
             };
@@ -445,7 +498,6 @@ async fn content(
                 guest::share_event(st, share, client, "download", sub.as_str());
                 guest::bump(st, &share.id, |s| s.downloads += 1).await;
             }
-            let name = abs.name().unwrap_or("download").to_string();
             files::download(fd, &meta, &name, headers, head_req, q.has("dl"), guard).await
         }
         Kind::Other => fail(&ctx, Fail::NotFound),

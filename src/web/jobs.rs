@@ -28,6 +28,14 @@ pub fn secs_until(at: TimeOfDay, tz: &TimeZone, now: Timestamp) -> u64 {
 }
 
 pub fn spawn(st: Shared) {
+    let hourly = st.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            hourly.thumb_limiter.retain_recent();
+            hourly.thumb_limiter.shrink_to_fit();
+        }
+    });
     tokio::spawn(async move {
         loop {
             let wait = secs_until(
