@@ -449,11 +449,8 @@ fn secret_page(
             }
         })
         .collect();
-    let mut ctx2 = Ctx {
-        scripts: ctx.scripts.clone(),
-        lang_switch: None,
-        ..*ctx
-    };
+    let mut ctx2 = ctx.clone();
+    ctx2.lang_switch = None;
     ctx2.scripts.push("copy.js");
     let view = SecretView {
         title,

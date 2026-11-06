@@ -1,9 +1,10 @@
 //! The state database (redb, one file in `paths.state_dir`): accounts, sessions, app
 //! passwords, the audit log, the trash index, unfinished uploads, chestcraft's temporary
 //! files, share links with their access log, visitor sessions, public upload settings,
-//! and the health monitor's state (active alerts, counter baselines, alert history, hourly
-//! readings, delivery status per alert channel). Exactly one process may open it; a second
-//! open fails with [`DbError::Locked`].
+//! the health monitor's state (active alerts, counter baselines, alert history, hourly
+//! readings, delivery status per alert channel), the admin's appearance settings and the
+//! background image sets. Exactly one process may open it; a second open fails with
+//! [`DbError::Locked`].
 //!
 //! Records are JSON so they can grow fields without migrations; `meta.schema` versions the
 //! table layout. All calls block (and may fsync); async code runs them in `spawn_blocking`.
@@ -34,6 +35,8 @@ const BASELINES: TableDefinition<&str, &[u8]> = TableDefinition::new("alert_base
 const ALERT_LOG: TableDefinition<u64, &[u8]> = TableDefinition::new("alert_log");
 const HISTORY: TableDefinition<u64, &[u8]> = TableDefinition::new("history");
 const CHANNELS: TableDefinition<&str, &[u8]> = TableDefinition::new("alert_channels");
+const SETTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("settings");
+const BACKGROUNDS: TableDefinition<&str, &[u8]> = TableDefinition::new("backgrounds");
 
 pub const SCHEMA_VERSION: &str = "1";
 pub const FILE_NAME: &str = "state.redb";
@@ -110,6 +113,78 @@ pub struct UserSettings {
     pub skin: Option<String>,
     /// "vim" | "standard" | "off"; None means standard.
     pub keys: Option<String>,
+    /// Background per skin name; a skin without an entry shows the admin's default.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub backgrounds: BTreeMap<String, Background>,
+    /// "never" | "load" | "session" | "day"; None takes the admin's default.
+    #[serde(default)]
+    pub rotation: Option<String>,
+}
+
+/// What a page shows behind its panels.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Background {
+    #[serde(flatten)]
+    pub fill: Fill,
+    /// Dim step 0–4 (a dark layer over the picture).
+    #[serde(default)]
+    pub dim: u8,
+    /// Blur step 0–4.
+    #[serde(default)]
+    pub blur: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Fill {
+    /// The skin's own backdrop color.
+    None,
+    /// One color (`#rrggbb`) or a linear gradient of 2–3 colors at `angle` degrees.
+    Color { colors: Vec<String>, angle: u16 },
+    /// Background sets by id; several rotate.
+    Images { sets: Vec<String> },
+}
+
+/// The admin's appearance settings (Appearance page). Unset values fall back to the first
+/// skin, no background and daily rotation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Appearance {
+    /// Skin for accounts that didn't pick one.
+    #[serde(default)]
+    pub default_skin: Option<String>,
+    /// Skin of pages for visitors without an account (shares, public volumes, sign-in).
+    #[serde(default)]
+    pub share_skin: Option<String>,
+    /// Default background per skin name.
+    #[serde(default)]
+    pub backgrounds: BTreeMap<String, Background>,
+    #[serde(default)]
+    pub share_background: Option<Background>,
+    /// Default rotation mode: "never" | "load" | "session" | "day".
+    #[serde(default)]
+    pub rotation: Option<String>,
+}
+
+/// A set of up to three background pictures (landscape, near-square, tall), stored as
+/// `<state_dir>/backgrounds/<id>/<slot>.jpg` plus a small preview `<slot>.small.jpg`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackgroundSet {
+    /// 16 base58 characters.
+    pub id: String,
+    /// User key of the uploader.
+    pub owner: String,
+    /// Unix milliseconds (keeps the upload order of sets added in the same second).
+    pub created_ms: i64,
+    pub images: Vec<BackgroundImage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackgroundImage {
+    /// "wide" (16:9), "square" (3:4) or "tall" (10:16).
+    pub slot: String,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
 }
 
 impl User {
@@ -362,6 +437,8 @@ impl Db {
             tx.open_table(ALERT_LOG)?;
             tx.open_table(HISTORY)?;
             tx.open_table(CHANNELS)?;
+            tx.open_table(SETTINGS)?;
+            tx.open_table(BACKGROUNDS)?;
             let mut meta = tx.open_table(META)?;
             let current = meta.get("schema")?.map(|v| v.value().to_string());
             match current.as_deref() {
@@ -451,6 +528,52 @@ impl Db {
 
     pub fn users(&self) -> Result<Vec<User>> {
         self.all_json(USERS)
+    }
+
+    /// Read, change and write one account in a single transaction. `Ok(None)`: no such
+    /// account.
+    pub fn update_user(&self, name: &str, f: impl FnOnce(&mut User)) -> Result<Option<User>> {
+        let key = User::key(name);
+        let tx = self.db.begin_write()?;
+        let updated = {
+            let mut t = tx.open_table(USERS)?;
+            let current: Option<User> = match t.get(key.as_str())? {
+                Some(v) => Some(serde_json::from_slice(v.value())?),
+                None => None,
+            };
+            match current {
+                Some(mut u) => {
+                    f(&mut u);
+                    t.insert(key.as_str(), serde_json::to_vec(&u)?.as_slice())?;
+                    Some(u)
+                }
+                None => None,
+            }
+        };
+        tx.commit()?;
+        Ok(updated)
+    }
+
+    // --- appearance --------------------------------------------------------------------
+
+    pub fn appearance(&self) -> Result<Appearance> {
+        Ok(self.get_json(SETTINGS, "appearance")?.unwrap_or_default())
+    }
+
+    pub fn put_appearance(&self, a: &Appearance) -> Result<()> {
+        self.put_json(SETTINGS, "appearance", a, true)
+    }
+
+    pub fn put_background_set(&self, set: &BackgroundSet) -> Result<()> {
+        self.put_json(BACKGROUNDS, &set.id, set, true)
+    }
+
+    pub fn background_sets(&self) -> Result<Vec<BackgroundSet>> {
+        self.all_json(BACKGROUNDS)
+    }
+
+    pub fn delete_background_set(&self, id: &str) -> Result<()> {
+        self.delete_key(BACKGROUNDS, id)
     }
 
     // --- sessions --------------------------------------------------------------------

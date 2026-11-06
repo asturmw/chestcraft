@@ -118,6 +118,14 @@ Austausch = "r"
 # [shares.wordlists]
 # fr = "/etc/chestcraft/words-fr.txt"
 
+# ---- Appearance ---------------------------------------------------------------
+# Skins, default backgrounds and the rotation default are set by the admin on the
+# Appearance page; each account may pick its own. Background images are re-encoded
+# (JPEG, at most 3840 px, metadata removed) and kept in <state_dir>/backgrounds.
+[appearance]
+max_backgrounds_per_user = 10   # image sets per account; admins have no limit
+deny_upload_roles = ["gast"]    # roles that may not upload background images
+
 # ---- Disks ------------------------------------------------------------------
 # The admin dashboard finds pools (ZFS), md arrays and disks by itself. Bay labels by
 # serial number, so alerts name the disk to pull.

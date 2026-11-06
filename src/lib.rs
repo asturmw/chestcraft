@@ -1,5 +1,6 @@
 //! chestcraft: file sharing for a home NAS.
 
+pub mod appearance;
 pub mod auth;
 pub mod config;
 pub mod dav;
