@@ -48,6 +48,8 @@ pub fn describe(err: &OpError) -> (StatusCode, &'static str, &'static str) {
             "read_only_inside",
             "ops.read_only_inside",
         ),
+        OpError::VolumeInside => (StatusCode::CONFLICT, "volume_inside", "ops.volume_inside"),
+        OpError::Denied => (StatusCode::FORBIDDEN, "forbidden", "ops.forbidden"),
         OpError::MountPoint => (StatusCode::CONFLICT, "mount_point", "ops.mount_point"),
         OpError::Busy => (StatusCode::CONFLICT, "busy", "ops.busy"),
         OpError::Incomplete => (StatusCode::CONFLICT, "incomplete", "ops.incomplete"),

@@ -1,3 +1,4 @@
+pub mod apppass;
 pub mod backoff;
 pub mod password;
 pub mod perm;

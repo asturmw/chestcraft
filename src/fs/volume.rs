@@ -83,6 +83,8 @@ pub struct Space {
 pub struct VolumeRoot {
     pub cfg: VolumeConfig,
     root: OwnedFd,
+    /// Roots of other volumes inside this one (by configured path), relative to it.
+    nested: Vec<RelPath>,
 }
 
 /// The open volumes. Volumes whose directory can't be opened are left out (and logged),
@@ -96,7 +98,8 @@ impl Volumes {
         let mut map = BTreeMap::new();
         for v in cfg.volumes.values() {
             match VolumeRoot::open(v.clone()) {
-                Ok(root) => {
+                Ok(mut root) => {
+                    root.nested = nested_roots(v, cfg);
                     map.insert(v.name.clone(), Arc::new(root));
                 }
                 Err(e) => {
@@ -114,6 +117,17 @@ impl Volumes {
     pub fn iter(&self) -> impl Iterator<Item = &Arc<VolumeRoot>> {
         self.map.values()
     }
+}
+
+/// Other volumes whose configured path lies inside `v`'s, relative to `v`.
+fn nested_roots(v: &VolumeConfig, cfg: &Config) -> Vec<RelPath> {
+    cfg.volumes
+        .values()
+        .filter(|o| o.name != v.name)
+        .filter_map(|o| o.path.strip_prefix(&v.path).ok())
+        .filter_map(|rest| RelPath::parse(rest.to_str()?).ok())
+        .filter(|r| !r.is_root())
+        .collect()
 }
 
 /// `openat2` wants "." for the root itself.
@@ -152,11 +166,29 @@ impl VolumeRoot {
             OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
         )?;
-        Ok(VolumeRoot { cfg, root })
+        Ok(VolumeRoot {
+            cfg,
+            root,
+            nested: Vec::new(),
+        })
     }
 
     pub fn name(&self) -> &str {
         &self.cfg.name
+    }
+
+    /// Is `rel` another volume's root, or does it contain one? Such folders can't be moved
+    /// or deleted: the other volume would go with them.
+    pub fn holds_volume(&self, rel: &RelPath) -> bool {
+        self.nested.iter().any(|n| n.starts_with(rel))
+    }
+
+    /// Is `rel` a read-only area, or does it contain one?
+    pub fn holds_read_only(&self, rel: &RelPath) -> bool {
+        self.cfg
+            .read_only_paths
+            .iter()
+            .any(|ro| ro.starts_with(rel))
     }
 
     /// Open a file or directory for reading. Symlinks are followed only while they stay
@@ -330,6 +362,24 @@ mod tests {
             .collect();
         all.sort();
         assert_eq!(all, [".directory", ".git", "Fotos", "Rechnung.pdf"]);
+    }
+
+    #[test]
+    fn volumes_inside_volumes_are_known() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("medien/video/anime")).unwrap();
+        let cfg = Config::from_toml_str(&format!(
+            "[server]\npublic_url = \"http://x.org\"\n\
+             [volumes.Medien]\npath = \"{0}/medien\"\n\
+             [volumes.Animes]\npath = \"{0}/medien/video/anime\"\n",
+            tmp.path().display()
+        ))
+        .unwrap();
+        let vols = Volumes::open(&cfg);
+        let m = vols.get("Medien").unwrap();
+        assert!(m.holds_volume(&p("video")) && m.holds_volume(&p("video/anime")));
+        assert!(!m.holds_volume(&p("video/anime/x")) && !m.holds_volume(&p("fotos")));
+        assert!(!vols.get("Animes").unwrap().holds_volume(&RelPath::root()));
     }
 
     #[test]

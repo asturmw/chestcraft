@@ -20,6 +20,11 @@ const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
+/// Percent-encode one URL path segment (a volume or file name).
+pub fn encode_segment(s: &str) -> String {
+    utf8_percent_encode(s, SEGMENT).to_string()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PathError {
     #[error("empty name")]

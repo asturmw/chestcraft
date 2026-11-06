@@ -20,6 +20,8 @@ use std::os::fd::{AsFd, OwnedFd};
 pub const REASON_DELETE: &str = "delete";
 pub const REASON_REPLACED: &str = "replaced";
 pub const REASON_UNFINISHED: &str = "unfinished_upload";
+/// Moved to another filesystem: the copy is in place, the original waits here.
+pub const REASON_MOVED: &str = "moved";
 
 /// Move `rel` (a file or folder of `vol`) to the trash. The caller has checked that `actor`
 /// may delete it.
@@ -34,8 +36,11 @@ pub fn delete(
     let (Some(parent), Some(name)) = (rel.parent(), rel.name()) else {
         return Err(OpError::Invalid("the volume itself can't be deleted"));
     };
-    if vol.cfg.read_only_paths.iter().any(|ro| ro.starts_with(rel)) {
+    if vol.holds_read_only(rel) {
         return Err(OpError::ReadOnlyInside);
+    }
+    if vol.holds_volume(rel) {
+        return Err(OpError::VolumeInside);
     }
     let pfd = vol.open_dir(&parent)?;
     let parent_dev = ops::fd_dev(&pfd)?;

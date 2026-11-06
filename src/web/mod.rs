@@ -23,6 +23,8 @@ use crate::fs::upload::Uploads;
 use crate::fs::volume::Volumes;
 use crate::i18n::{I18n, Lang};
 use axum::Router;
+use axum::extract::{Request, State};
+use axum::handler::Handler;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
@@ -31,7 +33,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
-pub use auth::{Current, CurrentUser};
+pub use auth::{Current, CurrentUser, audit, now};
 pub use client::ClientInfo;
 
 pub struct AppState {
@@ -134,9 +136,25 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .map(|(_, v)| v)
 }
 
+/// WebDAV methods go to the WebDAV handler, everything else to the folder handler.
+async fn dav_or_files(State(st): State<Shared>, req: Request) -> Response {
+    if crate::dav::is_dav_method(req.method()) {
+        return crate::dav::handle(st, req).await;
+    }
+    files::handle.call(req, st).await
+}
+
+/// `/`: the landing page for GET, the volume list for WebDAV.
+async fn dav_or_405(State(st): State<Shared>, req: Request) -> Response {
+    if crate::dav::is_dav_method(req.method()) {
+        return crate::dav::handle(st, req).await;
+    }
+    StatusCode::METHOD_NOT_ALLOWED.into_response()
+}
+
 pub fn router(state: Shared) -> Router {
     Router::new()
-        .route("/", get(files::landing))
+        .route("/", get(files::landing).fallback(dav_or_405))
         .route("/healthz", get(healthz))
         .route("/robots.txt", get(robots))
         .route("/favicon.ico", get(favicon))
@@ -156,7 +174,7 @@ pub fn router(state: Shared) -> Router {
         .route("/.cc/trash", get(trash::page))
         .route("/.cc/trash/restore", post(trash::restore))
         .route("/.cc/trash/empty", post(trash::empty))
-        .fallback(files::handle)
+        .fallback(dav_or_files)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::principal_layer,
@@ -198,6 +216,7 @@ pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()>
     let i18n = I18n::load(config_dir.map(|d| d.join("i18n")).as_deref());
     let db = open_db(&cfg)?;
     let state = Arc::new(AppState::new(cfg, i18n, db));
+    jobs::sweep_leftovers(state.clone()).await;
     jobs::spawn(state.clone());
     let addr = state.cfg.server.listen;
     let listener = tokio::net::TcpListener::bind(addr).await?;

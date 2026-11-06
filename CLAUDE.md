@@ -24,12 +24,22 @@ Plan steps 1–2 done. Step 3 (backend slices):
   RENAME_EXCHANGE) / skip, staged folder batches, new folder, delete → trash, trash page
   with restore (never overwrites) and admin "empty now", daily purge + abandoned-upload
   sweep at `trash.purge_at` (abandoned staged folders go to the trash, not deleted).
-- Next: slice 5, WebDAV. Rename/move/copy in the UI aren't in any slice yet; WebDAV
-  MOVE/COPY will bring the primitives.
+- Slice 5 done: own WebDAV (`src/dav/`, quick-xml; dav-server dropped) on the volume URLs,
+  dispatched by method; LAN/Tailscale only; Basic auth with per-device app passwords
+  (SHA-256 stored, revocable, dead while the account is disabled or must change its
+  password, same backoff as sign-in; `chestcraft user app-password add|list|revoke`).
+  PROPFIND 0/1 (root quota = roomiest readable volume, for `rclone about`/`df`),
+  PROPPATCH mtime only, MKCOL, PUT via temp file + `X-OC-Mtime`, DELETE → trash, COPY/MOVE
+  (`fs/transfer.rs`: no-overwrite renames, cross-filesystem move = copy + source to trash,
+  temp entries recorded in the DB and swept at startup/daily), advisory LOCK/UNLOCK.
+  Verified with rclone copy/check/sync/moveto/copyto/about and an rclone FUSE mount.
+- Next: slice 6, shares + public write. The account page (app passwords in the UI) and
+  rename/move/copy in the UI come with the UI integration; the primitives exist.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in
-`deploy/site/plan-2026-11-05.md`.
+`deploy/site/plan-2026-11-05.md`. Addendum 2 there adds an MCP server for agents (own port,
+LAN/Tailscale only, agent accounts with a role + bearer tokens) as the last backend slice.
 
 ## Rules
 
@@ -55,7 +65,7 @@ The refined UI brief added backend work (skins, backgrounds, per-user settings, 
 ## Layout (planned)
 
 - `src/`: `config/`, `db/` (redb), `auth/`, `fs/` (paths, trash, upload, zip, thumbs),
-  `web/` (axum routes, maud views), `dav/`, `shares/`, `health/` (zpool, zfs, smart, mdstat,
+  `web/` (axum routes, maud views), `dav/`, `mcp/`, `shares/`, `health/` (zpool, zfs, smart, mdstat,
   host, history, alerts), `notify/`, `i18n.rs`
 - `assets/`: CSS, JS, fonts, icons (integrated from `design/`)
 - `i18n/`: `de.toml`, `en.toml` (a missing key fails the tests)
