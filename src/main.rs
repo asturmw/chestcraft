@@ -37,6 +37,10 @@ enum Cmd {
     /// Manage accounts (run as the service user while the service is stopped)
     #[command(subcommand)]
     User(UserCmd),
+    /// Manage agent accounts for the MCP server and their tokens (run as the service user
+    /// while the service is stopped)
+    #[command(subcommand)]
+    Agent(AgentCmd),
     /// Manage read-only tokens for the status API, /api/v1/status (run as the service user
     /// while the service is stopped; the admin can also do this on the volumes page)
     #[command(subcommand, name = "api-token")]
@@ -107,6 +111,35 @@ enum AppPasswordCmd {
 }
 
 #[derive(Subcommand)]
+enum AgentCmd {
+    /// Create an agent account: a role from [roles] (never admin), no password
+    Add {
+        name: String,
+        #[arg(long)]
+        role: String,
+    },
+    /// List agents and their tokens
+    List,
+    /// Change an agent's role
+    Role { name: String, role: String },
+    /// Block an agent: its tokens stop working and its shares pause
+    Disable { name: String },
+    /// Unblock an agent
+    Enable { name: String },
+    /// Create a token for one host the agent runs on; prints it once
+    Token {
+        name: String,
+        /// Where it is used, e.g. "workstation claude"
+        label: String,
+        /// Stop working after this long, e.g. 90d or 12h (default: never)
+        #[arg(long, value_name = "AGE")]
+        expires: Option<String>,
+    },
+    /// Revoke a token by its id or label
+    Revoke { name: String, which: String },
+}
+
+#[derive(Subcommand)]
 enum ApiTokenCmd {
     /// Create a token; prints it once
     Add {
@@ -126,6 +159,7 @@ fn main() -> ExitCode {
         Cmd::Serve => serve(&cli.config),
         Cmd::User(cmd) => user(&cli.config, cmd),
         Cmd::ApiToken(cmd) => api_token(&cli.config, cmd),
+        Cmd::Agent(cmd) => agent(&cli.config, cmd),
         Cmd::Collect => collect(&cli.config),
         Cmd::TelegramSetup { secrets } => telegram_setup(&cli.config, secrets),
         Cmd::ImportCopyparty {
@@ -249,7 +283,8 @@ fn import_copyparty(
 fn init_logging() {
     use tracing_subscriber::EnvFilter;
     let filter =
-        EnvFilter::try_from_env("CHESTCRAFT_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+        // rmcp logs every MCP request at info; the audit log has those.
+        EnvFilter::try_from_env("CHESTCRAFT_LOG").unwrap_or_else(|_| EnvFilter::new("info,rmcp=warn"));
     let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout());
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -487,11 +522,16 @@ fn user(path: &Path, cmd: UserCmd) -> ExitCode {
                     last_login: None,
                     settings: Default::default(),
                     known_remote_ips: vec![],
+                    kind: Default::default(),
                 })?;
                 println!("Created {name}. One-time password (changed at first sign-in): {pw}");
                 ExitCode::SUCCESS
             }
             UserCmd::Passwd { name } => match db.user(&name)? {
+                Some(u) if u.is_agent() => fail(format!(
+                    "{} is an agent: it has no password; give it a token with `chestcraft agent token`",
+                    u.name
+                )),
                 Some(mut u) => {
                     let pw = chestcraft::auth::password::generate();
                     u.password_hash = chestcraft::auth::password::hash(&pw);
@@ -505,6 +545,9 @@ fn user(path: &Path, cmd: UserCmd) -> ExitCode {
             },
             UserCmd::Role { name, role } => match db.user(&name)? {
                 Some(_) if !role_ok(&role) => fail(format!("unknown role \"{role}\"")),
+                Some(u) if u.is_agent() && role == chestcraft::auth::perm::ADMIN_ROLE => fail(
+                    format!("{} is an agent; agents can't have the admin role", u.name),
+                ),
                 Some(mut u) => {
                     u.role = role;
                     db.put_user(&u)?;
@@ -536,6 +579,9 @@ fn user(path: &Path, cmd: UserCmd) -> ExitCode {
                 users.sort_by_key(|u| u.name.to_lowercase());
                 for u in users {
                     let mut flags = Vec::new();
+                    if u.is_agent() {
+                        flags.push("agent");
+                    }
                     if u.disabled {
                         flags.push("disabled");
                     }
@@ -645,6 +691,182 @@ fn api_token(path: &Path, cmd: ApiTokenCmd) -> ExitCode {
                 }
                 None => fail(format!("no token \"{which}\"")),
             },
+        })
+    })();
+    result.unwrap_or_else(|e| fail(e.to_string()))
+}
+
+fn agent(path: &Path, cmd: AgentCmd) -> ExitCode {
+    use chestcraft::auth::agent::{self, AgentError};
+    use chestcraft::db::{AuditEvent, User};
+    if let Some(code) = refuse_root("agent") {
+        return code;
+    }
+    let cfg = match Config::load(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{}:\n{e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let db = match chestcraft::web::open_db(&cfg) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let fail = |msg: String| {
+        eprintln!("{msg}");
+        ExitCode::FAILURE
+    };
+    let tz = &cfg.server.timezone;
+    let date = |t: i64| {
+        jiff::Timestamp::from_second(t)
+            .map(|ts| {
+                ts.to_zoned(tz.clone())
+                    .strftime("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_default()
+    };
+    let now = jiff::Timestamp::now().as_second();
+    let audit = |action: &str, target: &str, detail: &str| {
+        db.audit(&AuditEvent {
+            time: now,
+            actor: "cli".into(),
+            ip: String::new(),
+            action: action.into(),
+            target: target.into(),
+            detail: detail.into(),
+        })
+    };
+    let result: Result<ExitCode, AgentError> = (|| {
+        Ok(match cmd {
+            AgentCmd::Add { name, role } => {
+                let a = agent::create(&db, &cfg, &name, &role, now)?;
+                audit("agent_created", &User::key(&a.name), &a.role)?;
+                println!("Created agent {} with role {}.", a.name, a.role);
+                println!(
+                    "Give it a token per host: chestcraft agent token {} LABEL [--expires 90d]",
+                    a.name
+                );
+                if cfg.mcp.listen.is_none() {
+                    println!("Note: [mcp] listen isn't set, so the MCP server is off.");
+                }
+                ExitCode::SUCCESS
+            }
+            AgentCmd::List => {
+                let mut agents: Vec<User> =
+                    db.users()?.into_iter().filter(User::is_agent).collect();
+                agents.sort_by_key(|u| u.name.to_lowercase());
+                if agents.is_empty() {
+                    println!("No agents");
+                }
+                let tokens = db.agent_tokens()?;
+                for a in agents {
+                    let mut flags = Vec::new();
+                    if a.disabled {
+                        flags.push("disabled".to_string());
+                    }
+                    if agent::check_role(&cfg, &a.role).is_err() {
+                        flags.push("role missing from config".into());
+                    }
+                    if cfg.mcp.health_roles.contains(&a.role) {
+                        flags.push("health tools".into());
+                    }
+                    println!("{:<20} {:<12} {}", a.name, a.role, flags.join(", "));
+                    let key = User::key(&a.name);
+                    for (_, t) in tokens.iter().filter(|(_, t)| t.agent == key) {
+                        let used = match (t.last_used, &t.last_ip) {
+                            (Some(u), Some(ip)) => format!("last used {} from {ip}", date(u)),
+                            (Some(u), None) => format!("last used {}", date(u)),
+                            _ => "never used".to_string(),
+                        };
+                        let expiry = match t.expires {
+                            Some(e) if e <= now => format!(", expired {}", date(e)),
+                            Some(e) => format!(", expires {}", date(e)),
+                            None => String::new(),
+                        };
+                        println!(
+                            "    token {:<12} {:<30} created {}{expiry}, {used}",
+                            t.id,
+                            t.label,
+                            date(t.created)
+                        );
+                    }
+                }
+                ExitCode::SUCCESS
+            }
+            AgentCmd::Role { name, role } => {
+                let a = agent::get(&db, &name)?;
+                agent::check_role(&cfg, &role)?;
+                db.update_user(&a.name, |u| u.role = role.clone())?;
+                audit("agent_role", &User::key(&a.name), &role)?;
+                println!("{} now has role {role}", a.name);
+                ExitCode::SUCCESS
+            }
+            AgentCmd::Disable { name } => {
+                let a = agent::get(&db, &name)?;
+                db.update_user(&a.name, |u| u.disabled = true)?;
+                audit("agent_disabled", &User::key(&a.name), "")?;
+                println!(
+                    "{} is disabled: its tokens stop working and its shares pause",
+                    a.name
+                );
+                ExitCode::SUCCESS
+            }
+            AgentCmd::Enable { name } => {
+                let a = agent::get(&db, &name)?;
+                db.update_user(&a.name, |u| u.disabled = false)?;
+                audit("agent_enabled", &User::key(&a.name), "")?;
+                println!("{} is enabled", a.name);
+                ExitCode::SUCCESS
+            }
+            AgentCmd::Token {
+                name,
+                label,
+                expires,
+            } => {
+                let expires = match expires.as_deref().map(config::parse_age) {
+                    None => None,
+                    Some(Ok(secs)) if secs > 0 => Some(now + secs),
+                    Some(_) => {
+                        return Ok(fail("--expires takes an age like 90d or 12h".to_string()));
+                    }
+                };
+                let (token, rec) = agent::create_token(&db, &name, &label, expires, "cli", now)?;
+                audit(
+                    "agent_token_created",
+                    &rec.agent,
+                    &format!("{} {}", rec.id, rec.label),
+                )?;
+                println!(
+                    "MCP token \"{}\" (id {}) for agent {}:",
+                    rec.label, rec.id, rec.agent
+                );
+                println!("{token}");
+                println!("It is shown only now. Send it as \"Authorization: Bearer <token>\".");
+                if let Some(e) = rec.expires {
+                    println!("It stops working {}.", date(e));
+                }
+                ExitCode::SUCCESS
+            }
+            AgentCmd::Revoke { name, which } => {
+                let a = agent::get(&db, &name)?;
+                match agent::revoke(&db, &User::key(&a.name), &which)? {
+                    Some(r) => {
+                        audit(
+                            "agent_token_revoked",
+                            &r.agent,
+                            &format!("{} {}", r.id, r.label),
+                        )?;
+                        println!("Revoked \"{}\" (id {}) of {}", r.label, r.id, a.name);
+                        ExitCode::SUCCESS
+                    }
+                    None => fail(format!("{} has no token \"{which}\"", a.name)),
+                }
+            }
         })
     })();
     result.unwrap_or_else(|e| fail(e.to_string()))

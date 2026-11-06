@@ -47,6 +47,7 @@ use std::sync::Arc;
 
 pub use auth::{Current, CurrentUser, audit, now};
 pub use client::ClientInfo;
+pub use headers::security as security_headers;
 pub use monitor::raise;
 
 pub struct AppState {
@@ -359,12 +360,39 @@ pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()>
     let addr = state.cfg.server.listen;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, volumes = state.volumes.iter().count(), "chestcraft listening");
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            shutdown_signal().await;
+            shutdown.cancel();
+        }
+    });
+    let mcp = match state.cfg.mcp.listen {
+        Some(mcp_addr) => {
+            let (st, token) = (state.clone(), shutdown.clone());
+            Some(tokio::spawn(async move {
+                let result = crate::mcp::serve(st, mcp_addr, token.clone()).await;
+                if result.is_err() {
+                    // Without its MCP server chestcraft stops, so the problem gets noticed.
+                    token.cancel();
+                }
+                result
+            }))
+        }
+        None => None,
+    };
+    let done = shutdown.clone();
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move { done.cancelled().await })
     .await?;
+    shutdown.cancel();
+    if let Some(task) = mcp {
+        task.await??;
+    }
     Ok(())
 }
 

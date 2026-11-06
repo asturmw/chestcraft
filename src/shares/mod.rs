@@ -609,6 +609,7 @@ mod tests {
             last_login: None,
             settings: UserSettings::default(),
             known_remote_ips: vec![],
+            kind: Default::default(),
         }
     }
 

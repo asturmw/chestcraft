@@ -3,7 +3,7 @@
 //! files, share links with their access log, visitor sessions, public upload settings,
 //! the health monitor's state (active alerts, counter baselines, alert history, hourly
 //! readings, delivery status per alert channel), the admin's appearance settings, the
-//! background image sets and the status API tokens. Exactly one process may open it; a second open fails with
+//! background image sets, the status API tokens and the agents' MCP tokens. Exactly one process may open it; a second open fails with
 //! [`DbError::Locked`].
 //!
 //! Records are JSON so they can grow fields without migrations; `meta.schema` versions the
@@ -38,6 +38,7 @@ const CHANNELS: TableDefinition<&str, &[u8]> = TableDefinition::new("alert_chann
 const SETTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("settings");
 const BACKGROUNDS: TableDefinition<&str, &[u8]> = TableDefinition::new("backgrounds");
 const API_TOKENS: TableDefinition<&str, &[u8]> = TableDefinition::new("api_tokens");
+const AGENT_TOKENS: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_tokens");
 
 pub const SCHEMA_VERSION: &str = "1";
 pub const FILE_NAME: &str = "state.redb";
@@ -104,6 +105,27 @@ pub struct User {
     /// Remote addresses this account signed in from, newest last (admin "new IP" alerts).
     #[serde(default)]
     pub known_remote_ips: Vec<String>,
+    /// A person, or an agent that only talks MCP.
+    #[serde(default, skip_serializing_if = "Kind::is_person")]
+    pub kind: Kind,
+}
+
+/// What an account is for.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    /// Signs in on the web and uses WebDAV.
+    #[default]
+    Person,
+    /// An AI agent: no password, no web or WebDAV sign-in, never the admin role; it uses
+    /// the MCP server with bearer tokens.
+    Agent,
+}
+
+impl Kind {
+    pub fn is_person(&self) -> bool {
+        *self == Kind::Person
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -191,6 +213,10 @@ pub struct BackgroundImage {
 impl User {
     pub fn key(name: &str) -> String {
         name.to_lowercase()
+    }
+
+    pub fn is_agent(&self) -> bool {
+        self.kind == Kind::Agent
     }
 }
 
@@ -311,6 +337,27 @@ pub struct ApiToken {
     pub created: i64,
     /// Who created it: `user:<key>` or `cli`.
     pub created_by: String,
+    #[serde(default)]
+    pub last_used: Option<i64>,
+    #[serde(default)]
+    pub last_ip: Option<String>,
+}
+
+/// A bearer token of an agent for the MCP server, stored under the SHA-256 of the token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentToken {
+    /// Short random id, for revoking.
+    pub id: String,
+    /// User key of the agent.
+    pub agent: String,
+    /// Where it is used, e.g. "workstation claude".
+    pub label: String,
+    pub created: i64,
+    /// Who created it: `user:<key>` or `cli`.
+    pub created_by: String,
+    /// Unix seconds after which it stops working.
+    #[serde(default)]
+    pub expires: Option<i64>,
     #[serde(default)]
     pub last_used: Option<i64>,
     #[serde(default)]
@@ -457,6 +504,7 @@ impl Db {
             tx.open_table(SETTINGS)?;
             tx.open_table(BACKGROUNDS)?;
             tx.open_table(API_TOKENS)?;
+            tx.open_table(AGENT_TOKENS)?;
             let mut meta = tx.open_table(META)?;
             let current = meta.get("schema")?.map(|v| v.value().to_string());
             match current.as_deref() {
@@ -770,6 +818,36 @@ impl Db {
 
     pub fn delete_api_token(&self, hash: &str) -> Result<()> {
         self.delete_key(API_TOKENS, hash)
+    }
+
+    // --- agent tokens (MCP) -----------------------------------------------------------
+
+    /// `durable = false` for bookkeeping like `last_used`.
+    pub fn put_agent_token(&self, hash: &str, rec: &AgentToken, durable: bool) -> Result<()> {
+        self.put_json(AGENT_TOKENS, hash, rec, durable)
+    }
+
+    pub fn agent_token(&self, hash: &str) -> Result<Option<AgentToken>> {
+        self.get_json(AGENT_TOKENS, hash)
+    }
+
+    /// `(hash, record)` of every agent token, oldest first.
+    pub fn agent_tokens(&self) -> Result<Vec<(String, AgentToken)>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(AGENT_TOKENS)?;
+        let mut out = Vec::new();
+        for row in t.iter()? {
+            let (k, v) = row?;
+            out.push((k.value().to_string(), serde_json::from_slice(v.value())?));
+        }
+        out.sort_by(|(_, a): &(String, AgentToken), (_, b)| {
+            (a.created, &a.id).cmp(&(b.created, &b.id))
+        });
+        Ok(out)
+    }
+
+    pub fn delete_agent_token(&self, hash: &str) -> Result<()> {
+        self.delete_key(AGENT_TOKENS, hash)
     }
 
     // --- liveness ----------------------------------------------------------------------
@@ -1149,6 +1227,7 @@ mod tests {
             last_login: None,
             settings: UserSettings::default(),
             known_remote_ips: vec![],
+            kind: Default::default(),
         }
     }
 

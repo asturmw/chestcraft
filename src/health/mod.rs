@@ -81,9 +81,22 @@ pub struct App {
     pub transfers: usize,
     pub shares_active: usize,
     pub failed_logins_24h: usize,
+    /// MCP tool calls by agents in the last 24 hours.
+    pub agent_calls_24h: usize,
+    /// Agent accounts, by name.
+    pub agents: Vec<AgentActivity>,
     /// (account, role) for accounts whose role isn't in the config.
     pub missing_roles: Vec<(String, String)>,
     pub missing_shares: Vec<MissingShare>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AgentActivity {
+    pub name: String,
+    pub role: String,
+    pub disabled: bool,
+    /// Newest use of any of its tokens (to the minute).
+    pub last_call: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -397,11 +410,26 @@ pub fn dataset_info(cfg: &Config, db: &Db, datasets: Vec<zfs::Dataset>) -> Vec<D
 pub fn app_stats(cfg: &Config, db: &Db, vols: &crate::fs::volume::Volumes, now: i64) -> App {
     let mut app = App::default();
     if let Ok(users) = db.users() {
+        let tokens = db.agent_tokens().unwrap_or_default();
         for u in users {
+            if u.is_agent() {
+                let key = crate::db::User::key(&u.name);
+                app.agents.push(AgentActivity {
+                    name: u.name.clone(),
+                    role: u.role.clone(),
+                    disabled: u.disabled,
+                    last_call: tokens
+                        .iter()
+                        .filter(|(_, t)| t.agent == key)
+                        .filter_map(|(_, t)| t.last_used)
+                        .max(),
+                });
+            }
             if u.role != crate::auth::perm::ADMIN_ROLE && !cfg.roles.contains_key(&u.role) {
                 app.missing_roles.push((u.name, u.role));
             }
         }
+        app.agents.sort_by_key(|a| a.name.to_lowercase());
     }
     app.sessions = db.session_count().unwrap_or(0) as usize;
     app.transfers = db
@@ -412,14 +440,16 @@ pub fn app_stats(cfg: &Config, db: &Db, vols: &crate::fs::volume::Volumes, now: 
                 .count()
         })
         .unwrap_or(0);
-    app.failed_logins_24h = db
-        .audit_since(now - 86_400)
-        .map(|evs| {
-            evs.iter()
-                .filter(|e| e.action == "login_failed" || e.action == "webdav_login_failed")
-                .count()
-        })
-        .unwrap_or(0);
+    if let Ok(evs) = db.audit_since(now - 86_400) {
+        app.failed_logins_24h = evs
+            .iter()
+            .filter(|e| e.action == "login_failed" || e.action == "webdav_login_failed")
+            .count();
+        app.agent_calls_24h = evs
+            .iter()
+            .filter(|e| e.actor.starts_with("agent:") && e.action.starts_with("mcp_"))
+            .count();
+    }
     for share in db.shares().unwrap_or_default() {
         if share.revoked.is_some() || share.expires.is_some_and(|t| t <= now) {
             continue;

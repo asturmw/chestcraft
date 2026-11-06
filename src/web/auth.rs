@@ -226,7 +226,10 @@ async fn resolve(st: &Shared, origin: Origin, cookie_value: &str) -> Option<Curr
         let user = st.db.user(&s.user).ok()??;
         let now = now();
         let admin = user.role == ADMIN_ROLE;
-        if user.disabled || !session::is_valid(&s, now, &st.cfg.sessions, admin, origin) {
+        if user.disabled
+            || user.is_agent()
+            || !session::is_valid(&s, now, &st.cfg.sessions, admin, origin)
+        {
             let _ = st.db.delete_session(&id_hash);
             return None;
         }
@@ -418,8 +421,11 @@ pub async fn login_submit(
     let checked = {
         let (st, account, pw) = (st.clone(), account.clone(), form.password.clone());
         tokio::task::spawn_blocking(move || match st.db.user(&account).ok().flatten() {
-            Some(u) => (password::verify(&pw, &u.password_hash) && !u.disabled).then_some(u),
-            None => {
+            // Agents have no password and never sign in here.
+            Some(u) if !u.is_agent() => {
+                (password::verify(&pw, &u.password_hash) && !u.disabled).then_some(u)
+            }
+            _ => {
                 password::verify_dummy(&pw);
                 None
             }

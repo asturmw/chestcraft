@@ -167,3 +167,25 @@ stale_minutes = 120    # SMART data older than this
 "tank/data" = "2h"
 "tank/media" = "2d"
 "tank/scratch" = "0"
+
+# ---- MCP server for agents --------------------------------------------------
+# AI agents (Claude Code, Hermes, …) use the files through MCP (Streamable HTTP at /mcp) on
+# their own port, reachable only from the local networks: requests with Cloudflare headers
+# or from outside server.local_networks are refused. Agents are accounts with a role from
+# [roles] (never admin) and bearer tokens instead of a password:
+#   chestcraft agent add hermes --role agenten
+#   chestcraft agent token hermes "aipc" --expires 90d
+# Assume an agent can be steered by what it reads, and that a cloud model sends what it
+# reads to its provider: give each agent the smallest role it needs.
+[mcp]
+listen = ""            # e.g. "0.0.0.0:3925"; empty = no MCP server
+# Host names clients use to reach the MCP server; requests for other hosts get 403 (DNS
+# rebinding). Without a port, any port matches.
+hosts = ["nas.example.lan:3925", "100.64.0.5:3925"]
+origins = []           # browser origins allowed to call; empty = refuse any Origin header
+health_roles = []      # agent roles that may read the health data (pools, disks, alerts)
+max_read_mib = 4       # largest piece one read_file returns
+max_write_mib = 16     # largest file one write_file writes
+notify_shares = true   # alert through the channels above for every share an agent creates
+max_concurrent = 4     # calls one agent may run at the same time
+calls_per_minute = 120

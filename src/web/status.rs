@@ -305,6 +305,8 @@ pub struct AppOut {
     pub transfers: usize,
     pub shares_active: usize,
     pub failed_logins_24h: usize,
+    /// MCP tool calls by agents in the last 24 hours.
+    pub agent_calls_24h: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -584,6 +586,7 @@ pub fn build(
         transfers: s.app.transfers,
         shares_active: s.app.shares_active,
         failed_logins_24h: s.app.failed_logins_24h,
+        agent_calls_24h: s.app.agent_calls_24h,
     });
     out
 }
