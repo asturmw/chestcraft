@@ -634,10 +634,21 @@ async fn uploaded(
         }
         Uploader::Public(g) => {
             audit(st, up.actor(), client.ip, "public_upload", &target, detail);
-            if g.notify {
-                // Delivery to the alert channels comes with the alerts slice; the log line
-                // is the notification until then.
+            // Files of a staged folder are announced with the folder. One message per
+            // volume and 10 minutes, so a folder of photos isn't hundreds of messages; the
+            // audit log has every file.
+            if g.notify && listed {
                 tracing::info!(volume, path = %full, ip = %client.ip, "public upload");
+                super::raise(
+                    st,
+                    &format!("public_upload:{volume}"),
+                    600,
+                    crate::health::alerts::Severity::Info,
+                    crate::health::alerts::Msg::new("public_upload")
+                        .text("volume", volume)
+                        .text("path", target.clone())
+                        .text("ip", client.ip.to_string()),
+                );
             }
             if listed {
                 guest::remember_uploads(st, &g.hash, vec![full.as_str().to_string()]).await;

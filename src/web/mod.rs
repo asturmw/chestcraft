@@ -3,12 +3,15 @@
 mod api;
 mod assets;
 mod auth;
+mod charts;
 mod client;
+mod dashboard;
 mod files;
 mod guest;
 mod headers;
 pub mod jobs;
 mod limits;
+pub mod monitor;
 mod preview;
 mod public;
 mod query;
@@ -41,6 +44,7 @@ use std::sync::Arc;
 
 pub use auth::{Current, CurrentUser, audit, now};
 pub use client::ClientInfo;
+pub use monitor::raise;
 
 pub struct AppState {
     pub cfg: Arc<Config>,
@@ -55,6 +59,10 @@ pub struct AppState {
     pub thumbs: crate::fs::thumbs::Thumbs,
     /// New thumbnails per IP for anonymous visitors.
     pub thumb_limiter: governor::DefaultKeyedRateLimiter<std::net::IpAddr>,
+    /// Health snapshots, active alerts, chart history.
+    pub health: monitor::Monitor,
+    /// Telegram / ntfy.
+    pub notifier: Arc<crate::notify::Notifier>,
     /// Lets tests act as a principal without signing in.
     #[cfg(test)]
     pub test_principal: std::sync::Mutex<Option<Principal>>,
@@ -63,9 +71,15 @@ pub struct AppState {
 pub type Shared = Arc<AppState>;
 
 impl AppState {
-    pub fn new(cfg: Config, i18n: I18n, db: Db) -> AppState {
+    pub fn new(
+        cfg: Config,
+        i18n: I18n,
+        db: Db,
+        secrets: &crate::config::secrets::Secrets,
+    ) -> AppState {
         let volumes = Volumes::open(&cfg);
         let db = Arc::new(db);
+        let notifier = Arc::new(crate::notify::Notifier::new(&cfg, secrets, db.clone()));
         let (words, warnings) = crate::shares::words::WordLists::load(&cfg.shares.wordlists);
         for w in warnings {
             tracing::warn!("{w}");
@@ -73,6 +87,8 @@ impl AppState {
         AppState {
             thumbs: crate::fs::thumbs::Thumbs::new(&cfg),
             thumb_limiter: preview::anon_limiter(),
+            health: monitor::Monitor::default(),
+            notifier,
             cfg: Arc::new(cfg),
             volumes,
             i18n,
@@ -136,6 +152,7 @@ pub fn page_ctx<'a>(
         skin,
         keys,
         signed_in: !principal.is_anonymous(),
+        admin: principal.is_admin(),
         user_name: current.map(|c| c.name.as_str()),
         csrf: current.map(|c| c.csrf.as_str()),
         tz: &st.cfg.server.timezone,
@@ -216,6 +233,11 @@ pub fn router(state: Shared) -> Router {
             "/.cc/admin/volumes",
             get(public::volumes_page).post(public::volumes_submit),
         )
+        .route("/.cc/admin/dashboard", get(dashboard::page))
+        .route(
+            "/.cc/admin/alerts",
+            get(dashboard::alerts_page).post(dashboard::alerts_submit),
+        )
         .route("/s/{id}", any(share::handle))
         .route("/s/{id}/", any(share::handle))
         .route("/s/{id}/{*rest}", any(share::handle))
@@ -286,10 +308,27 @@ pub fn open_db(cfg: &Config) -> anyhow::Result<Db> {
 /// Run the server until SIGTERM or Ctrl-C.
 pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()> {
     let i18n = I18n::load(config_dir.map(|d| d.join("i18n")).as_deref());
+    let secrets = match crate::config::secrets::Secrets::location(config_dir) {
+        Some(path) => crate::config::secrets::Secrets::load(&path).unwrap_or_else(|e| {
+            tracing::error!("secrets: {e}; alert channels that need a token stay off");
+            Default::default()
+        }),
+        None => Default::default(),
+    };
     let db = open_db(&cfg)?;
-    let state = Arc::new(AppState::new(cfg, i18n, db));
+    let state = Arc::new(AppState::new(cfg, i18n, db, &secrets));
+    drop(secrets);
+    for c in state.notifier.channels() {
+        match &c.problem {
+            Some(p) => tracing::warn!(channel = c.kind.name(), "alert channel off: {p}"),
+            None => {
+                tracing::info!(channel = c.kind.name(), to = %c.destination(), "alert channel on")
+            }
+        }
+    }
     jobs::sweep_leftovers(state.clone()).await;
     jobs::spawn(state.clone());
+    monitor::spawn(state.clone());
     state.thumbs.start();
     let addr = state.cfg.server.listen;
     let listener = tokio::net::TcpListener::bind(addr).await?;

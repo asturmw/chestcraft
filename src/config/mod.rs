@@ -4,6 +4,8 @@
 //! so `chestcraft check` can report them all at once. Checks that look at the machine
 //! (do the volume directories exist?) live in [`check_environment`].
 
+pub mod secrets;
+
 use crate::auth::perm::Perms;
 use crate::fs::path::RelPath;
 use crate::tools;
@@ -82,6 +84,8 @@ pub struct PathsConfig {
     pub state_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub backup_dir: PathBuf,
+    /// SMART data written by `chestcraft collect` (root) and read by the server.
+    pub smart_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +165,57 @@ pub struct AlertsConfig {
     pub telegram: Option<TelegramConfig>,
     /// Set when `alerts.ntfy.topic` is configured; an access token, if any, is a secret.
     pub ntfy: Option<NtfyConfig>,
+    pub thresholds: Thresholds,
+    /// Dataset → longest allowed age of its newest snapshot, in seconds. A rule covers the
+    /// dataset and everything below it; the longest matching name wins; 0 turns it off.
+    pub snapshots: BTreeMap<String, i64>,
+}
+
+/// Alert limits. Percentages and temperatures alert when the value is above the limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Thresholds {
+    pub pool_warn: u8,
+    pub pool_crit: u8,
+    pub quota: u8,
+    pub root_fs: u8,
+    pub scrub_days: u32,
+    pub hdd_temp: i32,
+    pub ssd_temp: i32,
+    pub ssd_wear: u8,
+    pub stale_minutes: u32,
+}
+
+impl Default for Thresholds {
+    fn default() -> Self {
+        Thresholds {
+            pool_warn: 80,
+            pool_crit: 90,
+            quota: 90,
+            root_fs: 85,
+            scrub_days: 40,
+            hdd_temp: 50,
+            ssd_temp: 70,
+            ssd_wear: 80,
+            stale_minutes: 120,
+        }
+    }
+}
+
+impl AlertsConfig {
+    /// Snapshot age limit for `dataset` (seconds), if a rule covers it.
+    pub fn snapshot_limit(&self, dataset: &str) -> Option<i64> {
+        self.snapshots
+            .iter()
+            .filter(|(name, _)| {
+                dataset == name.as_str()
+                    || dataset
+                        .strip_prefix(name.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .max_by_key(|(name, _)| name.len())
+            .map(|(_, secs)| *secs)
+            .filter(|secs| *secs > 0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,6 +316,7 @@ struct RawPaths {
     state_dir: String,
     cache_dir: String,
     backup_dir: String,
+    smart_file: String,
 }
 
 impl Default for RawPaths {
@@ -269,6 +325,7 @@ impl Default for RawPaths {
             state_dir: "/var/lib/chestcraft".into(),
             cache_dir: "/var/cache/chestcraft".into(),
             backup_dir: "/srv/chestcraft".into(),
+            smart_file: "/run/chestcraft-smart/smart.json".into(),
         }
     }
 }
@@ -389,6 +446,8 @@ struct RawAlerts {
     digest: String,
     telegram: RawTelegram,
     ntfy: RawNtfy,
+    thresholds: RawThresholds,
+    snapshots: BTreeMap<String, String>,
 }
 
 impl Default for RawAlerts {
@@ -398,6 +457,39 @@ impl Default for RawAlerts {
             digest: "Sun 10:00".into(),
             telegram: RawTelegram::default(),
             ntfy: RawNtfy::default(),
+            thresholds: RawThresholds::default(),
+            snapshots: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct RawThresholds {
+    pool_full_warn: u32,
+    pool_full_crit: u32,
+    quota_full: u32,
+    root_fs_full: u32,
+    scrub_days: u32,
+    hdd_temp: u32,
+    ssd_temp: u32,
+    ssd_wear: u32,
+    stale_minutes: u32,
+}
+
+impl Default for RawThresholds {
+    fn default() -> Self {
+        let d = Thresholds::default();
+        RawThresholds {
+            pool_full_warn: d.pool_warn.into(),
+            pool_full_crit: d.pool_crit.into(),
+            quota_full: d.quota.into(),
+            root_fs_full: d.root_fs.into(),
+            scrub_days: d.scrub_days,
+            hdd_temp: d.hdd_temp as u32,
+            ssd_temp: d.ssd_temp as u32,
+            ssd_wear: d.ssd_wear.into(),
+            stale_minutes: d.stale_minutes,
         }
     }
 }
@@ -590,6 +682,28 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
             chat_id: raw.alerts.telegram.chat_id,
         }),
         ntfy,
+        thresholds: validate_thresholds(&raw.alerts.thresholds, errs),
+        snapshots: raw
+            .alerts
+            .snapshots
+            .iter()
+            .filter_map(|(dataset, age)| {
+                let name = dataset.trim().trim_end_matches('/');
+                if name.is_empty() || name.contains('@') || name.starts_with('/') {
+                    errs.push(format!(
+                        "alerts.snapshots: \"{dataset}\" is not a dataset name like \"tank/data\""
+                    ));
+                    return None;
+                }
+                match parse_age(age) {
+                    Ok(secs) => Some((name.to_string(), secs)),
+                    Err(e) => {
+                        errs.push(format!("alerts.snapshots.\"{dataset}\": {e}"));
+                        None
+                    }
+                }
+            })
+            .collect(),
     };
 
     let mut wordlists = BTreeMap::new();
@@ -622,6 +736,64 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         alerts,
         shares: SharesConfig { wordlists },
     })
+}
+
+fn validate_thresholds(raw: &RawThresholds, errs: &mut Vec<String>) -> Thresholds {
+    let pct = |v: u32, key: &str, errs: &mut Vec<String>| {
+        in_range(v, 1, 100, &format!("alerts.thresholds.{key}"), errs) as u8
+    };
+    let pool_warn = pct(raw.pool_full_warn, "pool_full_warn", errs);
+    let pool_crit = pct(raw.pool_full_crit, "pool_full_crit", errs);
+    if pool_crit < pool_warn {
+        errs.push("alerts.thresholds: pool_full_crit is below pool_full_warn".into());
+    }
+    Thresholds {
+        pool_warn,
+        pool_crit,
+        quota: pct(raw.quota_full, "quota_full", errs),
+        root_fs: pct(raw.root_fs_full, "root_fs_full", errs),
+        scrub_days: in_range(
+            raw.scrub_days,
+            1,
+            3650,
+            "alerts.thresholds.scrub_days",
+            errs,
+        ),
+        hdd_temp: in_range(raw.hdd_temp, 20, 120, "alerts.thresholds.hdd_temp", errs) as i32,
+        ssd_temp: in_range(raw.ssd_temp, 20, 120, "alerts.thresholds.ssd_temp", errs) as i32,
+        ssd_wear: pct(raw.ssd_wear, "ssd_wear", errs),
+        stale_minutes: in_range(
+            raw.stale_minutes,
+            10,
+            7 * 24 * 60,
+            "alerts.thresholds.stale_minutes",
+            errs,
+        ),
+    }
+}
+
+/// "90m", "2h", "2d", or "0" (off) → seconds.
+pub fn parse_age(s: &str) -> Result<i64, String> {
+    let s = s.trim();
+    if s == "0" {
+        return Ok(0);
+    }
+    let cut = s.char_indices().last().map_or(0, |(i, _)| i);
+    let (num, unit) = s.split_at(cut);
+    let n: i64 = num
+        .trim()
+        .parse()
+        .ok()
+        .filter(|n| (1..=100_000).contains(n))
+        .ok_or_else(|| format!("\"{s}\" is not an age like \"90m\", \"2h\" or \"2d\""))?;
+    match unit {
+        "m" => Ok(n * 60),
+        "h" => Ok(n * 3600),
+        "d" => Ok(n * 86_400),
+        _ => Err(format!(
+            "\"{s}\" is not an age like \"90m\", \"2h\" or \"2d\""
+        )),
+    }
 }
 
 fn in_range(v: u32, min: u32, max: u32, key: &str, errs: &mut Vec<String>) -> u32 {
@@ -743,10 +915,12 @@ fn validate_paths(raw: &RawPaths, errs: &mut Vec<String>) -> Option<PathsConfig>
     let state_dir = get("state_dir", &raw.state_dir);
     let cache_dir = get("cache_dir", &raw.cache_dir);
     let backup_dir = get("backup_dir", &raw.backup_dir);
+    let smart_file = get("smart_file", &raw.smart_file);
     Some(PathsConfig {
         state_dir: state_dir?,
         cache_dir: cache_dir?,
         backup_dir: backup_dir?,
+        smart_file: smart_file?,
     })
 }
 
@@ -1247,5 +1421,46 @@ mod tests {
         assert_eq!(cfg.alerts.ntfy.as_ref().unwrap().server, "https://ntfy.sh");
         assert_eq!(cfg.alerts.telegram.as_ref().unwrap().chat_id, -100123);
         assert!(is_language_code("de") && !is_language_code("DE") && !is_language_code("pt-br"));
+    }
+
+    #[test]
+    fn alert_thresholds_and_snapshot_rules() {
+        let cfg = Config::from_toml_str(
+            "[server]\npublic_url = \"http://x.org\"\n[alerts.thresholds]\nhdd_temp = 45\n\
+             [alerts.snapshots]\n\"tank\" = \"2d\"\n\"tank/data/\" = \"90m\"\n\"tank/scratch\" = \"0\"\n",
+        )
+        .unwrap();
+        let t = cfg.alerts.thresholds;
+        assert_eq!((t.hdd_temp, t.pool_warn, t.stale_minutes), (45, 80, 120));
+        let a = &cfg.alerts;
+        assert_eq!(a.snapshot_limit("tank"), Some(2 * 86_400));
+        assert_eq!(a.snapshot_limit("tank/data"), Some(90 * 60));
+        assert_eq!(a.snapshot_limit("tank/data/sub"), Some(90 * 60));
+        assert_eq!(a.snapshot_limit("tank/database"), Some(2 * 86_400));
+        assert_eq!(a.snapshot_limit("tank/scratch/x"), None);
+        assert_eq!(a.snapshot_limit("other"), None);
+        assert_eq!(
+            cfg.paths.smart_file,
+            Path::new("/run/chestcraft-smart/smart.json")
+        );
+
+        let Err(ConfigError::Invalid(e)) = Config::from_toml_str(
+            "[server]\npublic_url = \"http://x.org\"\n[alerts.thresholds]\npool_full_warn = 95\n\
+             pool_full_crit = 90\nssd_wear = 0\n[alerts.snapshots]\n\"tank@snap\" = \"1h\"\n\"tank\" = \"soon\"\n",
+        ) else {
+            panic!("accepted")
+        };
+        for want in [
+            "pool_full_crit is below",
+            "ssd_wear",
+            "tank@snap",
+            "\"soon\"",
+        ] {
+            assert!(e.iter().any(|m| m.contains(want)), "{want}: {e:?}");
+        }
+        assert_eq!(parse_age("0"), Ok(0));
+        assert_eq!(parse_age(" 3d "), Ok(3 * 86_400));
+        assert!(parse_age("3w").is_err() && parse_age("h").is_err() && parse_age("").is_err());
+        assert!(parse_age("3ä").is_err());
     }
 }

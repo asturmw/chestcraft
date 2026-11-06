@@ -1,0 +1,196 @@
+{
+ "output_version": {
+  "command": "zpool status",
+  "vers_major": 0,
+  "vers_minor": 1
+ },
+ "pools": {
+  "fast": {
+   "name": "fast",
+   "state": "DEGRADED",
+   "pool_guid": 42,
+   "txg": 1,
+   "spa_version": 5000,
+   "zpl_version": 5,
+   "scan_stats": {
+    "function": "RESILVER",
+    "state": "SCANNING",
+    "start_time": 1793900000,
+    "end_time": 0,
+    "to_examine": 1000000000000,
+    "examined": 500000000000,
+    "skipped": 0,
+    "processed": 370000000000,
+    "errors": 0,
+    "bytes_per_scan": 0,
+    "pass_start": 1793900000,
+    "scrub_pause": 0,
+    "scrub_spent_paused": 0,
+    "issued_bytes_per_scan": 0,
+    "issued": 370000000000
+   },
+   "vdevs": {
+    "fast": {
+     "name": "fast",
+     "vdev_type": "root",
+     "guid": 6134327459162675120,
+     "class": "normal",
+     "state": "DEGRADED",
+     "read_errors": 0,
+     "write_errors": 0,
+     "checksum_errors": 0,
+     "vdevs": {
+      "mirror-0": {
+       "name": "mirror-0",
+       "vdev_type": "mirror",
+       "guid": 6377197318101497525,
+       "class": "normal",
+       "state": "DEGRADED",
+       "read_errors": 0,
+       "write_errors": 0,
+       "checksum_errors": 0,
+       "vdevs": {
+        "ata-EXAMPLE_SSD_SN0001-part1": {
+         "name": "ata-EXAMPLE_SSD_SN0001-part1",
+         "vdev_type": "disk",
+         "guid": 9738681121152269347,
+         "class": "normal",
+         "state": "ONLINE",
+         "read_errors": 0,
+         "write_errors": 0,
+         "checksum_errors": 0,
+         "slow_ios": 0,
+         "path": "/dev/disk/by-id/ata-EXAMPLE_SSD_SN0001-part1"
+        },
+        "ata-EXAMPLE_SSD_SN0002-part1": {
+         "name": "ata-EXAMPLE_SSD_SN0002-part1",
+         "vdev_type": "disk",
+         "guid": 6816497446257569881,
+         "class": "normal",
+         "state": "FAULTED",
+         "read_errors": 3,
+         "write_errors": 0,
+         "checksum_errors": 12,
+         "slow_ios": 0,
+         "path": "/dev/disk/by-id/ata-EXAMPLE_SSD_SN0002-part1"
+        }
+       }
+      },
+      "mirror-1": {
+       "name": "mirror-1",
+       "vdev_type": "mirror",
+       "guid": 1457380681191578132,
+       "class": "special",
+       "state": "ONLINE",
+       "read_errors": 0,
+       "write_errors": 0,
+       "checksum_errors": 0,
+       "vdevs": {
+        "nvme-EXAMPLE_NVME_SN0003-part2": {
+         "name": "nvme-EXAMPLE_NVME_SN0003-part2",
+         "vdev_type": "disk",
+         "guid": 1570576685538020777,
+         "class": "special",
+         "state": "ONLINE",
+         "read_errors": 0,
+         "write_errors": 0,
+         "checksum_errors": 0,
+         "slow_ios": 0,
+         "path": "/dev/disk/by-id/nvme-EXAMPLE_NVME_SN0003-part2"
+        },
+        "nvme-EXAMPLE_NVME_SN0004-part2": {
+         "name": "nvme-EXAMPLE_NVME_SN0004-part2",
+         "vdev_type": "disk",
+         "guid": 6400666402170143951,
+         "class": "special",
+         "state": "ONLINE",
+         "read_errors": 0,
+         "write_errors": 0,
+         "checksum_errors": 0,
+         "slow_ios": 0,
+         "path": "/dev/disk/by-id/nvme-EXAMPLE_NVME_SN0004-part2"
+        }
+       }
+      },
+      "nvme-EXAMPLE_NVME_SN0003-part3": {
+       "name": "nvme-EXAMPLE_NVME_SN0003-part3",
+       "vdev_type": "disk",
+       "guid": 3039119943687723724,
+       "class": "log",
+       "state": "ONLINE",
+       "read_errors": 0,
+       "write_errors": 0,
+       "checksum_errors": 0,
+       "slow_ios": 0,
+       "path": "/dev/disk/by-id/nvme-EXAMPLE_NVME_SN0003-part3"
+      }
+     }
+    }
+   },
+   "spares": {
+    "ata-EXAMPLE_SSD_SN0005": {
+     "name": "ata-EXAMPLE_SSD_SN0005",
+     "vdev_type": "disk",
+     "guid": 2228320887535867595,
+     "class": "normal",
+     "state": "AVAIL",
+     "read_errors": 0,
+     "write_errors": 0,
+     "checksum_errors": 0,
+     "slow_ios": 0,
+     "path": "/dev/disk/by-id/ata-EXAMPLE_SSD_SN0005"
+    }
+   },
+   "l2cache": {
+    "nvme-EXAMPLE_NVME_SN0006": {
+     "name": "nvme-EXAMPLE_NVME_SN0006",
+     "vdev_type": "disk",
+     "guid": 4865875329656804758,
+     "class": "normal",
+     "state": "ONLINE",
+     "read_errors": 0,
+     "write_errors": 0,
+     "checksum_errors": 0,
+     "slow_ios": 0,
+     "path": "/dev/disk/by-id/nvme-EXAMPLE_NVME_SN0006"
+    }
+   },
+   "error_count": 2
+  },
+  "backup": {
+   "name": "backup",
+   "state": "ONLINE",
+   "pool_guid": 43,
+   "txg": 1,
+   "spa_version": 5000,
+   "zpl_version": 5,
+   "vdevs": {
+    "backup": {
+     "name": "backup",
+     "vdev_type": "root",
+     "guid": 6265749391392088512,
+     "class": "normal",
+     "state": "ONLINE",
+     "read_errors": 0,
+     "write_errors": 0,
+     "checksum_errors": 0,
+     "vdevs": {
+      "usb-EXAMPLE_USB_DISK-0:0": {
+       "name": "usb-EXAMPLE_USB_DISK-0:0",
+       "vdev_type": "disk",
+       "guid": 5986947095633979044,
+       "class": "normal",
+       "state": "ONLINE",
+       "read_errors": 0,
+       "write_errors": 0,
+       "checksum_errors": 0,
+       "slow_ios": 0,
+       "path": "/dev/disk/by-id/usb-EXAMPLE_USB_DISK-0:0"
+      }
+     }
+    }
+   },
+   "error_count": "0"
+  }
+ }
+}

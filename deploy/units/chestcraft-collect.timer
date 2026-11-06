@@ -1,0 +1,13 @@
+# Every 30 minutes, and shortly after boot. The dashboard warns when the data is older
+# than alerts.thresholds.stale_minutes (default 120).
+[Unit]
+Description=chestcraft SMART collector, every 30 minutes
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/30
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

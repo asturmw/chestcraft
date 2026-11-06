@@ -1,0 +1,864 @@
+{
+ "output_version": {
+  "command": "zfs list",
+  "vers_major": 0,
+  "vers_minor": 1
+ },
+ "datasets": {
+  "tank": {
+   "name": "tank",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 1,
+   "properties": {
+    "used": {
+     "value": 5409949903248,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "none",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 0,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/archive": {
+   "name": "tank/archive",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 5871743,
+   "properties": {
+    "used": {
+     "value": 2772330000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/archive",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 163680,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/archive/school": {
+   "name": "tank/archive/school",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 1812952,
+   "properties": {
+    "used": {
+     "value": 2772024464,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/archive/school",
+     "source": {
+      "type": "INHERITED",
+      "data": "tank/archiv"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 10955648,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/backups": {
+   "name": "tank/backups",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 165,
+   "properties": {
+    "used": {
+     "value": 1187411786000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 736733562608,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 1924145348608,
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/backups",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 0,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/backups/containers": {
+   "name": "tank/backups/containers",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 1813349,
+   "properties": {
+    "used": {
+     "value": 229152,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 736733562608,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/backups/containers",
+     "source": {
+      "type": "INHERITED",
+      "data": "tank/backups"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 10912,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/backups/vms": {
+   "name": "tank/backups/vms",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 1813347,
+   "properties": {
+    "used": {
+     "value": 909769422320,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 736733562608,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/backups/vms",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 0,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/docs": {
+   "name": "tank/docs",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 4356414,
+   "properties": {
+    "used": {
+     "value": 75003632,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/docs",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 28163872,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/media": {
+   "name": "tank/media",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 5871807,
+   "properties": {
+    "used": {
+     "value": 4204399345168,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/media",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 0,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/media/recordings": {
+   "name": "tank/media/recordings",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 277,
+   "properties": {
+    "used": {
+     "value": 1497771921184,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/media/recordings",
+     "source": {
+      "type": "INHERITED",
+      "data": "tank/media"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 48334993168,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/media/photos": {
+   "name": "tank/media/photos",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 5871849,
+   "properties": {
+    "used": {
+     "value": 1691992896,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/media/photos",
+     "source": {
+      "type": "INHERITED",
+      "data": "tank/media"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 87296,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/media/immich": {
+   "name": "tank/media/immich",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 1813338,
+   "properties": {
+    "used": {
+     "value": 68945780640,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/media/immich",
+     "source": {
+      "type": "INHERITED",
+      "data": "tank/media"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 1574972608,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/media/video": {
+   "name": "tank/media/video",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 23751,
+   "properties": {
+    "used": {
+     "value": 2635989519504,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 666056801776,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 3298534883328,
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/media/video",
+     "source": {
+      "type": "INHERITED",
+      "data": "tank/media"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 3511437952,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/projects": {
+   "name": "tank/projects",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 241,
+   "properties": {
+    "used": {
+     "value": 621487504,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/projects",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 834768,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/share": {
+   "name": "tank/share",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 1812954,
+   "properties": {
+    "used": {
+     "value": 14540501888,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/share",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 975881984,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  },
+  "tank/transfer": {
+   "name": "tank/transfer",
+   "type": "FILESYSTEM",
+   "pool": "tank",
+   "createtxg": 5871746,
+   "properties": {
+    "used": {
+     "value": 480000000000,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "available": {
+     "value": 2439169971792,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "quota": {
+     "value": 600000000000,
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "refquota": {
+     "value": 0,
+     "source": {
+      "type": "DEFAULT",
+      "data": "-"
+     }
+    },
+    "mountpoint": {
+     "value": "/srv/transfer",
+     "source": {
+      "type": "LOCAL",
+      "data": "-"
+     }
+    },
+    "usedbysnapshots": {
+     "value": 190960,
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    },
+    "type": {
+     "value": "filesystem",
+     "source": {
+      "type": "NONE",
+      "data": "-"
+     }
+    }
+   }
+  }
+ }
+}

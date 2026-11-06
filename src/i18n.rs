@@ -154,6 +154,12 @@ impl I18n {
             })
     }
 
+    /// Does `lang` (or the English fallback) have `key`?
+    pub fn has(&self, lang: Lang, key: &str) -> bool {
+        self.catalogs[lang.0].strings.contains_key(key)
+            || self.catalogs[EN.0].strings.contains_key(key)
+    }
+
     /// `t` with `{placeholder}` substitution.
     pub fn tf(&self, lang: Lang, key: &str, args: &[(&str, &str)]) -> String {
         substitute(self.t(lang, key), args)

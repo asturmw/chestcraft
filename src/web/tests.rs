@@ -85,7 +85,7 @@ fn env() -> Env {
     .unwrap();
     let db = open_db(&cfg).unwrap();
     Env {
-        state: Arc::new(AppState::new(cfg, I18n::builtin(), db)),
+        state: Arc::new(AppState::new(cfg, I18n::builtin(), db, &Default::default())),
         _tmp: tmp,
     }
 }
@@ -3283,4 +3283,319 @@ async fn share_visitors_get_thumbnails_and_the_viewer() {
         .get_h(&format!("/s/{id}/IMG_2041.jpg?thumb=view"), &h)
         .await;
     assert_eq!((r.status, img_dims(&r.body)), (StatusCode::OK, (900, 600)));
+}
+
+// --- dashboard and alerts --------------------------------------------------------------
+
+use crate::health::{self, Probe, SmartFile, Snapshot};
+
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+}
+
+fn sent_titles(e: &Env) -> Vec<String> {
+    e.state
+        .notifier
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|m| m.title.clone())
+        .collect()
+}
+
+/// A pool resilvering after a disk failed, an md mirror, a failing disk; no ZFS datasets.
+fn degraded_snapshot(taken: i64) -> Snapshot {
+    let mut s = Snapshot::empty(taken);
+    let mut pools = health::zpool::parse(
+        &fixture("zpool-status-degraded.json"),
+        &fixture("zpool-list-two.json"),
+    )
+    .unwrap();
+    pools[1].vdevs[0].children[1].disk = Some("sdb".into());
+    s.pools = Probe::Ok(pools);
+    s.md = Probe::Ok(health::mdstat::parse(
+        "md0 : active raid1 nvme1n1p2[1] nvme0n1p2[0]\n      1 blocks super 1.2 [2/2] [UU]\n",
+    ));
+    let v: serde_json::Value =
+        serde_json::from_slice(&fixture("smartctl-ata-failing.json")).unwrap();
+    let smart = health::smart::parse(&v, taken - 60);
+    s.disks = vec![health::disks::Disk {
+        name: "sdb".into(),
+        kind: health::disks::Kind::Hdd,
+        model: smart.model.clone().unwrap(),
+        serial: smart.serial.clone(),
+        size: 3_000_592_982_016,
+        label: Some("Bay 3".into()),
+        roles: vec![health::disks::Role::Pool("fast".into())],
+        smart: Some(smart),
+        smart_state: health::disks::SmartState::Ok,
+    }];
+    s.smart = SmartFile::Ok {
+        collected: taken - 60,
+    };
+    s.host.root_fs = Some(health::host::FsUse {
+        total: 100 << 30,
+        used: 5 << 30,
+        avail: 95 << 30,
+    });
+    s
+}
+
+/// Like a monitor tick, with a given snapshot instead of this machine's.
+fn tick_with(e: &Env, snap: Snapshot) -> Vec<crate::notify::Message> {
+    let changes = monitor::apply(&e.state, &snap).unwrap();
+    let msgs: Vec<_> = changes
+        .iter()
+        .map(|c| monitor::message(&e.state, c, snap.taken))
+        .collect();
+    e.state.health.set_latest(snap);
+    msgs
+}
+
+#[tokio::test]
+async fn dashboard_is_for_the_admin_and_shows_what_the_machine_has() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let jana = e.session("jana", "familie").await;
+    assert_eq!(
+        e.get("/.cc/admin/dashboard").await.status,
+        StatusCode::NOT_FOUND
+    );
+    let r = e
+        .get_h("/.cc/admin/dashboard", &[("cookie", &jana.cookie)])
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let t = e
+        .get_h("/.cc/admin/dashboard", &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(
+        t.contains("first reading") && t.contains("data-verdict=\"stale\""),
+        "{t}"
+    );
+
+    tick_with(&e, degraded_snapshot(now()));
+    let r = e
+        .get_h("/.cc/admin/dashboard", &[("cookie", &admin.cookie)])
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let t = r.text();
+    for want in [
+        "data-verdict=\"critical\"",
+        "dashboard.js",
+        "Pool fast is DEGRADED: Bay 3 (WDC WD30EFRX-68AX9N0, …LE0004) FAULTED",
+        "Resilver running: 37 %",
+        "R 3 · W 0 · C 12",
+        "mirror-1 (special)",
+        "Spares",
+        "Bay 3",
+        "Failing",
+        "Completed: read failure",
+        "184 / 16 / 16",
+        "dash-section--md",
+        "nvme1n1p2",
+        "Never scrubbed",
+    ] {
+        assert!(t.contains(want), "{want} missing:\n{t}");
+    }
+    // No datasets were read (Absent): no empty section for them.
+    assert!(!t.contains("dash-section--datasets"), "{t}");
+
+    // The landing page tells the admin, and only the admin.
+    let t = e.get_h("/", &[("cookie", &admin.cookie)]).await.text();
+    assert!(
+        t.contains("class=\"health-line\" data-state=\"critical\"")
+            && t.contains("href=\"/.cc/admin/dashboard\""),
+        "{t}"
+    );
+    let t = e.get_h("/", &[("cookie", &jana.cookie)]).await.text();
+    assert!(
+        !t.contains("health-line") && !t.contains("/.cc/admin/dashboard"),
+        "{t}"
+    );
+}
+
+#[tokio::test]
+async fn alerts_fire_once_resolve_and_show_on_the_alerts_page() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let t0 = now();
+    let msgs = tick_with(&e, degraded_snapshot(t0));
+    let titles: Vec<&str> = msgs.iter().map(|m| m.title.as_str()).collect();
+    assert!(
+        titles.contains(&"Pool fast is DEGRADED: Bay 3 (WDC WD30EFRX-68AX9N0, …LE0004) FAULTED"),
+        "{titles:?}"
+    );
+    assert!(
+        titles.contains(&"Bay 3 (WDC WD30EFRX-68AX9N0, …LE0004): SMART says the disk is failing")
+    );
+    assert!(titles.contains(&"Pool fast is resilvering (37 %)"));
+    let crit = msgs
+        .iter()
+        .find(|m| m.title.starts_with("Pool fast is DEGRADED"))
+        .unwrap();
+    assert_eq!(crit.level, crate::notify::Level::Critical);
+    assert!(
+        crit.body
+            .contains("https://files.example.org/.cc/admin/dashboard"),
+        "{}",
+        crit.body
+    );
+    // A minute later nothing new is sent.
+    assert!(tick_with(&e, degraded_snapshot(t0 + 60)).is_empty());
+
+    // The pool is whole again, the disk was replaced.
+    let mut ok = Snapshot::empty(t0 + 120);
+    ok.pools = Probe::Ok(
+        health::zpool::parse(
+            &fixture("zpool-status-raidz1.json"),
+            &fixture("zpool-list.json"),
+        )
+        .unwrap(),
+    );
+    ok.smart = SmartFile::Ok {
+        collected: t0 + 100,
+    };
+    ok.host = degraded_snapshot(t0).host;
+    let msgs = tick_with(&e, ok);
+    assert!(
+        msgs.iter()
+            .all(|m| m.level == crate::notify::Level::Resolved),
+        "{msgs:?}"
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m.title == "Pool fast finished resilvering")
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m.title == "Resolved: Pool fast has 2 files with permanent errors")
+    );
+
+    let t = e
+        .get_h("/.cc/admin/alerts", &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(t.contains("Nothing is wrong right now."), "{t}");
+    assert!(
+        t.contains("data-what=\"fired\"") && t.contains("data-what=\"resolved\""),
+        "{t}"
+    );
+    assert!(t.contains("No channel is set up"), "{t}");
+    // An hourly reading was kept for the charts.
+    let h: Vec<(i64, health::history::Sample)> = e.state.db.history(0).unwrap();
+    assert_eq!(h.len(), 1);
+    assert!(h[0].1.pools.contains_key("fast"));
+
+    // Test messages need a configured channel and a CSRF token.
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/admin/alerts",
+            "127.0.0.1",
+            &[FORM, ("cookie", &admin.cookie)],
+            form(&[("op", "test"), ("channel", "telegram")]),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/admin/alerts",
+            &[("op", "test"), ("channel", "telegram")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_GATEWAY);
+    assert!(
+        r.text().contains("telegram is not configured"),
+        "{}",
+        r.text()
+    );
+}
+
+#[tokio::test]
+async fn sign_ins_and_share_lockouts_raise_events_once() {
+    let e = env();
+    e.add_user("Tibor", "admin", PW, false);
+    let remote = [("cf-connecting-ip", "203.0.113.9"), ("cf-ipcountry", "AT")];
+    e.login_from("192.0.2.10", &remote, "tibor", PW, "/").await;
+    e.login_from("192.0.2.10", &remote, "tibor", PW, "/").await;
+    e.login("tibor", PW).await;
+    assert_eq!(
+        sent_titles(&e),
+        ["Admin Tibor signed in from a new address: 203.0.113.9 (AT)"]
+    );
+
+    let admin = e.session("Admin", "admin").await;
+    let (id, _) = e.create_share(&admin, "Medien", "a.txt", &[]).await;
+    let peer = [("cf-connecting-ip", "203.0.113.5")];
+    for _ in 0..crate::auth::backoff::FREE_TRIES + 2 {
+        e.unlock(&id, "nein-nein-nein", "192.0.2.10", &peer).await;
+    }
+    let titles = sent_titles(&e);
+    assert_eq!(titles.len(), 2, "{titles:?}");
+    assert_eq!(
+        titles[1],
+        format!("Wrong passwords for share {id} from 203.0.113.5: slowed down for 1 min")
+    );
+    // The events are in the alert history.
+    for _ in 0..50 {
+        let log: Vec<health::alerts::LogEntry> = e.state.db.alert_log(10).unwrap();
+        if log.len() == 2 {
+            assert!(log.iter().all(|l| l.what == "event"));
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("events not logged");
+}
+
+#[tokio::test]
+async fn public_uploads_notify_once_per_burst() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/admin/volumes",
+            &[
+                ("op", "open"),
+                ("vol", "Share"),
+                ("expiry", "1d"),
+                ("own_password", "Briefkasten 7"),
+                ("notify", "1"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/public-write",
+            "127.0.0.1",
+            &[FORM],
+            form(&[
+                ("vol", "Share"),
+                ("password", "Briefkasten 7"),
+                ("next", "/Share/"),
+            ]),
+        )
+        .await;
+    let cookie = cookie_of(&r);
+    let page = e.get_h("/Share/", &[("cookie", &cookie)]).await.text();
+    let v = visitor(
+        cookie.clone(),
+        attr_after(&page, "data-js=\"upload\"", "data-csrf"),
+    );
+    for name in ["eins.txt", "zwei.txt"] {
+        let r = e.upload(&v, "Share", "", name, b"x", "ask").await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    }
+    let titles = sent_titles(&e);
+    assert_eq!(titles.len(), 1, "{titles:?}");
+    assert!(
+        titles[0].starts_with("Public upload in Share: Share/eins.txt from 127.0.0.1"),
+        "{titles:?}"
+    );
 }

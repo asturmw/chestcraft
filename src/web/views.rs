@@ -15,6 +15,8 @@ pub struct Ctx<'a> {
     /// `vim`, `standard` or `off`.
     pub keys: &'static str,
     pub signed_in: bool,
+    /// Signed in with the admin role (dashboard link).
+    pub admin: bool,
     pub user_name: Option<&'a str>,
     /// CSRF token of the session, for forms.
     pub csrf: Option<&'a str>,
@@ -40,6 +42,10 @@ impl<'a> Ctx<'a> {
 
     pub fn tnf(&self, key: &str, n: u64, args: &[(&str, &str)]) -> String {
         self.i18n.tn(self.lang, key, n, args)
+    }
+
+    pub fn number(&self, n: u64) -> String {
+        self.i18n.number(self.lang, n)
     }
 
     pub fn size(&self, bytes: u64) -> String {
@@ -78,6 +84,9 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                 header class="app-header" {
                     a class="app-header__brand" href="/" { "chestcraft" }
                     @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
+                        @if ctx.admin {
+                            a class="app-header__dashboard" href="/.cc/admin/dashboard" { (ctx.t("common.dashboard")) }
+                        }
                         a class="app-header__trash" href="/.cc/trash" { (ctx.t("common.trash")) }
                         span class="app-header__user" { (ctx.tf("common.signed_in_as", &[("name", name)])) }
                         form class="app-header__sign-out" method="post" action="/.cc/logout" {
@@ -115,7 +124,23 @@ pub struct VolumeCard {
     pub free_text: Option<String>,
 }
 
-pub fn landing(ctx: &Ctx, cards: &[VolumeCard]) -> Markup {
+/// The owner's health line on the landing page: verdict and number of active alerts.
+pub struct HealthLine {
+    pub verdict: &'static str,
+    pub alerts: usize,
+}
+
+/// i18n key of a dashboard verdict.
+pub fn verdict_key(verdict: &str) -> &'static str {
+    match verdict {
+        "ok" => "dashboard.verdict_ok",
+        "warning" => "dashboard.verdict_warning",
+        "critical" => "dashboard.verdict_critical",
+        _ => "dashboard.verdict_stale",
+    }
+}
+
+pub fn landing(ctx: &Ctx, cards: &[VolumeCard], health: Option<HealthLine>) -> Markup {
     let title = if ctx.signed_in {
         ctx.t("landing.title")
     } else {
@@ -126,6 +151,16 @@ pub fn landing(ctx: &Ctx, cards: &[VolumeCard]) -> Markup {
         title,
         html! {
             h1 class="landing__title" { (title) }
+            @if let Some(h) = &health {
+                p class="health-line" data-state=(h.verdict) {
+                    a href="/.cc/admin/dashboard" {
+                        (ctx.t(verdict_key(h.verdict)))
+                    }
+                    @if h.alerts > 0 {
+                        " · " (ctx.tn("dashboard.active_count", h.alerts as u64))
+                    }
+                }
+            }
             @if cards.is_empty() {
                 p class="landing__empty" {
                     (if ctx.signed_in { ctx.t("landing.none") } else { ctx.t("landing.none_public") })

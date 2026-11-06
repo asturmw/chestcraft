@@ -9,6 +9,7 @@ use crate::auth::perm::{Origin, Principal};
 use crate::auth::session;
 use crate::db::{GuestSession, Share, ShareLogEntry, User};
 use crate::fs::path::RelPath;
+use crate::health::alerts::{Msg, Severity};
 use crate::shares::{self, Status};
 use axum::http::HeaderMap;
 
@@ -161,6 +162,25 @@ pub async fn check_password(
     if f.stuffing {
         tracing::warn!(key, "many wrong passwords from many addresses");
         audit(st, "anon".into(), client.ip, "credential_stuffing", key, "");
+        super::auth::stuffing_alert(st, key);
+    }
+    if f.wait > 0 {
+        // Slowed down for this address: tell the admin, once per six hours per target.
+        let (kind, name) = key.split_once(':').unwrap_or(("share", key));
+        super::raise(
+            st,
+            &format!("locked:{key}"),
+            6 * 3600,
+            Severity::Warning,
+            Msg::new(if kind == "public" {
+                "public_locked"
+            } else {
+                "share_locked"
+            })
+            .text("target", name)
+            .text("ip", client.ip.to_string())
+            .num("minutes", ((f.wait + 59) / 60) as u64),
+        );
     }
     Unlock::Wrong { wait: f.wait }
 }

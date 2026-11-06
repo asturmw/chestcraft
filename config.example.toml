@@ -4,8 +4,11 @@
 # Install as /etc/chestcraft/config.toml (owned by root, readable by the service user).
 # Validate with `chestcraft check`, apply with `systemctl reload chestcraft`.
 # An invalid file is rejected and the running config stays in place.
-# Secrets (Telegram bot token, cookie key) are not in this file: they come from a
-# root-only file through systemd LoadCredential.
+# Secrets (the Telegram bot token, an ntfy access token) are not in this file. They live
+# in /etc/chestcraft/secrets.toml (owner root, mode 600), which systemd hands to the
+# service with LoadCredential=secrets:/etc/chestcraft/secrets.toml:
+#   telegram_token = "123456789:AA…"
+#   ntfy_token = "tk_…"
 
 [server]
 listen = "0.0.0.0:3923"
@@ -22,6 +25,9 @@ timezone = "Europe/Berlin"
 state_dir = "/var/lib/chestcraft"     # database; keep it off the pool being monitored
 cache_dir = "/var/cache/chestcraft"   # thumbnails
 backup_dir = "/srv/chestcraft"        # nightly copy of the database + this file
+# SMART data, written by `chestcraft collect` (root, chestcraft-collect.timer); the folder
+# must belong to root. Keep it in line with RuntimeDirectory in chestcraft-collect.service.
+smart_file = "/run/chestcraft-smart/smart.json"
 
 [trash]
 days = 30            # default for all volumes; 0 = never purge
@@ -113,7 +119,8 @@ Austausch = "r"
 # fr = "/etc/chestcraft/words-fr.txt"
 
 # ---- Disks ------------------------------------------------------------------
-# Bay labels by serial number, so alerts name the disk to pull.
+# The admin dashboard finds pools (ZFS), md arrays and disks by itself. Bay labels by
+# serial number, so alerts name the disk to pull.
 [disks]
 "WD-EXAMPLE0001" = "Bay 1 (left)"
 "WD-EXAMPLE0002" = "Bay 2"
@@ -131,3 +138,24 @@ chat_id = 0            # 0 = off; find yours with `chestcraft telegram-setup`
 [alerts.ntfy]
 server = "https://ntfy.sh"
 topic = ""             # empty = off; pick a long, unguessable topic name
+
+# Alert when a value is above its limit (defaults shown). A message goes out when an alert
+# starts and when it ends; critical ones repeat every 24 hours. Rising error counters
+# (SMART, pool read/write/checksum) send one message each time they rise.
+[alerts.thresholds]
+pool_full_warn = 80    # % of a pool
+pool_full_crit = 90
+quota_full = 90        # % of a dataset's quota
+root_fs_full = 85      # % of the system disk
+scrub_days = 40        # days since the last scrub
+hdd_temp = 50          # °C
+ssd_temp = 70          # °C, SATA SSDs and NVMe
+ssd_wear = 80          # % of rated endurance used
+stale_minutes = 120    # SMART data older than this
+
+# Newest snapshot older than this → alert. A rule covers the dataset and everything below
+# it; the longest matching name wins; "0" switches a subtree off. No rules = no checks.
+[alerts.snapshots]
+"tank/data" = "2h"
+"tank/media" = "2d"
+"tank/scratch" = "0"

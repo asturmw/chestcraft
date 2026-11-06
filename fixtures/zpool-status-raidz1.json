@@ -1,0 +1,134 @@
+{
+ "output_version": {
+  "command": "zpool status",
+  "vers_major": 0,
+  "vers_minor": 1
+ },
+ "pools": {
+  "tank": {
+   "name": "tank",
+   "state": "ONLINE",
+   "pool_guid": 1234567890123456789,
+   "txg": 6268417,
+   "spa_version": 5000,
+   "zpl_version": 5,
+   "scan_stats": {
+    "function": "SCRUB",
+    "state": "FINISHED",
+    "start_time": 1791671041,
+    "end_time": 1791691103,
+    "to_examine": 7884492750848,
+    "examined": 7884495405056,
+    "skipped": 29588070400,
+    "processed": 0,
+    "errors": 0,
+    "bytes_per_scan": 0,
+    "pass_start": 1793219884,
+    "scrub_pause": 0,
+    "scrub_spent_paused": 0,
+    "issued_bytes_per_scan": 0,
+    "issued": 7854907334656
+   },
+   "raidz_expand_stats": {
+    "name": "raidz1",
+    "state": "FINISHED",
+    "expanding_vdev": 0,
+    "start_time": 1771684279,
+    "end_time": 1771728052,
+    "to_reflow": 8122857349120,
+    "reflowed": 7366175047680,
+    "waiting_for_resilver": 0
+   },
+   "vdevs": {
+    "tank": {
+     "name": "tank",
+     "vdev_type": "root",
+     "guid": 1234567890123456789,
+     "class": "normal",
+     "state": "ONLINE",
+     "alloc_space": 8122857349120,
+     "total_space": 11991548690432,
+     "def_space": 7986558795776,
+     "read_errors": 0,
+     "write_errors": 0,
+     "checksum_errors": 0,
+     "vdevs": {
+      "raidz1-0": {
+       "name": "raidz1-0",
+       "vdev_type": "raidz",
+       "guid": 4641603982383516983,
+       "class": "normal",
+       "state": "ONLINE",
+       "alloc_space": 8122857349120,
+       "total_space": 11991548690432,
+       "def_space": 7986558795776,
+       "rep_dev_size": 11991548690432,
+       "read_errors": 0,
+       "write_errors": 0,
+       "checksum_errors": 0,
+       "vdevs": {
+        "1818e811-892f-402b-923f-0824128b2f33": {
+         "name": "1818e811-892f-402b-923f-0824128b2f33",
+         "vdev_type": "disk",
+         "guid": 1445363681616962640,
+         "path": "/dev/disk/by-partuuid/1818e811-892f-402b-923f-0824128b2f33",
+         "class": "normal",
+         "state": "ONLINE",
+         "rep_dev_size": 2997891891200,
+         "phys_space": 2998445015040,
+         "read_errors": 0,
+         "write_errors": 0,
+         "checksum_errors": 0,
+         "slow_ios": 0
+        },
+        "36f675cc-81e7-4ef5-a8e2-5d940ed90475": {
+         "name": "36f675cc-81e7-4ef5-a8e2-5d940ed90475",
+         "vdev_type": "disk",
+         "guid": 6375270654777870840,
+         "path": "/dev/disk/by-partuuid/36f675cc-81e7-4ef5-a8e2-5d940ed90475",
+         "class": "normal",
+         "state": "ONLINE",
+         "rep_dev_size": 2997891891200,
+         "phys_space": 2998445015040,
+         "read_errors": 0,
+         "write_errors": 0,
+         "checksum_errors": 0,
+         "slow_ios": 0
+        },
+        "3d9c1724-11e2-4b8f-ab0d-549b6f03675a": {
+         "name": "3d9c1724-11e2-4b8f-ab0d-549b6f03675a",
+         "vdev_type": "disk",
+         "guid": 1792723338049442008,
+         "path": "/dev/disk/by-partuuid/3d9c1724-11e2-4b8f-ab0d-549b6f03675a",
+         "class": "normal",
+         "state": "ONLINE",
+         "rep_dev_size": 2997891891200,
+         "phys_space": 2998445015040,
+         "read_errors": 0,
+         "write_errors": 0,
+         "checksum_errors": 0,
+         "slow_ios": 0
+        },
+        "90c192cf-d3ac-44af-8f21-ddb66cad4a26": {
+         "name": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+         "vdev_type": "disk",
+         "guid": 6082513832886728665,
+         "path": "/dev/disk/by-partuuid/90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+         "class": "normal",
+         "state": "ONLINE",
+         "rep_dev_size": 2997891891200,
+         "phys_space": 4000785891328,
+         "read_errors": 0,
+         "write_errors": 0,
+         "checksum_errors": 0,
+         "slow_ios": 0
+        }
+       }
+      }
+     }
+    }
+   },
+   "error_count": 0
+  }
+ }
+}

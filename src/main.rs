@@ -31,6 +31,13 @@ enum Cmd {
     },
     /// Read SMART data for the dashboard (runs as root from chestcraft-collect.timer)
     Collect,
+    /// Find the Telegram chat for alerts and send it a test message (run as root: reads the
+    /// bot token from secrets.toml next to the config)
+    TelegramSetup {
+        /// Secrets file with telegram_token (default: secrets.toml next to the config)
+        #[arg(long)]
+        secrets: Option<PathBuf>,
+    },
     /// Manage accounts (run as the service user while the service is stopped)
     #[command(subcommand)]
     User(UserCmd),
@@ -80,10 +87,8 @@ fn main() -> ExitCode {
         Cmd::Check { offline } => check(&cli.config, offline),
         Cmd::Serve => serve(&cli.config),
         Cmd::User(cmd) => user(&cli.config, cmd),
-        Cmd::Collect => {
-            eprintln!("not implemented yet");
-            ExitCode::from(2)
-        }
+        Cmd::Collect => collect(&cli.config),
+        Cmd::TelegramSetup { secrets } => telegram_setup(&cli.config, secrets),
     }
 }
 
@@ -162,6 +167,118 @@ fn check(path: &Path, offline: bool) -> ExitCode {
         cfg.roles.len()
     );
     ExitCode::SUCCESS
+}
+
+fn collect(path: &Path) -> ExitCode {
+    if !rustix::process::geteuid().is_root() {
+        eprintln!("chestcraft collect reads SMART data and must run as root");
+        return ExitCode::FAILURE;
+    }
+    let cfg = match Config::load(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{}:\n{e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    match chestcraft::health::collect::run(&cfg) {
+        Ok(summary) => {
+            println!("{summary}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn telegram_setup(path: &Path, secrets: Option<PathBuf>) -> ExitCode {
+    use chestcraft::config::secrets::Secrets;
+    use chestcraft::notify;
+    let cfg = match Config::load(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{}:\n{e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let secrets_path = secrets.unwrap_or_else(|| {
+        path.parent()
+            .unwrap_or(Path::new("/"))
+            .join(chestcraft::config::secrets::FILE_NAME)
+    });
+    let token = match Secrets::load(&secrets_path) {
+        Ok(Secrets {
+            telegram_token: Some(t),
+            ..
+        }) => t,
+        Ok(_) => {
+            eprintln!(
+                "No telegram_token in {}. Create the bot with @BotFather, then put\n  telegram_token = \"<token>\"\ninto that file (owner root, mode 600) and run this again.",
+                secrets_path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let chats = match rt.block_on(notify::telegram_chats(&token)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Asking Telegram for the bot's chats failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let configured = cfg.alerts.telegram.as_ref().map(|t| t.chat_id);
+    if chats.is_empty() && configured.is_none() {
+        eprintln!(
+            "No chat has written to the bot yet. Open the bot in Telegram, send it /start, \
+             then run this again."
+        );
+        return ExitCode::FAILURE;
+    }
+    for (id, desc) in &chats {
+        println!("chat {id}: {desc}");
+    }
+    let target = configured.or_else(|| (chats.len() == 1).then(|| chats[0].0));
+    let Some(chat_id) = target else {
+        println!(
+            "\nPick one and put it into the config:\n  [alerts.telegram]\n  chat_id = <id>\nthen run this again to send a test message."
+        );
+        return ExitCode::SUCCESS;
+    };
+    let msg = notify::Message {
+        level: notify::Level::Info,
+        title: "chestcraft".into(),
+        body: "Test message: alerts will arrive in this chat.".into(),
+    };
+    let result = rt.block_on(notify::Channel::telegram(chat_id, token).send(&msg));
+    match result {
+        Ok(()) => {
+            println!("\nSent a test message to chat {chat_id}.");
+            if configured.is_none() {
+                println!("Put this into the config:\n  [alerts.telegram]\n  chat_id = {chat_id}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Sending the test message to chat {chat_id} failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn valid_username(name: &str) -> bool {
