@@ -46,6 +46,7 @@ fn env() -> Env {
     std::fs::write(r.join("share/hello.txt"), b"hello").unwrap();
     std::fs::create_dir_all(r.join("backups")).unwrap();
     std::fs::write(r.join("backups/dump.bin"), b"x").unwrap();
+    std::fs::create_dir_all(r.join("eingang")).unwrap();
     let cfg = Config::from_toml_str(&format!(
         r#"
         [server]
@@ -65,6 +66,17 @@ fn env() -> Env {
         [volumes.Backups]
         path = "{0}/backups"
         remote = false
+        [volumes.Eingang]
+        path = "{0}/eingang"
+        stage_folder_uploads = true
+        trash_days = 1
+        [uploads]
+        chunk_mib = 1
+        [roles.familie]
+        Medien = "rwmd"
+        Eingang = "rw"
+        [roles.leser]
+        Medien = "r"
         "#,
         r.display()
     ))
@@ -395,10 +407,30 @@ async fn robots_health_assets_and_methods() {
         StatusCode::NOT_FOUND
     );
     e.act_as(Some(admin()));
-    let r = e.send("POST", "/Medien/", "127.0.0.1", &[]).await;
+    let r = e.send("PATCH", "/Medien/", "127.0.0.1", &[]).await;
     assert_eq!(
         (r.status, r.header("allow")),
-        (StatusCode::METHOD_NOT_ALLOWED, "GET, HEAD")
+        (StatusCode::METHOD_NOT_ALLOWED, "GET, HEAD, POST")
+    );
+    let r = e.send("POST", "/Medien/a.txt", "127.0.0.1", &[]).await;
+    assert_eq!(
+        r.status,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "forms post to folders"
+    );
+    let r = e
+        .send_body(
+            "POST",
+            "/Medien/",
+            "127.0.0.1",
+            &[FORM],
+            "op=mkdir&name=x".into(),
+        )
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::FORBIDDEN,
+        "changes need a session and its token"
     );
 }
 
@@ -564,14 +596,7 @@ async fn sign_in_reach_private_volume_and_sign_out() {
         "the old cookie no longer works"
     );
 
-    let actions: Vec<String> = e
-        .state
-        .db
-        .recent_audit(10)
-        .unwrap()
-        .into_iter()
-        .map(|a| a.action)
-        .collect();
+    let actions = e.audited(&["login", "logout"]).await;
     assert!(
         actions.contains(&"login".into()) && actions.contains(&"logout".into()),
         "{actions:?}"
@@ -779,4 +804,611 @@ async fn cookies_are_secure_behind_https() {
     );
     let user = e.state.db.user("tibor").unwrap().unwrap();
     assert_eq!(user.known_remote_ips, ["203.0.113.9"]);
+}
+
+// --- uploads, folders and the trash --------------------------------------------------------
+
+const JSON: (&str, &str) = ("content-type", "application/json");
+const MIB: usize = 1 << 20;
+
+struct Login {
+    cookie: String,
+    csrf: String,
+}
+
+impl Env {
+    fn root(&self) -> &std::path::Path {
+        self._tmp.path()
+    }
+
+    async fn session(&self, name: &str, role: &str) -> Login {
+        self.add_user(name, role, PW, false);
+        let cookie = cookie_of(&self.login(name, PW).await);
+        let page = self.get_h("/", &[("cookie", &cookie)]).await.text();
+        Login {
+            csrf: csrf_of(&page),
+            cookie,
+        }
+    }
+
+    async fn call(&self, s: &Login, method: &str, uri: &str, body: String) -> Res {
+        self.send_body(
+            method,
+            uri,
+            "127.0.0.1",
+            &[JSON, ("cookie", &s.cookie), ("x-csrf-token", &s.csrf)],
+            body,
+        )
+        .await
+    }
+
+    async fn put_chunk(&self, s: &Login, id: &str, n: u32, data: &[u8]) -> Res {
+        let mut b = Request::builder()
+            .method("PUT")
+            .uri(format!("/.cc/upload/{id}/chunk/{n}"))
+            .header("cookie", &s.cookie)
+            .header("x-csrf-token", &s.csrf)
+            .header("content-length", data.len());
+        b = b.header("content-type", "application/octet-stream");
+        let mut req = b.body(Body::from(data.to_vec())).unwrap();
+        req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+            "127.0.0.1".parse().unwrap(),
+            40000,
+        )));
+        let res = router(self.state.clone()).oneshot(req).await.unwrap();
+        let status = res.status();
+        let headers = res.headers().clone();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
+        Res {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    /// Upload `data` completely; returns the response of `done`.
+    async fn upload(
+        &self,
+        s: &Login,
+        vol: &str,
+        dir: &str,
+        name: &str,
+        data: &[u8],
+        clash: &str,
+    ) -> Res {
+        let r = self
+            .start_upload(s, vol, dir, name, data.len(), clash, None)
+            .await;
+        if r.status != StatusCode::CREATED {
+            return r;
+        }
+        let st: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        let id = st["id"].as_str().unwrap().to_string();
+        let chunk = st["chunk"].as_u64().unwrap() as usize;
+        for (n, part) in data.chunks(chunk).enumerate().rev() {
+            let c = self.put_chunk(s, &id, n as u32, part).await;
+            assert_eq!(c.status, StatusCode::OK, "{}", c.text());
+        }
+        self.call(s, "POST", &format!("/.cc/upload/{id}/done"), String::new())
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_upload(
+        &self,
+        s: &Login,
+        vol: &str,
+        dir: &str,
+        name: &str,
+        size: usize,
+        clash: &str,
+        batch: Option<&str>,
+    ) -> Res {
+        let body = serde_json::json!({
+            "vol": vol, "dir": dir, "name": name, "size": size,
+            "mtime": 1_700_000_000_000i64, "clash": clash, "batch": batch,
+        });
+        self.call(s, "POST", "/.cc/upload", body.to_string()).await
+    }
+
+    async fn form_post(&self, s: &Login, uri: &str, pairs: &[(&str, &str)]) -> Res {
+        let mut all = vec![("csrf", s.csrf.as_str())];
+        all.extend_from_slice(pairs);
+        self.send_body(
+            "POST",
+            uri,
+            "127.0.0.1",
+            &[FORM, ("cookie", &s.cookie)],
+            form(&all),
+        )
+        .await
+    }
+
+    /// Audit actions, once `expected` are all written (audit writes don't block requests).
+    async fn audited(&self, expected: &[&str]) -> Vec<String> {
+        let mut actions = Vec::new();
+        for _ in 0..100 {
+            actions = self
+                .state
+                .db
+                .recent_audit(50)
+                .unwrap()
+                .into_iter()
+                .map(|a| a.action)
+                .collect::<Vec<String>>();
+            if expected.iter().all(|x| actions.iter().any(|a| a == x)) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        actions
+    }
+}
+
+fn json_of(r: &Res) -> serde_json::Value {
+    serde_json::from_slice(&r.body).unwrap_or_else(|_| panic!("not JSON: {}", r.text()))
+}
+
+#[tokio::test]
+async fn chunked_upload_lands_with_its_mtime() {
+    let e = env();
+    let s = e.session("Tibor", "admin").await;
+    let data: Vec<u8> = (0..(2 * MIB + 123)).map(|i| (i % 251) as u8).collect();
+    let r = e
+        .upload(
+            &s,
+            "Medien",
+            "Urlaub Gardasee",
+            "Tag 1/Video.mp4",
+            &data,
+            "ask",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(
+        json_of(&r),
+        serde_json::json!({"path": "Tag 1/Video.mp4", "renamed": false})
+    );
+    let path = e.root().join("medien/Urlaub Gardasee/Tag 1/Video.mp4");
+    assert_eq!(std::fs::read(&path).unwrap(), data);
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(std::fs::metadata(&path).unwrap().mtime(), 1_700_000_000);
+    assert!(e.audited(&["upload"]).await.contains(&"upload".to_string()));
+    assert!(e.state.db.uploads().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn upload_status_and_resume() {
+    let e = env();
+    let s = e.session("Tibor", "admin").await;
+    let data = vec![9u8; MIB + 10];
+    let r = e
+        .start_upload(&s, "Medien", "", "resume.bin", data.len(), "ask", None)
+        .await;
+    let id = json_of(&r)["id"].as_str().unwrap().to_string();
+    assert_eq!(json_of(&r)["chunks"], 2);
+    assert_eq!(
+        e.put_chunk(&s, &id, 1, &data[MIB..]).await.status,
+        StatusCode::OK
+    );
+    let st = json_of(
+        &e.call(&s, "GET", &format!("/.cc/upload/{id}"), String::new())
+            .await,
+    );
+    assert_eq!(st["have"], serde_json::json!([1]));
+    // Wrong length and finishing early are refused.
+    assert_eq!(
+        e.put_chunk(&s, &id, 0, b"short").await.status,
+        StatusCode::BAD_REQUEST
+    );
+    let early = e
+        .call(&s, "POST", &format!("/.cc/upload/{id}/done"), String::new())
+        .await;
+    assert_eq!(
+        (early.status, json_of(&early)["error"].as_str()),
+        (StatusCode::CONFLICT, Some("incomplete"))
+    );
+    assert_eq!(
+        e.put_chunk(&s, &id, 0, &data[..MIB]).await.status,
+        StatusCode::OK
+    );
+    let done = e
+        .call(&s, "POST", &format!("/.cc/upload/{id}/done"), String::new())
+        .await;
+    assert_eq!(done.status, StatusCode::OK);
+    assert_eq!(
+        std::fs::read(e.root().join("medien/resume.bin")).unwrap(),
+        data
+    );
+}
+
+#[tokio::test]
+async fn name_clash_answers_and_replace_goes_to_the_trash() {
+    let e = env();
+    let s = e.session("Tibor", "admin").await;
+    let r = e
+        .start_upload(&s, "Medien", "", "a.txt", 3, "ask", None)
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    let j = json_of(&r);
+    assert_eq!(j["clash"]["name"], "a.txt");
+    assert_eq!(j["clash"]["size"], 10);
+    assert_eq!(j["clash"]["can_replace"], true);
+    assert!(j["message"].as_str().unwrap().contains("a.txt"));
+
+    let r = e.upload(&s, "Medien", "", "a.txt", b"new", "rename").await;
+    assert_eq!(json_of(&r)["path"], "a (1).txt");
+    let r = e.upload(&s, "Medien", "", "a.txt", b"newer", "skip").await;
+    assert_eq!(json_of(&r)["skipped"], true);
+    let r = e
+        .upload(&s, "Medien", "", "a.txt", b"newest", "replace")
+        .await;
+    assert_eq!(json_of(&r)["renamed"], false);
+    assert_eq!(
+        std::fs::read(e.root().join("medien/a.txt")).unwrap(),
+        b"newest"
+    );
+    let trash = e.state.db.trash_items().unwrap();
+    assert_eq!(trash.len(), 1);
+    assert_eq!(
+        (trash[0].path.as_str(), trash[0].reason.as_str()),
+        ("a.txt", "replaced")
+    );
+}
+
+#[tokio::test]
+async fn upload_rights_are_checked() {
+    let e = env();
+    let leser = e.session("lena", "leser").await;
+    let r = e
+        .start_upload(&leser, "Medien", "", "x.txt", 1, "ask", None)
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    // Users without delete rights can't replace.
+    let fam = e.session("jana", "familie").await;
+    let r = e
+        .start_upload(&fam, "Eingang", "", "x.txt", 1, "replace", None)
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = e
+        .start_upload(&fam, "Backups", "", "x.txt", 1, "ask", None)
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let r = e
+        .start_upload(&fam, "Medien", "", ".hidden", 1, "ask", None)
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "dot-names are admin-only");
+    let r = e
+        .start_upload(&fam, "Medien", "", "a/.chestcraft-trash/x", 1, "ask", None)
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = e
+        .start_upload(&fam, "Medien", "", "../x", 1, "ask", None)
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // Someone else's upload doesn't exist for you.
+    let r = e
+        .start_upload(&fam, "Medien", "", "mine.txt", 1, "ask", None)
+        .await;
+    let id = json_of(&r)["id"].as_str().unwrap().to_string();
+    let admin = e.session("Tibor", "admin").await;
+    assert_eq!(
+        e.put_chunk(&admin, &id, 0, b"x").await.status,
+        StatusCode::NOT_FOUND
+    );
+    // No token, no session.
+    let bad = Login {
+        cookie: fam.cookie.clone(),
+        csrf: "0".repeat(32),
+    };
+    assert_eq!(
+        e.put_chunk(&bad, &id, 0, b"x").await.status,
+        StatusCode::FORBIDDEN
+    );
+    let r = e
+        .send_body("POST", "/.cc/upload", "127.0.0.1", &[JSON], "{}".into())
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    // Cancel removes the data.
+    let r = e
+        .call(&fam, "DELETE", &format!("/.cc/upload/{id}"), String::new())
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        std::fs::read_dir(e.root().join("medien/.chestcraft-uploads"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn remote_uploads_to_a_home_only_volume_are_refused() {
+    let e = env();
+    let s = e.session("Tibor", "admin").await;
+    let body = serde_json::json!({"vol": "Backups", "dir": "", "name": "x", "size": 1});
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/upload",
+            "192.0.2.10",
+            &[
+                JSON,
+                ("cookie", &s.cookie),
+                ("x-csrf-token", &s.csrf),
+                ("cf-connecting-ip", "203.0.113.5"),
+            ],
+            body.to_string(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn staged_folder_upload_appears_when_the_batch_is_done() {
+    let e = env();
+    let s = e.session("jana", "familie").await;
+    let b = json_of(
+        &e.call(
+            &s,
+            "POST",
+            "/.cc/batch",
+            r#"{"vol":"Eingang","dir":""}"#.into(),
+        )
+        .await,
+    );
+    assert_eq!(b["staged"], true);
+    let batch = b["id"].as_str().unwrap().to_string();
+    for name in ["Scan/a.pdf", "Scan/b/c.pdf"] {
+        let r = e
+            .start_upload(&s, "Eingang", "", name, 2, "ask", Some(&batch))
+            .await;
+        let id = json_of(&r)["id"].as_str().unwrap().to_string();
+        e.put_chunk(&s, &id, 0, b"pd").await;
+        let r = e
+            .call(&s, "POST", &format!("/.cc/upload/{id}/done"), String::new())
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        assert!(!e.root().join("eingang/Scan").exists());
+    }
+    let r = e
+        .call(
+            &s,
+            "POST",
+            &format!("/.cc/batch/{batch}/done"),
+            String::new(),
+        )
+        .await;
+    assert_eq!(json_of(&r)["moved"], serde_json::json!([["Scan", "Scan"]]));
+    assert!(e.root().join("eingang/Scan/b/c.pdf").is_file());
+    assert!(
+        e.audited(&["upload_folder"])
+            .await
+            .contains(&"upload_folder".to_string())
+    );
+}
+
+#[tokio::test]
+async fn listing_offers_changes_only_to_those_who_may() {
+    let e = env();
+    let fam = e.session("jana", "familie").await;
+    let t = e.get_h("/Medien/", &[("cookie", &fam.cookie)]).await.text();
+    assert!(
+        t.contains("data-js=\"upload\"") && t.contains("value=\"mkdir\""),
+        "{t}"
+    );
+    assert!(t.contains("value=\"delete\"") && t.contains("upload.js"));
+    let leser = e.session("lena", "leser").await;
+    let t = e
+        .get_h("/Medien/", &[("cookie", &leser.cookie)])
+        .await
+        .text();
+    assert!(!t.contains("data-js=\"upload\"") && !t.contains("value=\"delete\""));
+    assert!(t.contains("value=\"zip\""));
+    let t = e.get("/Share/").await.text();
+    assert!(!t.contains("upload.js") && !t.contains("name=\"csrf\""));
+}
+
+#[tokio::test]
+async fn new_folder_delete_restore_and_empty() {
+    let e = env();
+    let fam = e.session("jana", "familie").await;
+    let r = e
+        .form_post(&fam, "/Medien/", &[("op", "mkdir"), ("name", " Neu ")])
+        .await;
+    assert_eq!(
+        (r.status, r.header("location")),
+        (StatusCode::SEE_OTHER, "/Medien/")
+    );
+    assert!(e.root().join("medien/Neu").is_dir());
+    let r = e
+        .form_post(&fam, "/Medien/", &[("op", "mkdir"), ("name", "Neu")])
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    let r = e
+        .form_post(
+            &fam,
+            "/Medien/",
+            &[("op", "mkdir"), ("name", ".chestcraft-x")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // Zip of a selection by POST works without a session too.
+    let r = e
+        .send_body(
+            "POST",
+            "/Share/",
+            "127.0.0.1",
+            &[FORM],
+            "op=zip&n=hello.txt".into(),
+        )
+        .await;
+    assert_eq!(zip_names(&r.body), ["hello.txt"]);
+
+    let r = e
+        .form_post(
+            &fam,
+            "/Medien/",
+            &[
+                ("op", "delete"),
+                ("n", "Neu"),
+                ("n", "a.txt"),
+                ("n", "nope"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "one of three failed");
+    assert!(r.text().contains("nope"));
+    assert!(!e.root().join("medien/Neu").exists() && !e.root().join("medien/a.txt").exists());
+
+    let page = e
+        .get_h("/.cc/trash", &[("cookie", &fam.cookie)])
+        .await
+        .text();
+    assert!(
+        page.contains("a.txt") && page.contains("Neu") && page.contains("in 30 days"),
+        "{page}"
+    );
+    // Another user doesn't see jana's trash; the admin sees everything.
+    let leser = e.session("lena", "leser").await;
+    let other = e
+        .get_h("/.cc/trash", &[("cookie", &leser.cookie)])
+        .await
+        .text();
+    assert!(!other.contains("a.txt"), "{other}");
+    let admin = e.session("Tibor", "admin").await;
+    let all = e
+        .get_h("/.cc/trash", &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(all.contains("a.txt") && all.contains(">jana<") && all.contains("/.cc/trash/empty"));
+
+    let item = e
+        .state
+        .db
+        .trash_items()
+        .unwrap()
+        .into_iter()
+        .find(|i| i.path == "a.txt")
+        .unwrap();
+    let r = e
+        .form_post(&leser, "/.cc/trash/restore", &[("id", &item.id)])
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "not lena's item");
+    std::fs::write(e.root().join("medien/a.txt"), "taken").unwrap();
+    let r = e
+        .form_post(&fam, "/.cc/trash/restore", &[("id", &item.id)])
+        .await;
+    assert_eq!(
+        (r.status, r.header("location")),
+        (StatusCode::SEE_OTHER, "/.cc/trash")
+    );
+    assert_eq!(
+        std::fs::read(e.root().join("medien/a (restored).txt")).unwrap(),
+        b"0123456789"
+    );
+
+    // Only the admin empties, and only with the box ticked.
+    let r = e
+        .form_post(
+            &fam,
+            "/.cc/trash/empty",
+            &[("vol", "Medien"), ("confirm", "1")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let r = e
+        .form_post(&admin, "/.cc/trash/empty", &[("vol", "Medien")])
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/trash/empty",
+            &[("vol", "Medien"), ("confirm", "1")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(e.state.db.trash_items().unwrap().is_empty());
+    assert_eq!(
+        std::fs::read_dir(e.root().join("medien/.chestcraft-trash"))
+            .unwrap()
+            .count(),
+        0
+    );
+    let expected = [
+        "mkdir",
+        "trash",
+        "trash_restored",
+        "trash_purged",
+        "trash_emptied",
+    ];
+    let actions = e.audited(&expected).await;
+    for a in expected {
+        assert!(actions.contains(&a.to_string()), "{a}: {actions:?}");
+    }
+}
+
+#[tokio::test]
+async fn deleting_needs_the_right_and_a_token() {
+    let e = env();
+    let leser = e.session("lena", "leser").await;
+    let r = e
+        .form_post(&leser, "/Medien/", &[("op", "delete"), ("n", "a.txt")])
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert!(r.text().contains("can't delete"), "{}", r.text());
+    let fam = e.session("jana", "familie").await;
+    let r = e
+        .send_body(
+            "POST",
+            "/Medien/",
+            "127.0.0.1",
+            &[FORM, ("cookie", &fam.cookie)],
+            "op=delete&n=a.txt&csrf=wrong".into(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert!(e.root().join("medien/a.txt").exists());
+}
+
+#[tokio::test]
+async fn daily_cleanup_purges_what_is_due() {
+    let e = env();
+    let fam = e.session("jana", "familie").await;
+    std::fs::write(e.root().join("eingang/alt.txt"), "x").unwrap();
+    e.state
+        .uploads
+        .create_batch(
+            e.state.volumes.get("Eingang").unwrap(),
+            &crate::fs::path::RelPath::root(),
+            "user:jana",
+            0,
+        )
+        .unwrap();
+    let vol = e.state.volumes.get("Eingang").unwrap().clone();
+    let item = crate::fs::trash::delete(
+        &e.state.db,
+        &vol,
+        &crate::fs::path::RelPath::parse("alt.txt").unwrap(),
+        "user:jana",
+        "delete",
+        0,
+    )
+    .unwrap();
+    super::jobs::run(e.state.clone()).await;
+    assert!(
+        e.state.db.trash_item(&item.id).unwrap().is_none(),
+        "trash_days = 1 has passed"
+    );
+    assert!(
+        e.state.db.batches().unwrap().is_empty(),
+        "the abandoned batch is closed"
+    );
+    let _ = fam;
 }

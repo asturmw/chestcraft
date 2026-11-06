@@ -121,6 +121,19 @@ fn arg(rel: &RelPath) -> &str {
     if rel.is_root() { "." } else { rel.as_str() }
 }
 
+/// `openat2` beneath the volume root. The kernel answers EAGAIN when a rename or mount
+/// anywhere on the system races with resolving a `..` (from a symlink target); it can't
+/// rule out an escape then, so the call is simply repeated.
+fn open_beneath(root: &OwnedFd, rel: &RelPath, flags: OFlags) -> Result<OwnedFd, Errno> {
+    let mut tries = 0;
+    loop {
+        match openat2(root, arg(rel), flags, Mode::empty(), BENEATH) {
+            Err(Errno::AGAIN) if tries < 64 => tries += 1,
+            other => return other,
+        }
+    }
+}
+
 /// Map errors that mean "not there for you" to NotFound, so callers answer 404 without
 /// telling escapes, loops and missing files apart.
 fn not_found_ish(e: Errno) -> io::Error {
@@ -150,12 +163,10 @@ impl VolumeRoot {
     /// inside the volume. `O_NONBLOCK` keeps a FIFO from blocking the open; callers check
     /// the kind with [`Self::meta`] before reading.
     pub fn open_read(&self, rel: &RelPath) -> io::Result<OwnedFd> {
-        openat2(
+        open_beneath(
             &self.root,
-            arg(rel),
+            rel,
             OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
-            Mode::empty(),
-            BENEATH,
         )
         .map_err(not_found_ish)
     }
@@ -166,25 +177,17 @@ impl VolumeRoot {
 
     /// Stat a path without opening it for reading.
     pub fn stat(&self, rel: &RelPath) -> io::Result<Meta> {
-        let fd = openat2(
-            &self.root,
-            arg(rel),
-            OFlags::PATH | OFlags::CLOEXEC,
-            Mode::empty(),
-            BENEATH,
-        )
-        .map_err(not_found_ish)?;
+        let fd =
+            open_beneath(&self.root, rel, OFlags::PATH | OFlags::CLOEXEC).map_err(not_found_ish)?;
         Self::meta(&fd)
     }
 
     /// Open a directory for listing or walking.
     pub fn open_dir(&self, rel: &RelPath) -> io::Result<OwnedFd> {
-        openat2(
+        open_beneath(
             &self.root,
-            arg(rel),
+            rel,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-            BENEATH,
         )
         .map_err(not_found_ish)
     }

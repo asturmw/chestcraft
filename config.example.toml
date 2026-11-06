@@ -53,6 +53,12 @@ anon_downloads_per_ip = 4
 #   trash_days           overrides [trash] days
 #   stage_folder_uploads folder uploads appear only once complete
 #   note.de / note.en    shown as a banner in the folder view
+#
+# Deleting moves items to <root>/.chestcraft-trash and uploads collect in
+# <root>/.chestcraft-uploads, where <root> is the highest folder of the volume on the same
+# filesystem (a ZFS dataset inside a volume gets its own pair). chestcraft creates them
+# when it may write there; otherwise create them owned by the service user. Both are
+# hidden everywhere, also in zips and WebDAV.
 
 [volumes.Dokumente]
 path = "/srv/dokumente"

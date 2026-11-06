@@ -1,28 +1,32 @@
 //! HTTP server: shared state, routes and middleware.
 
+mod api;
 mod assets;
 mod auth;
 mod client;
 mod files;
 mod headers;
+pub mod jobs;
 mod limits;
 mod query;
 mod stream;
 #[cfg(test)]
 mod tests;
+mod trash;
 mod views;
 
 use crate::auth::backoff::Backoff;
 use crate::auth::perm::Principal;
 use crate::config::Config;
 use crate::db::Db;
+use crate::fs::upload::Uploads;
 use crate::fs::volume::Volumes;
 use crate::i18n::{I18n, Lang};
 use axum::Router;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -37,6 +41,7 @@ pub struct AppState {
     pub db: Arc<Db>,
     pub backoff: Backoff,
     pub limiter: limits::DownloadLimiter,
+    pub uploads: Uploads,
     /// Lets tests act as a principal without signing in.
     #[cfg(test)]
     pub test_principal: std::sync::Mutex<Option<Principal>>,
@@ -47,11 +52,13 @@ pub type Shared = Arc<AppState>;
 impl AppState {
     pub fn new(cfg: Config, i18n: I18n, db: Db) -> AppState {
         let volumes = Volumes::open(&cfg);
+        let db = Arc::new(db);
         AppState {
             cfg: Arc::new(cfg),
             volumes,
             i18n,
-            db: Arc::new(db),
+            uploads: Uploads::new(db.clone()),
+            db,
             backoff: Backoff::default(),
             limiter: limits::DownloadLimiter::default(),
             #[cfg(test)]
@@ -140,6 +147,15 @@ pub fn router(state: Shared) -> Router {
             "/.cc/password",
             get(auth::password_page).post(auth::password_submit),
         )
+        .route("/.cc/upload", post(api::create))
+        .route("/.cc/upload/{id}", get(api::status).delete(api::cancel))
+        .route("/.cc/upload/{id}/chunk/{n}", put(api::chunk))
+        .route("/.cc/upload/{id}/done", post(api::done))
+        .route("/.cc/batch", post(api::batch_new))
+        .route("/.cc/batch/{id}/done", post(api::batch_done))
+        .route("/.cc/trash", get(trash::page))
+        .route("/.cc/trash/restore", post(trash::restore))
+        .route("/.cc/trash/empty", post(trash::empty))
         .fallback(files::handle)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -182,6 +198,7 @@ pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()>
     let i18n = I18n::load(config_dir.map(|d| d.join("i18n")).as_deref());
     let db = open_db(&cfg)?;
     let state = Arc::new(AppState::new(cfg, i18n, db));
+    jobs::spawn(state.clone());
     let addr = state.cfg.server.listen;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, volumes = state.volumes.iter().count(), "chestcraft listening");
