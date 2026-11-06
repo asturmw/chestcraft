@@ -944,6 +944,20 @@ pub fn check_environment(cfg: &Config) -> EnvReport {
             ));
             continue;
         }
+        if !v.read_only {
+            for dir in [crate::fs::ops::TRASH_DIR, crate::fs::ops::UPLOADS_DIR] {
+                let p = v.path.join(dir);
+                let writable = rustix::fs::access(&v.path, rustix::fs::Access::WRITE_OK).is_ok();
+                if !p.is_dir() && !writable {
+                    r.warnings.push(format!(
+                        "volumes.{}: {} doesn't exist and chestcraft can't create it; create it \
+                         (owned by the service user) so deleting and uploading work",
+                        v.name,
+                        p.display()
+                    ));
+                }
+            }
+        }
         for ro in &v.read_only_paths {
             if !v.path.join(ro.as_str()).exists() {
                 r.warnings.push(format!(

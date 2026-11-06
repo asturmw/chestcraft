@@ -34,6 +34,10 @@ impl<'a> Ctx<'a> {
         self.i18n.tn(self.lang, key, n, &[])
     }
 
+    pub fn tnf(&self, key: &str, n: u64, args: &[(&str, &str)]) -> String {
+        self.i18n.tn(self.lang, key, n, args)
+    }
+
     pub fn size(&self, bytes: u64) -> String {
         self.i18n.size(self.lang, bytes)
     }
@@ -61,12 +65,16 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                 @if let Some(href) = assets::skin_css(ctx.skin) {
                     link rel="stylesheet" href=(href);
                 }
+                @if ctx.csrf.is_some() {
+                    script src=(assets::url("upload.js")) defer {}
+                }
             }
             body {
                 a class="skip-link" href="#main" { (ctx.t("common.skip_to_content")) }
                 header class="app-header" {
                     a class="app-header__brand" href="/" { "chestcraft" }
                     @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
+                        a class="app-header__trash" href="/.cc/trash" { (ctx.t("common.trash")) }
                         span class="app-header__user" { (ctx.tf("common.signed_in_as", &[("name", name)])) }
                         form class="app-header__sign-out" method="post" action="/.cc/logout" {
                             input type="hidden" name="csrf" value=(csrf);
@@ -157,6 +165,71 @@ pub struct ListingView {
     /// Label and link of the admin's show/hide hidden files switch.
     pub hidden_toggle: Option<(String, String)>,
     pub showing_hidden: bool,
+    /// Where the folder's forms post to.
+    pub post_href: String,
+    pub can_write: bool,
+    pub can_delete: bool,
+    /// Present when the visitor may upload here (needs JS).
+    pub upload: Option<UploadUi>,
+    /// Days until deleted items are purged (0 = kept).
+    pub trash_days: u32,
+}
+
+/// What the upload script needs to know about the folder.
+pub struct UploadUi {
+    pub volume: String,
+    /// Folder path relative to the volume.
+    pub dir: String,
+    pub parallel: u32,
+}
+
+/// The upload tray and the name-clash dialog. `upload.js` fills them in; the strings it
+/// shows come from `data-t-*` attributes, so all copy stays in the catalogs.
+fn upload_ui(ctx: &Ctx, u: &UploadUi, csrf: &str) -> Markup {
+    html! {
+        div class="upload" data-js="upload" hidden
+            data-vol=(u.volume) data-dir=(u.dir) data-csrf=(csrf) data-parallel=(u.parallel)
+            data-t-queued=(ctx.t("upload.state_queued"))
+            data-t-uploading=(ctx.t("upload.state_uploading"))
+            data-t-done=(ctx.t("upload.state_done"))
+            data-t-failed=(ctx.t("upload.state_failed"))
+            data-t-skipped=(ctx.t("upload.state_skipped"))
+            data-t-clash=(ctx.t("upload.state_clash"))
+            data-t-saved-as=(ctx.t("upload.saved_as"))
+            data-t-reload=(ctx.t("upload.reload")) {
+            label class="upload__pick" {
+                span class="upload__pick-label" { (ctx.t("browser.upload_files")) }
+                input class="upload__input" type="file" multiple data-js="upload-files";
+            }
+            label class="upload__pick" {
+                span class="upload__pick-label" { (ctx.t("browser.upload_folder")) }
+                input class="upload__input" type="file" webkitdirectory multiple data-js="upload-folder";
+            }
+            p class="upload__hint" { (ctx.t("browser.drop_hint")) }
+        }
+        section class="upload-tray" data-js="upload-tray" data-state="idle" hidden
+            aria-labelledby="upload-tray-title" {
+            h2 class="upload-tray__title" id="upload-tray-title" { (ctx.t("upload.tray_title")) }
+            p class="upload-tray__summary" data-js="upload-summary" role="status" {}
+            ul class="upload-tray__list" data-js="upload-list" {}
+        }
+        dialog class="name-clash" data-js="name-clash" aria-labelledby="name-clash-title" {
+            form class="name-clash__form" method="dialog" {
+                h2 class="name-clash__title" id="name-clash-title" data-js="clash-title" {}
+                p class="name-clash__existing" data-js="clash-existing" {}
+                p class="name-clash__new" data-js="clash-new" {}
+                div class="name-clash__actions" {
+                    button class="name-clash__keep" type="submit" value="rename" autofocus { (ctx.t("upload.keep_both")) }
+                    button class="name-clash__replace" type="submit" value="replace" data-js="clash-replace" { (ctx.t("upload.replace")) }
+                    button class="name-clash__skip" type="submit" value="skip" { (ctx.t("upload.skip")) }
+                }
+                label class="name-clash__all" data-js="clash-all-label" {
+                    input type="checkbox" data-js="clash-all";
+                    " " span data-js="clash-all-text" data-t=(ctx.t("upload.apply_all")) {}
+                }
+            }
+        }
+    }
 }
 
 pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
@@ -187,17 +260,34 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                 @if let Some(free) = &v.free {
                     span class="browser__free" { (free) }
                 }
+                @if let (true, Some(csrf)) = (v.can_write, ctx.csrf) {
+                    form class="new-folder" method="post" action=(v.post_href) {
+                        input type="hidden" name="csrf" value=(csrf);
+                        input type="hidden" name="op" value="mkdir";
+                        label class="field" {
+                            span class="field__label" { (ctx.t("browser.folder_name")) }
+                            input class="field__input" type="text" name="name" required maxlength="255"
+                                autocomplete="off";
+                        }
+                        button class="new-folder__submit" type="submit" { (ctx.t("browser.create_folder")) }
+                    }
+                }
                 span class="browser__count" { (ctx.tn("browser.items", v.total as u64)) }
                 a class="browser__zip" href=(v.zip_href) download { (ctx.t("browser.download_folder")) }
                 @if let Some((label, href)) = &v.hidden_toggle {
                     a class="browser__hidden-toggle" href=(href) { (label) }
                 }
             }
+            @if let (Some(u), Some(csrf)) = (&v.upload, ctx.csrf) {
+                (upload_ui(ctx, u, csrf))
+            }
             @if v.rows.is_empty() {
                 p class="browser__empty" { (ctx.t("browser.empty")) }
             } @else {
-                form class="browser" method="get" {
-                    input type="hidden" name="zip" value="1";
+                form class="browser" method="post" action=(v.post_href) {
+                    @if let Some(csrf) = ctx.csrf {
+                        input type="hidden" name="csrf" value=(csrf);
+                    }
                     @if v.showing_hidden {
                         input type="hidden" name="hidden" value="1";
                     }
@@ -226,7 +316,20 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                             }
                         }
                     }
-                    button type="submit" class="browser__zip-selected" { (ctx.t("browser.download_selected")) }
+                    div class="browser__actions" {
+                        button type="submit" name="op" value="zip" class="browser__zip-selected" { (ctx.t("browser.download_selected")) }
+                        @if v.can_delete {
+                            button type="submit" name="op" value="delete" class="browser__delete-selected"
+                                aria-describedby="trash-note" { (ctx.t("browser.delete_selected")) }
+                            p class="browser__trash-note" id="trash-note" {
+                                @if v.trash_days == 0 {
+                                    (ctx.t("browser.trash_note_kept"))
+                                } @else {
+                                    (ctx.tn("browser.trash_note", u64::from(v.trash_days)))
+                                }
+                            }
+                        }
+                    }
                 }
                 @if v.pages > 1 {
                     nav class="pager" {
@@ -238,6 +341,131 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                         }
                         @if let Some(h) = &v.next_href {
                             a class="pager__next" rel="next" href=(h) { (ctx.t("browser.page_next")) }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+/// A failed operation: what went wrong (optionally per item) and the way back.
+pub fn problems(
+    ctx: &Ctx,
+    title: &str,
+    intro: &str,
+    items: &[String],
+    back: Option<&str>,
+) -> Markup {
+    layout(
+        ctx,
+        title,
+        html! {
+            h1 class="error__title" { (title) }
+            p class="error__body" role="alert" { (intro) }
+            @if !items.is_empty() {
+                ul class="error__items" {
+                    @for i in items { li { (i) } }
+                }
+            }
+            @if let Some(href) = back {
+                p { a class="error__back" href=(href) { (ctx.t("ops.back")) } }
+            }
+        },
+    )
+}
+
+pub struct TrashRow {
+    pub id: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub location: String,
+    pub location_href: String,
+    pub deleted: String,
+    pub by: String,
+    pub size: String,
+    pub until: String,
+    pub note: Option<String>,
+}
+
+pub struct TrashGroup {
+    pub volume: String,
+    pub summary: String,
+    pub rows: Vec<TrashRow>,
+}
+
+pub struct TrashView {
+    pub admin: bool,
+    pub csrf: String,
+    pub groups: Vec<TrashGroup>,
+}
+
+pub fn trash(ctx: &Ctx, v: &TrashView) -> Markup {
+    let title = ctx.t("trash.title");
+    layout(
+        ctx,
+        title,
+        html! {
+            h1 class="trash__title" { (title) }
+            p class="trash__intro" {
+                (if v.admin { ctx.t("trash.intro_admin") } else { ctx.t("trash.intro_user") })
+            }
+            @if v.groups.is_empty() {
+                p class="trash__empty" { (ctx.t("trash.empty")) }
+            }
+            @for (i, g) in v.groups.iter().enumerate() {
+                section class="trash-volume" aria-labelledby=(format!("trash-volume-{i}")) {
+                    h2 class="trash-volume__title" id=(format!("trash-volume-{i}")) { (g.volume) }
+                    p class="trash-volume__summary" { (g.summary) }
+                    @if v.admin {
+                        form class="trash-volume__empty" method="post" action="/.cc/trash/empty" {
+                            input type="hidden" name="csrf" value=(v.csrf);
+                            input type="hidden" name="vol" value=(g.volume);
+                            label class="trash-volume__confirm" {
+                                input type="checkbox" name="confirm" value="1" required;
+                                " " (ctx.t("trash.empty_confirm"))
+                            }
+                            button type="submit" { (ctx.t("trash.empty_now")) }
+                        }
+                    }
+                    table class="trash-volume__table" {
+                        thead {
+                            tr {
+                                th scope="col" { (ctx.t("trash.col_name")) }
+                                th scope="col" { (ctx.t("trash.col_location")) }
+                                th scope="col" { (ctx.t("trash.col_deleted")) }
+                                @if v.admin { th scope="col" { (ctx.t("trash.col_by")) } }
+                                th scope="col" { (ctx.t("trash.col_size")) }
+                                th scope="col" { (ctx.t("trash.col_until")) }
+                                th scope="col" { span class="visually-hidden" { (ctx.t("trash.col_actions")) } }
+                            }
+                        }
+                        tbody {
+                            @for r in &g.rows {
+                                tr class="trash-item" data-kind=(if r.is_dir { "dir" } else { "file" }) {
+                                    th scope="row" class="trash-item__name" {
+                                        (r.name)
+                                        @if let Some(n) = &r.note {
+                                            " " span class="trash-item__note" { (n) }
+                                        }
+                                    }
+                                    td class="trash-item__location" { a href=(r.location_href) { (r.location) } }
+                                    td class="trash-item__deleted" { (r.deleted) }
+                                    @if v.admin { td class="trash-item__by" { (r.by) } }
+                                    td class="trash-item__size" { (r.size) }
+                                    td class="trash-item__until" { (r.until) }
+                                    td class="trash-item__actions" {
+                                        form method="post" action="/.cc/trash/restore" {
+                                            input type="hidden" name="csrf" value=(v.csrf);
+                                            input type="hidden" name="id" value=(r.id);
+                                            button type="submit"
+                                                aria-label=(ctx.tf("trash.restore_item", &[("name", &r.name)])) {
+                                                (ctx.t("trash.restore"))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -1,15 +1,18 @@
-//! Volume paths: the landing page, folder listings, file downloads (with Range) and zip
-//! downloads.
+//! Volume paths: the landing page, folder listings, file downloads (with Range), zip
+//! downloads, and the folder forms (download selection, new folder, move to trash).
 
+use super::auth::{audit, csrf_ok, forbidden, now};
 use super::headers::SANDBOX_CSP;
 use super::limits::DownloadGuard;
 use super::query::Query;
-use super::views::{self, Crumb, Ctx, ListingView, Row, VolumeCard};
-use super::{AppState, ClientInfo, Current, Shared, page_ctx, stream};
+use super::views::{self, Crumb, Ctx, ListingView, Row, UploadUi, VolumeCard};
+use super::{AppState, ClientInfo, Current, CurrentUser, Shared, api, page_ctx, stream};
 use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, volume_perms};
 use crate::config::Note;
-use crate::fs::path::{RelPath, is_internal_name, validate_existing_name};
+use crate::fs::ops;
+use crate::fs::path::{RelPath, is_internal_name, validate_existing_name, validate_new_name};
 use crate::fs::sort::natural_cmp;
+use crate::fs::trash;
 use crate::fs::volume::{Entry, Kind, Meta, Space, VolumeRoot};
 use crate::fs::zipstream::{self, ZipSpec};
 use axum::body::Body;
@@ -102,7 +105,7 @@ fn fail(ctx: &Ctx, f: Fail) -> Response {
         }
         Fail::Method => {
             res.headers_mut()
-                .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+                .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD, POST"));
         }
         _ => {}
     }
@@ -167,6 +170,7 @@ pub async fn landing(
 }
 
 /// Everything below `/<Volume>/`.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle(
     State(st): State<Shared>,
     Extension(client): Extension<ClientInfo>,
@@ -175,9 +179,10 @@ pub async fn handle(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
+    body: Body,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    if method != Method::GET && method != Method::HEAD {
+    if method != Method::GET && method != Method::HEAD && method != Method::POST {
         return fail(&ctx, Fail::Method);
     }
     let head = method == Method::HEAD;
@@ -233,6 +238,33 @@ pub async fn handle(
     };
 
     let query_suffix = uri.query().map(|qs| format!("?{qs}")).unwrap_or_default();
+    if method == Method::POST {
+        drop(fd);
+        if meta.kind != Kind::Dir {
+            return fail(&ctx, Fail::Method);
+        }
+        let folder = FolderReq {
+            vol,
+            rel,
+            perms,
+            href: if raw_path.ends_with('/') {
+                raw_path.to_string()
+            } else {
+                format!("{raw_path}/")
+            },
+        };
+        return folder_post(
+            &st,
+            &ctx,
+            &client,
+            &principal,
+            current.as_deref(),
+            &headers,
+            folder,
+            body,
+        )
+        .await;
+    }
     match meta.kind {
         Kind::Dir => {
             drop(fd);
@@ -244,12 +276,14 @@ pub async fn handle(
                     Ok(g) => g,
                     Err(()) => return fail(&ctx, Fail::TooMany),
                 };
-                return match zip_response(&st, vol, rel, &q, &principal, head, guard) {
+                let include_hidden = principal.is_admin() && q.get("hidden") == Some("1");
+                let only = q.all("n").map(String::from).collect();
+                return match zip_response(&st, vol, rel, only, include_hidden, head, guard) {
                     Ok(r) => r,
                     Err(f) => fail(&ctx, f),
                 };
             }
-            listing(&ctx, vol, rel, perms, &q, &principal, raw_path).await
+            listing(&st, &ctx, vol, rel, perms, &q, &principal, raw_path).await
         }
         Kind::File => {
             if raw_path.ends_with('/') {
@@ -292,7 +326,9 @@ enum SortBy {
     Modified,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn listing(
+    st: &AppState,
     ctx: &Ctx<'_>,
     vol: Arc<VolumeRoot>,
     rel: RelPath,
@@ -435,6 +471,15 @@ async fn listing(
         } else {
             format!("{raw_path}?zip")
         },
+        post_href: raw_path.to_string(),
+        can_write: ctx.csrf.is_some() && perms.contains(Perms::WRITE),
+        can_delete: ctx.csrf.is_some() && perms.contains(Perms::DELETE),
+        upload: (ctx.csrf.is_some() && perms.contains(Perms::WRITE)).then(|| UploadUi {
+            volume: vol.name().to_string(),
+            dir: rel.as_str().to_string(),
+            parallel: st.cfg.uploads.parallel,
+        }),
+        trash_days: vol.cfg.trash_days(&st.cfg),
         hidden_toggle: admin.then(|| {
             if show_hidden {
                 (
@@ -623,13 +668,11 @@ fn zip_response(
     st: &AppState,
     vol: Arc<VolumeRoot>,
     rel: RelPath,
-    q: &Query,
-    principal: &Principal,
+    only: Vec<String>,
+    include_hidden: bool,
     head: bool,
     guard: Option<DownloadGuard>,
 ) -> Result<Response, Fail> {
-    let include_hidden = principal.is_admin() && q.get("hidden") == Some("1");
-    let only: Vec<String> = q.all("n").map(String::from).collect();
     for n in &only {
         if validate_existing_name(n).is_err()
             || is_internal_name(n)
@@ -666,6 +709,194 @@ fn zip_response(
     builder
         .body(stream::body_from_channel(rx, guard))
         .map_err(|_| Fail::Internal)
+}
+
+/// A folder that received a form.
+struct FolderReq {
+    vol: Arc<VolumeRoot>,
+    rel: RelPath,
+    perms: Perms,
+    /// The folder's URL, with a trailing slash.
+    href: String,
+}
+
+/// Largest form body accepted (a selection of many names).
+const MAX_FORM: usize = 1 << 20;
+
+fn problems(ctx: &Ctx, status: StatusCode, intro: &str, items: &[String], back: &str) -> Response {
+    (
+        status,
+        views::problems(ctx, ctx.t("ops.failed_title"), intro, items, Some(back)),
+    )
+        .into_response()
+}
+
+/// `POST /<Volume>/<folder>/` with `op` = `zip` (download the selected `n`), `mkdir`
+/// (`name`) or `delete` (move the selected `n` to the trash).
+#[allow(clippy::too_many_arguments)]
+async fn folder_post(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    client: &ClientInfo,
+    principal: &Principal,
+    current: Option<&CurrentUser>,
+    headers: &HeaderMap,
+    folder: FolderReq,
+    body: Body,
+) -> Response {
+    let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM).await else {
+        return fail(ctx, Fail::BadRequest);
+    };
+    let form = Query::parse(std::str::from_utf8(&bytes).ok());
+    let op = form.get("op").unwrap_or_default();
+    if op == "zip" {
+        let guard = match anon_guard(st, principal, client) {
+            Ok(g) => g,
+            Err(()) => return fail(ctx, Fail::TooMany),
+        };
+        let include_hidden = principal.is_admin() && form.get("hidden") == Some("1");
+        let only = form.all("n").map(String::from).collect();
+        return match zip_response(
+            st,
+            folder.vol,
+            folder.rel,
+            only,
+            include_hidden,
+            false,
+            guard,
+        ) {
+            Ok(r) => r,
+            Err(f) => fail(ctx, f),
+        };
+    }
+    let Some(cu) = current else {
+        return forbidden(ctx);
+    };
+    if !csrf_ok(headers, st, cu, form.get("csrf").unwrap_or_default()) {
+        return forbidden(ctx);
+    }
+    let actor = format!("user:{}", cu.key);
+    match op {
+        "mkdir" => {
+            let name = form.get("name").unwrap_or_default().trim().to_string();
+            let target = match validate_new_name(&name).map(|()| folder.rel.join(&name)) {
+                Ok(Ok(t)) => t,
+                _ => {
+                    return problems(
+                        ctx,
+                        StatusCode::BAD_REQUEST,
+                        ctx.t("ops.invalid"),
+                        &[],
+                        &folder.href,
+                    );
+                }
+            };
+            let perms = path_perms(
+                &st.cfg,
+                principal,
+                client.origin,
+                folder.vol.name(),
+                &target,
+            );
+            if !perms.contains(Perms::WRITE) {
+                return problems(
+                    ctx,
+                    StatusCode::FORBIDDEN,
+                    ctx.t("ops.forbidden"),
+                    &[],
+                    &folder.href,
+                );
+            }
+            let made = {
+                let (vol, rel, name) = (folder.vol.clone(), folder.rel.clone(), name.clone());
+                tokio::task::spawn_blocking(move || ops::mkdir_in(vol.open_dir(&rel)?, &name)).await
+            };
+            match made {
+                Ok(Ok(())) => {
+                    audit(
+                        st,
+                        actor,
+                        client.ip,
+                        "mkdir",
+                        &format!("{}/{}", folder.vol.name(), target.as_str()),
+                        "",
+                    );
+                    Redirect::to(&folder.href).into_response()
+                }
+                Ok(Err(e)) => {
+                    let (status, _, msg) = api::message(ctx, &e, &name);
+                    problems(ctx, status, &msg, &[], &folder.href)
+                }
+                Err(_) => fail(ctx, Fail::Internal),
+            }
+        }
+        "delete" => {
+            if !folder.perms.contains(Perms::READ) {
+                return fail(ctx, Fail::NotFound);
+            }
+            let mut failures = Vec::new();
+            for name in form.all("n") {
+                let target = match folder.rel.join(name) {
+                    Ok(t) if !is_internal_name(name) => t,
+                    _ => {
+                        failures.push(ctx.tf("ops.not_found", &[("name", name)]));
+                        continue;
+                    }
+                };
+                let perms = path_perms(
+                    &st.cfg,
+                    principal,
+                    client.origin,
+                    folder.vol.name(),
+                    &target,
+                );
+                if !perms.contains(Perms::READ) {
+                    failures.push(ctx.tf("ops.not_found", &[("name", name)]));
+                    continue;
+                }
+                if !perms.contains(Perms::DELETE) {
+                    failures.push(ctx.tf("ops.no_delete", &[("name", name)]));
+                    continue;
+                }
+                let done = {
+                    let (st, vol, target, actor) = (
+                        st.clone(),
+                        folder.vol.clone(),
+                        target.clone(),
+                        actor.clone(),
+                    );
+                    tokio::task::spawn_blocking(move || {
+                        trash::delete(&st.db, &vol, &target, &actor, trash::REASON_DELETE, now())
+                    })
+                    .await
+                };
+                match done {
+                    Ok(Ok(item)) => audit(
+                        st,
+                        actor.clone(),
+                        client.ip,
+                        "trash",
+                        &format!("{}/{}", item.volume, item.path),
+                        &format!("{} bytes, {} files", item.size, item.files),
+                    ),
+                    Ok(Err(e)) => failures.push(api::message(ctx, &e, name).2),
+                    Err(_) => failures.push(ctx.tf("ops.failed", &[("name", name)])),
+                }
+            }
+            if failures.is_empty() {
+                Redirect::to(&folder.href).into_response()
+            } else {
+                problems(
+                    ctx,
+                    StatusCode::CONFLICT,
+                    ctx.t("ops.trash_failed"),
+                    &failures,
+                    &folder.href,
+                )
+            }
+        }
+        _ => fail(ctx, Fail::BadRequest),
+    }
 }
 
 #[cfg(test)]

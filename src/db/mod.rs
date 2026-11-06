@@ -1,5 +1,5 @@
-//! The state database (redb, one file in `paths.state_dir`): accounts, sessions and the
-//! audit log. Exactly one process may open it; a second open fails with [`DbError::Locked`].
+//! The state database (redb, one file in `paths.state_dir`): accounts, sessions, the audit
+//! log, the trash index and unfinished uploads. Exactly one process may open it; a second open fails with [`DbError::Locked`].
 //!
 //! Records are JSON so they can grow fields without migrations; `meta.schema` versions the
 //! table layout. All calls block (and may fsync); async code runs them in `spawn_blocking`.
@@ -13,6 +13,9 @@ const META: TableDefinition<&str, &str> = TableDefinition::new("meta");
 const USERS: TableDefinition<&str, &[u8]> = TableDefinition::new("users");
 const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("sessions");
 const AUDIT: TableDefinition<u64, &[u8]> = TableDefinition::new("audit");
+const TRASH: TableDefinition<&str, &[u8]> = TableDefinition::new("trash");
+const UPLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("uploads");
+const BATCHES: TableDefinition<&str, &[u8]> = TableDefinition::new("upload_batches");
 
 pub const SCHEMA_VERSION: &str = "1";
 pub const FILE_NAME: &str = "state.redb";
@@ -124,6 +127,71 @@ pub struct AuditEvent {
     pub detail: String,
 }
 
+/// An item in a volume's trash: `<fs_root>/.chestcraft-trash/<id>/<name of path>`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrashItem {
+    pub id: String,
+    pub volume: String,
+    /// Where it was, relative to the volume.
+    pub path: String,
+    /// Folder (relative to the volume) that holds the `.chestcraft-trash` it is in.
+    pub fs_root: String,
+    pub is_dir: bool,
+    /// Bytes and files (a folder's whole tree).
+    pub size: u64,
+    pub files: u64,
+    pub deleted_at: i64,
+    /// Actor: "user:<key>", later "share:<id>" or "public".
+    pub deleted_by: String,
+    /// "delete", "replaced" (by an upload) or "unfinished_upload".
+    pub reason: String,
+}
+
+/// An unfinished upload. Data goes to `<fs_root>/.chestcraft-uploads/<id>.part`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UploadRecord {
+    pub id: String,
+    /// Actor that may continue it.
+    pub owner: String,
+    pub volume: String,
+    /// Target folder, relative to the volume.
+    pub dir: String,
+    /// Relative path below `dir` ("a.txt" or "Folder/sub/a.txt").
+    pub name: String,
+    pub size: u64,
+    /// Client's modification time, Unix milliseconds.
+    pub mtime_ms: i64,
+    /// Chunk size in bytes.
+    pub chunk: u64,
+    /// What to do when the name is taken: "ask", "rename", "replace" or "skip".
+    pub clash: String,
+    pub fs_root: String,
+    #[serde(default)]
+    pub batch: Option<String>,
+    /// Finished into the batch's staging folder instead of the target folder.
+    #[serde(default)]
+    pub staged: bool,
+    pub created: i64,
+    pub touched: i64,
+    /// Chunk ranges `[start, end)` known to be on disk (written and synced).
+    #[serde(default)]
+    pub have: Vec<(u32, u32)>,
+}
+
+/// A group of uploads (a folder upload). On staged volumes its files collect in
+/// `<fs_root>/.chestcraft-uploads/<id>.batch/` until the batch finishes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BatchRecord {
+    pub id: String,
+    pub owner: String,
+    pub volume: String,
+    pub dir: String,
+    pub fs_root: String,
+    pub staged: bool,
+    pub created: i64,
+    pub touched: i64,
+}
+
 pub struct Db {
     db: Database,
     /// Last audit key handed out; keys are unique, increasing nanoseconds.
@@ -143,6 +211,9 @@ impl Db {
             tx.open_table(USERS)?;
             tx.open_table(SESSIONS)?;
             tx.open_table(AUDIT)?;
+            tx.open_table(TRASH)?;
+            tx.open_table(UPLOADS)?;
+            tx.open_table(BATCHES)?;
             let mut meta = tx.open_table(META)?;
             let current = meta.get("schema")?.map(|v| v.value().to_string());
             match current.as_deref() {
@@ -190,6 +261,24 @@ impl Db {
         Ok(())
     }
 
+    fn all_json<T: DeserializeOwned>(&self, table: TableDefinition<&str, &[u8]>) -> Result<Vec<T>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(table)?;
+        let mut out = Vec::new();
+        for row in t.iter()? {
+            let (_, v) = row?;
+            out.push(serde_json::from_slice(v.value())?);
+        }
+        Ok(out)
+    }
+
+    fn delete_key(&self, table: TableDefinition<&str, &[u8]>, key: &str) -> Result<()> {
+        let tx = self.db.begin_write()?;
+        tx.open_table(table)?.remove(key)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     // --- users -----------------------------------------------------------------------
 
     pub fn user(&self, name: &str) -> Result<Option<User>> {
@@ -201,14 +290,7 @@ impl Db {
     }
 
     pub fn users(&self) -> Result<Vec<User>> {
-        let tx = self.db.begin_read()?;
-        let t = tx.open_table(USERS)?;
-        let mut out = Vec::new();
-        for row in t.iter()? {
-            let (_, v) = row?;
-            out.push(serde_json::from_slice(v.value())?);
-        }
-        Ok(out)
+        self.all_json(USERS)
     }
 
     // --- sessions --------------------------------------------------------------------
@@ -223,10 +305,7 @@ impl Db {
     }
 
     pub fn delete_session(&self, id_hash: &str) -> Result<()> {
-        let tx = self.db.begin_write()?;
-        tx.open_table(SESSIONS)?.remove(id_hash)?;
-        tx.commit()?;
-        Ok(())
+        self.delete_key(SESSIONS, id_hash)
     }
 
     /// Remove sessions of `user_key` except `keep` (an id hash); returns how many.
@@ -253,6 +332,59 @@ impl Db {
         }
         tx.commit()?;
         Ok(removed)
+    }
+
+    // --- trash -----------------------------------------------------------------------
+
+    pub fn put_trash(&self, item: &TrashItem) -> Result<()> {
+        self.put_json(TRASH, &item.id, item, true)
+    }
+
+    pub fn trash_item(&self, id: &str) -> Result<Option<TrashItem>> {
+        self.get_json(TRASH, id)
+    }
+
+    pub fn trash_items(&self) -> Result<Vec<TrashItem>> {
+        self.all_json(TRASH)
+    }
+
+    pub fn delete_trash(&self, id: &str) -> Result<()> {
+        self.delete_key(TRASH, id)
+    }
+
+    // --- uploads ---------------------------------------------------------------------
+
+    /// `durable = false` for progress updates: losing one only means resending chunks.
+    pub fn put_upload(&self, rec: &UploadRecord, durable: bool) -> Result<()> {
+        self.put_json(UPLOADS, &rec.id, rec, durable)
+    }
+
+    pub fn upload(&self, id: &str) -> Result<Option<UploadRecord>> {
+        self.get_json(UPLOADS, id)
+    }
+
+    pub fn uploads(&self) -> Result<Vec<UploadRecord>> {
+        self.all_json(UPLOADS)
+    }
+
+    pub fn delete_upload(&self, id: &str) -> Result<()> {
+        self.delete_key(UPLOADS, id)
+    }
+
+    pub fn put_batch(&self, rec: &BatchRecord) -> Result<()> {
+        self.put_json(BATCHES, &rec.id, rec, true)
+    }
+
+    pub fn batch(&self, id: &str) -> Result<Option<BatchRecord>> {
+        self.get_json(BATCHES, id)
+    }
+
+    pub fn batches(&self) -> Result<Vec<BatchRecord>> {
+        self.all_json(BATCHES)
+    }
+
+    pub fn delete_batch(&self, id: &str) -> Result<()> {
+        self.delete_key(BATCHES, id)
     }
 
     // --- audit -----------------------------------------------------------------------

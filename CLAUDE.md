@@ -18,7 +18,14 @@ Plan steps 1–2 done. Step 3 (backend slices):
   per-(IP, account) backoff and credential-stuffing signal, sessions (hashed ids, 30d
   sliding, remote admin 12h), forced first-login password change, CSRF + Origin checks,
   per-user settings in the page context, `chestcraft user ...` CLI (not as root).
-- Next: slice 4, upload/trash/overwrite/purge.
+- Slice 4 done: chunked resumable uploads (`/.cc/upload` JSON API + `assets/upload.js`,
+  `.part` files in `.chestcraft-uploads` on the target's dataset, chunks recorded after
+  fdatasync, client mtime, 644/755), name clash keep both / replace (old file → trash via
+  RENAME_EXCHANGE) / skip, staged folder batches, new folder, delete → trash, trash page
+  with restore (never overwrites) and admin "empty now", daily purge + abandoned-upload
+  sweep at `trash.purge_at` (abandoned staged folders go to the trash, not deleted).
+- Next: slice 5, WebDAV. Rename/move/copy in the UI aren't in any slice yet; WebDAV
+  MOVE/COPY will bring the primitives.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in
