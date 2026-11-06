@@ -5,14 +5,17 @@ use super::auth::{audit, csrf_ok, forbidden, now};
 use super::guest::{self, PublicGuest};
 use super::headers::SANDBOX_CSP;
 use super::limits::DownloadGuard;
+use super::preview::{self, ViewerReq};
 use super::query::Query;
 use super::views::{self, Crumb, Ctx, ListingView, Row, ShareHead, UploadUi, VolumeCard};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, api, page_ctx, stream};
 use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, public_writer_perms, volume_perms};
 use crate::config::Note;
+use crate::fs::filetype;
 use crate::fs::ops;
 use crate::fs::path::{RelPath, is_internal_name, validate_existing_name, validate_new_name};
 use crate::fs::sort::natural_cmp;
+use crate::fs::thumbs::Size;
 use crate::fs::trash;
 use crate::fs::volume::{Entry, Kind, Meta, Space, VolumeRoot};
 use crate::fs::zipstream::{self, ZipSpec};
@@ -327,11 +330,58 @@ pub async fn handle(
                 ))
                 .into_response();
             }
+            let name = rel.name().unwrap_or("download").to_string();
+            if q.has("thumb") {
+                return preview::thumb(
+                    &st,
+                    &client,
+                    principal.is_anonymous(),
+                    &headers,
+                    fd,
+                    &meta,
+                    &name,
+                    q.get("thumb"),
+                    q.get("v"),
+                )
+                .await;
+            }
+            if q.has("view") {
+                let mut ctx = ctx;
+                if principal.is_anonymous() {
+                    ctx.theme = None;
+                    ctx.lang_switch = Some(uri.to_string());
+                }
+                let root = (vol.name().to_string(), format!("/{}/", enc(vol.name())));
+                let parent = rel.parent().unwrap_or_default();
+                let may_share = ctx.signed_in && perms.contains(Perms::SHARE) && vol.cfg.remote;
+                let req = ViewerReq {
+                    crumbs: crumbs(&root, &parent),
+                    share_href: may_share.then(|| {
+                        format!(
+                            "/.cc/shares/new?vol={}&path={}",
+                            enc(vol.name()),
+                            enc(rel.as_str())
+                        )
+                    }),
+                    show_hidden: principal.is_admin() && q.get("hidden") == Some("1"),
+                    delete_csrf: ctx
+                        .csrf
+                        .filter(|_| perms.contains(Perms::DELETE))
+                        .map(str::to_string),
+                    vol,
+                    rel,
+                    meta,
+                    fd,
+                    href: raw_path.to_string(),
+                    share: None,
+                    siblings: true,
+                };
+                return preview::viewer(&ctx, req).await;
+            }
             let guard = match anon_guard(&st, &principal, &client) {
                 Ok(g) => g,
                 Err(()) => return fail(&ctx, Fail::TooMany),
             };
-            let name = rel.name().unwrap_or("download").to_string();
             download(fd, &meta, &name, &headers, head, q.has("dl"), guard).await
         }
         Kind::Other => fail(&ctx, Fail::NotFound),
@@ -451,6 +501,24 @@ async fn volume_frame(
     }
 }
 
+/// Breadcrumbs: the root (label, link), then each folder of `sub`.
+pub fn crumbs(root: &(String, String), sub: &RelPath) -> Vec<Crumb> {
+    let mut out = vec![Crumb {
+        label: root.0.clone(),
+        href: root.1.clone(),
+    }];
+    let mut acc = root.1.clone();
+    for c in sub.components() {
+        acc.push_str(&enc(c));
+        acc.push('/');
+        out.push(Crumb {
+            label: c.to_string(),
+            href: acc.clone(),
+        });
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn listing(
     st: &AppState,
@@ -520,10 +588,13 @@ pub async fn listing(
         .unwrap_or(1)
         .clamp(1, pages);
     let slice = &entries[(page - 1) * PAGE_SIZE..(page * PAGE_SIZE).min(total)];
+    let grid = q.get("layout") == Some("grid");
+    let keep = if show_hidden { "&hidden=1" } else { "" };
     let rows = slice
         .iter()
         .map(|e| {
             let is_dir = e.meta.kind == Kind::Dir;
+            let name = enc(&e.name);
             let share_href = frame.share_volume.as_ref().and_then(|v| {
                 let path = rel.join(&e.name).ok()?;
                 Some(format!(
@@ -535,10 +606,18 @@ pub async fn listing(
             Row {
                 name: e.name.clone(),
                 href: if is_dir {
-                    format!("{}/", enc(&e.name))
+                    format!("{name}/")
                 } else {
-                    enc(&e.name)
+                    format!("{name}?view{keep}")
                 },
+                ftype: if is_dir {
+                    "folder"
+                } else {
+                    filetype::icon_type(&e.name)
+                },
+                thumb: (!is_dir && filetype::thumb_source(&e.name).is_some())
+                    .then(|| format!("{name}{}", preview::thumb_query(&e.meta, Size::Grid))),
+                download_href: (!is_dir).then(|| format!("{name}?dl")),
                 is_dir,
                 size: if is_dir {
                     String::new()
@@ -553,8 +632,11 @@ pub async fn listing(
         .collect();
 
     // Links keep the current view settings.
-    let link = |page: usize, sort: SortBy, desc: bool, hidden: bool| -> String {
+    let link_in = |grid: bool, page: usize, sort: SortBy, desc: bool, hidden: bool| -> String {
         let mut params = Vec::new();
+        if grid {
+            params.push("layout=grid".to_string());
+        }
         match sort {
             SortBy::Name => {}
             SortBy::Size => params.push("sort=size".to_string()),
@@ -575,21 +657,12 @@ pub async fn listing(
             format!("{raw_path}?{}", params.join("&"))
         }
     };
+    let link = |page: usize, sort: SortBy, desc: bool, hidden: bool| {
+        link_in(grid, page, sort, desc, hidden)
+    };
     let sort_link = |s: SortBy| link(1, s, s == sort && !desc, show_hidden);
 
-    let mut crumbs = vec![Crumb {
-        label: frame.root.0.clone(),
-        href: frame.root.1.clone(),
-    }];
-    let mut acc = frame.root.1.clone();
-    for c in frame.sub.components() {
-        acc.push_str(&enc(c));
-        acc.push('/');
-        crumbs.push(Crumb {
-            label: c.to_string(),
-            href: acc.clone(),
-        });
-    }
+    let crumbs = crumbs(&frame.root, &frame.sub);
 
     let share_here = frame
         .share_volume
@@ -643,6 +716,11 @@ pub async fn listing(
         share_here,
         share_blocked: frame.share_blocked,
         public_upload_href: frame.public_upload_href,
+        layout: if grid { "grid" } else { "list" },
+        layout_hrefs: [
+            link_in(false, page, sort, desc, show_hidden),
+            link_in(true, page, sort, desc, show_hidden),
+        ],
     };
     views::listing(ctx, &view).into_response()
 }

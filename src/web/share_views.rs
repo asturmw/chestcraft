@@ -2,7 +2,9 @@
 //! the UI contract (docs/ui-handoff.md, section 5); class names are provisional until the
 //! design deliverables are integrated.
 
-use super::views::{Ctx, ShareHead, UploadUi, layout, share_head, upload_ui};
+use super::views::{
+    Ctx, ShareHead, UploadUi, ViewerBody, layout, share_head, upload_ui, viewer_stage,
+};
 use maud::{Markup, html};
 
 // ---------------------------------------------------------------------------------------
@@ -55,10 +57,12 @@ pub fn share_unavailable(ctx: &Ctx, which: &str) -> Markup {
 
 pub struct FileCard {
     pub name: String,
+    pub ftype: &'static str,
     pub size: String,
     pub modified: String,
     pub open_href: String,
     pub download_href: String,
+    pub body: ViewerBody,
 }
 
 pub fn share_file(ctx: &Ctx, head: &ShareHead, f: &FileCard) -> Markup {
@@ -67,7 +71,8 @@ pub fn share_file(ctx: &Ctx, head: &ShareHead, f: &FileCard) -> Markup {
         &head.name,
         html! {
             (share_head(ctx, head))
-            article class="file-card" {
+            article class="file-card" data-type=(f.ftype) {
+                (viewer_stage(ctx, &f.name, f.ftype, &f.body, &f.download_href))
                 h2 class="file-card__name" { a href=(f.open_href) { (f.name) } }
                 p class="file-card__meta" { (f.size) " · " (f.modified) }
                 a class="file-card__download" href=(f.download_href) download { (ctx.t("share.download")) }

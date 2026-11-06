@@ -1,0 +1,196 @@
+//! Slicer thumbnails embedded in G-code. Text G-code carries them as base64 comment blocks
+//! (`; thumbnail begin 300x300 1234` … `; thumbnail end`, also `thumbnail_JPG` and
+//! `thumbnail_QOI`) near the top of the file. Binary G-code (`.bgcode`, magic `GCDE`) has
+//! thumbnail blocks before the first G-code block. The largest picture wins.
+
+use super::{Result, unusable};
+use base64::Engine;
+use std::io::{BufRead, BufReader, Read};
+
+/// Text G-code: how far into the file to look.
+const SCAN_LIMIT: u64 = 16 << 20;
+const MAX_PICTURE: usize = 16 << 20;
+
+pub fn text_thumbnail(f: impl Read) -> Result<Vec<u8>> {
+    let r = BufReader::with_capacity(1 << 16, f.take(SCAN_LIMIT));
+    let mut best: Option<(u64, Vec<u8>)> = None;
+    let mut current: Option<(u64, String)> = None;
+    for line in r.split(b'\n') {
+        let line = line?;
+        let Some(body) = line.strip_prefix(b";") else {
+            if current.is_none() && best.is_some() && !line.trim_ascii().is_empty() {
+                // The comment header is over and a picture was found.
+                break;
+            }
+            continue;
+        };
+        let text = String::from_utf8_lossy(body);
+        let text = text.trim();
+        if current.is_some() {
+            if text.starts_with("thumbnail") && text.ends_with(" end") {
+                let (area, b64) = current.take().unwrap_or_default();
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64.as_bytes())
+                    && best.as_ref().is_none_or(|(a, _)| area > *a)
+                {
+                    best = Some((area, bytes));
+                }
+            } else if let Some((_, b64)) = &mut current {
+                if b64.len() + text.len() > MAX_PICTURE * 4 / 3 + 4 {
+                    return Err(unusable("thumbnail too large"));
+                }
+                b64.push_str(text);
+            }
+            continue;
+        }
+        if let Some(rest) = text.strip_prefix("thumbnail")
+            && let Some((kind, args)) = rest.split_once(" begin")
+            && matches!(kind, "" | "_PNG" | "_JPG" | "_QOI")
+        {
+            let area = args
+                .split_ascii_whitespace()
+                .next()
+                .and_then(|d| d.split_once('x'))
+                .and_then(|(w, h)| Some(w.parse::<u64>().ok()? * h.parse::<u64>().ok()?))
+                .unwrap_or(0);
+            current = Some((area, String::new()));
+        }
+    }
+    best.map(|(_, b)| b)
+        .ok_or_else(|| unusable("no thumbnail in G-code"))
+}
+
+const BLOCK_GCODE: u16 = 1;
+const BLOCK_THUMBNAIL: u16 = 5;
+
+pub fn binary_thumbnail(f: impl Read) -> Result<Vec<u8>> {
+    let mut r = BufReader::new(f);
+    let mut head = [0u8; 10];
+    r.read_exact(&mut head)
+        .map_err(|_| unusable("not a binary G-code file"))?;
+    if &head[..4] != b"GCDE" {
+        return Err(unusable("not a binary G-code file"));
+    }
+    let checksum = match u16::from_le_bytes([head[8], head[9]]) {
+        0 => 0u64,
+        1 => 4,
+        _ => return Err(unusable("unknown bgcode checksum")),
+    };
+    let mut best: Option<(u64, Vec<u8>)> = None;
+    for _ in 0..1000 {
+        let mut bh = [0u8; 8];
+        if r.read_exact(&mut bh).is_err() {
+            break;
+        }
+        let kind = u16::from_le_bytes([bh[0], bh[1]]);
+        let compression = u16::from_le_bytes([bh[2], bh[3]]);
+        let size = u64::from(u32::from_le_bytes([bh[4], bh[5], bh[6], bh[7]]));
+        let stored = if compression == 0 {
+            size
+        } else {
+            let mut c = [0u8; 4];
+            r.read_exact(&mut c)?;
+            u64::from(u32::from_le_bytes(c))
+        };
+        if kind == BLOCK_GCODE {
+            break;
+        }
+        let params: u64 = if kind == BLOCK_THUMBNAIL { 6 } else { 2 };
+        if kind == BLOCK_THUMBNAIL && compression == 0 && (stored as usize) <= MAX_PICTURE {
+            let mut p = [0u8; 6];
+            r.read_exact(&mut p)?;
+            let (w, h) = (
+                u64::from(u16::from_le_bytes([p[2], p[3]])),
+                u64::from(u16::from_le_bytes([p[4], p[5]])),
+            );
+            let mut data = vec![0u8; stored as usize];
+            r.read_exact(&mut data)?;
+            if best.as_ref().is_none_or(|(a, _)| w * h > *a) {
+                best = Some((w * h, data));
+            }
+            skip(&mut r, checksum)?;
+        } else {
+            skip(&mut r, params + stored + checksum)?;
+        }
+    }
+    best.map(|(_, b)| b)
+        .ok_or_else(|| unusable("no thumbnail in binary G-code"))
+}
+
+fn skip(r: &mut impl Read, n: u64) -> Result<()> {
+    let copied = std::io::copy(&mut r.take(n), &mut std::io::sink())?;
+    if copied < n {
+        return Err(unusable("truncated binary G-code"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn text_gcode(pictures: &[(u32, &[u8])]) -> Vec<u8> {
+    let mut out = String::from("; generated by a slicer\n;\n");
+    for (side, data) in pictures {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(data);
+        out.push_str(&format!("; thumbnail begin {side}x{side} {}\n", b64.len()));
+        for chunk in b64.as_bytes().chunks(78) {
+            out.push_str("; ");
+            out.push_str(std::str::from_utf8(chunk).unwrap());
+            out.push('\n');
+        }
+        out.push_str("; thumbnail end\n;\n");
+    }
+    out.push_str("G28\nG1 X10 Y10\n");
+    out.into_bytes()
+}
+
+#[cfg(test)]
+pub fn binary_gcode(pictures: &[(u16, &[u8])]) -> Vec<u8> {
+    let mut out = b"GCDE".to_vec();
+    out.extend(1u32.to_le_bytes());
+    out.extend(1u16.to_le_bytes()); // CRC32
+    // Printer metadata block (type 3), uncompressed, encoding 0.
+    let meta = b"printer_model=XL\n";
+    out.extend(3u16.to_le_bytes());
+    out.extend(0u16.to_le_bytes());
+    out.extend((meta.len() as u32).to_le_bytes());
+    out.extend(0u16.to_le_bytes());
+    out.extend(meta);
+    out.extend([0u8; 4]);
+    for (side, data) in pictures {
+        out.extend(BLOCK_THUMBNAIL.to_le_bytes());
+        out.extend(0u16.to_le_bytes());
+        out.extend((data.len() as u32).to_le_bytes());
+        out.extend(0u16.to_le_bytes()); // PNG
+        out.extend(side.to_le_bytes());
+        out.extend(side.to_le_bytes());
+        out.extend(*data);
+        out.extend([0u8; 4]);
+    }
+    // A compressed G-code block ends the scan.
+    out.extend(BLOCK_GCODE.to_le_bytes());
+    out.extend(3u16.to_le_bytes());
+    out.extend(100u32.to_le_bytes());
+    out.extend(4u32.to_le_bytes());
+    out.extend(0u16.to_le_bytes());
+    out.extend([1u8, 2, 3, 4]);
+    out.extend([0u8; 4]);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_gcode_largest_picture() {
+        let g = text_gcode(&[(16, b"small"), (300, b"the large one"), (64, b"middle")]);
+        assert_eq!(text_thumbnail(&g[..]).unwrap(), b"the large one");
+        assert!(text_thumbnail(&b"G28\nG1 X1\n"[..]).is_err());
+    }
+
+    #[test]
+    fn binary_gcode_largest_picture() {
+        let g = binary_gcode(&[(16, b"small"), (220, b"large")]);
+        assert_eq!(binary_thumbnail(&g[..]).unwrap(), b"large");
+        assert!(binary_thumbnail(&b"GCDE\x01\0\0\0\x01\0"[..]).is_err());
+        assert!(binary_thumbnail(&b"G28"[..]).is_err());
+    }
+}

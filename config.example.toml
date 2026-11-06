@@ -32,9 +32,12 @@ chunk_mib = 32
 parallel = 3
 abandoned_days = 7   # unfinished .part files are removed after this many days
 
+# Thumbnails (480 px for the grid, 2048 px for the viewer) of pictures, videos, STL/3MF
+# models, G-code and SVG are cached in <cache_dir>/thumbs; the least recently used go
+# first once the cache is full. Videos, HEIC and AVIF need /usr/bin/ffmpeg.
 [thumbnails]
 cache_gib = 5
-max_ffmpeg = 2
+max_ffmpeg = 2       # ffmpeg processes at a time
 
 [sessions]
 user_days = 30            # sliding

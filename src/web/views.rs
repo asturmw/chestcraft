@@ -165,6 +165,12 @@ pub struct Row {
     pub shared: bool,
     /// Where to create a share of it.
     pub share_href: Option<String>,
+    /// Icon family (`data-type`).
+    pub ftype: &'static str,
+    /// Grid thumbnail, for files that have one.
+    pub thumb: Option<String>,
+    /// Files: direct download.
+    pub download_href: Option<String>,
 }
 
 /// Top of a share's pages: what is shared, by whom, until when.
@@ -226,6 +232,10 @@ pub struct ListingView {
     pub share_blocked: Option<String>,
     /// Anonymous visitors: public uploads are open, enter the password here.
     pub public_upload_href: Option<String>,
+    /// `list` or `grid`.
+    pub layout: &'static str,
+    /// Links to the list and the grid layout.
+    pub layout_hrefs: [String; 2],
 }
 
 /// What the upload script needs to know about the folder.
@@ -294,6 +304,30 @@ pub fn upload_ui(ctx: &Ctx, u: &UploadUi) -> Markup {
     }
 }
 
+/// The path to a folder. `current`: the last crumb is this page (not a link).
+pub fn breadcrumb(ctx: &Ctx, crumbs: &[Crumb], current: bool) -> Markup {
+    html! {
+        nav class="breadcrumb" aria-label=(ctx.t("browser.location")) {
+            ol class="breadcrumb__list" {
+                @for (i, c) in crumbs.iter().enumerate() {
+                    li class="breadcrumb__item" {
+                        @if current && i + 1 == crumbs.len() {
+                            span aria-current="page" { (c.label) }
+                        } @else {
+                            a href=(c.href) { (c.label) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// File-type icon (filled in from the icon sprite once the design is integrated).
+pub fn file_icon(ftype: &str) -> Markup {
+    html! { span class="ficon" data-type=(ftype) aria-hidden="true" {} }
+}
+
 pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
     layout(
         ctx,
@@ -302,19 +336,7 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             @if let Some(h) = &v.share {
                 (share_head(ctx, h))
             }
-            nav class="breadcrumb" aria-label=(ctx.t("browser.location")) {
-                ol class="breadcrumb__list" {
-                    @for (i, c) in v.crumbs.iter().enumerate() {
-                        li class="breadcrumb__item" {
-                            @if i + 1 == v.crumbs.len() {
-                                span aria-current="page" { (c.label) }
-                            } @else {
-                                a href=(c.href) { (c.label) }
-                            }
-                        }
-                    }
-                }
-            }
+            (breadcrumb(ctx, &v.crumbs, true))
             @if let Some(note) = &v.note {
                 p class="banner" data-state="note" { (note) }
             }
@@ -338,6 +360,15 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                     }
                 }
                 span class="browser__count" { (ctx.tn("browser.items", v.total as u64)) }
+                nav class="seg browser__layout" aria-label=(ctx.t("browser.layout")) {
+                    @for (i, (name, key)) in [("list", "browser.layout_list"), ("grid", "browser.layout_grid")].iter().enumerate() {
+                        @if *name == v.layout {
+                            span class="seg__item" aria-current="true" { (ctx.t(key)) }
+                        } @else {
+                            a class="seg__item" href=(v.layout_hrefs[i]) { (ctx.t(key)) }
+                        }
+                    }
+                }
                 a class="browser__zip" href=(v.zip_href) download { (ctx.t("browser.download_folder")) }
                 @if let Some((label, href)) = &v.hidden_toggle {
                     a class="browser__hidden-toggle" href=(href) { (label) }
@@ -358,7 +389,7 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             @if v.rows.is_empty() {
                 p class="browser__empty" { (ctx.t("browser.empty")) }
             } @else {
-                form class="browser" method="post" action=(v.post_href) {
+                form class="browser" method="post" action=(v.post_href) data-view=(v.layout) {
                     @if let Some(csrf) = &v.form_csrf {
                         input type="hidden" name="csrf" value=(csrf);
                     }
@@ -371,6 +402,9 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                                 th scope="col" class="browser__select" {
                                     span class="visually-hidden" { (ctx.t("browser.col_select")) }
                                 }
+                                th scope="col" class="browser__icon" {
+                                    span class="visually-hidden" { (ctx.t("browser.col_type")) }
+                                }
                                 th scope="col" { a href=(v.sort_hrefs[0]) { (ctx.t("browser.col_name")) } }
                                 th scope="col" { a href=(v.sort_hrefs[1]) { (ctx.t("browser.col_size")) } }
                                 th scope="col" { a href=(v.sort_hrefs[2]) { (ctx.t("browser.col_modified")) } }
@@ -378,10 +412,17 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                         }
                         tbody {
                             @for r in &v.rows {
-                                tr class="browser__row" data-kind=(if r.is_dir { "dir" } else { "file" }) {
+                                tr class="browser__row" data-kind=(if r.is_dir { "dir" } else { "file" }) data-type=(r.ftype) {
                                     td class="browser__select" {
                                         input type="checkbox" name="n" value=(r.name)
                                             aria-label=(ctx.tf("browser.select_item", &[("name", &r.name)]));
+                                    }
+                                    td class="browser__icon" {
+                                        @if let Some(src) = &r.thumb {
+                                            img class="thumb" src=(src) alt="" loading="lazy" decoding="async";
+                                        } @else {
+                                            (file_icon(r.ftype))
+                                        }
                                     }
                                     th scope="row" class="browser__name" {
                                         a href=(r.href) { (r.name) }
@@ -391,8 +432,15 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                                     }
                                     td class="browser__size" { (r.size) }
                                     td class="browser__modified" { (r.modified) }
-                                    @if let Some(href) = &r.share_href {
-                                        td class="browser__row-actions" {
+                                    td class="browser__row-actions" {
+                                        @if let Some(href) = &r.download_href {
+                                            a class="browser__download" href=(href) download
+                                                aria-label=(ctx.tf("browser.download_item", &[("name", &r.name)])) {
+                                                (ctx.t("browser.download"))
+                                            }
+                                        }
+                                        @if let Some(href) = &r.share_href {
+                                            " "
                                             a href=(href) aria-label=(ctx.tf("browser.share_item", &[("name", &r.name)])) {
                                                 (ctx.t("browser.share"))
                                             }
@@ -652,6 +700,177 @@ pub fn password(ctx: &Ctx, v: &PasswordView) -> Markup {
                         minlength=(min) required;
                 }
                 button class="password__submit" type="submit" { (ctx.t("password.submit")) }
+            }
+        },
+    )
+}
+
+/// What the viewer's stage shows.
+pub enum ViewerBody {
+    /// A picture: the large thumbnail, linking to the original.
+    Image {
+        src: String,
+        full: String,
+    },
+    /// The large thumbnail of a 3D model, G-code or SVG.
+    Rendered {
+        src: String,
+    },
+    Video {
+        src: String,
+        poster: String,
+    },
+    Audio {
+        src: String,
+    },
+    Pdf {
+        src: String,
+    },
+    Text {
+        text: String,
+        truncated: bool,
+    },
+    /// Already sanitized HTML.
+    Markdown {
+        html: String,
+        truncated: bool,
+    },
+    None,
+}
+
+impl ViewerBody {
+    pub fn state(&self) -> &'static str {
+        match self {
+            ViewerBody::Image { .. } => "image",
+            ViewerBody::Rendered { .. } => "rendered",
+            ViewerBody::Video { .. } => "video",
+            ViewerBody::Audio { .. } => "audio",
+            ViewerBody::Pdf { .. } => "pdf",
+            ViewerBody::Text { .. } => "text",
+            ViewerBody::Markdown { .. } => "markdown",
+            ViewerBody::None => "none",
+        }
+    }
+}
+
+pub struct ViewerView {
+    pub name: String,
+    pub ftype: &'static str,
+    pub type_label: String,
+    pub size: String,
+    pub modified: String,
+    /// "Volume / folder / folder".
+    pub location: String,
+    pub crumbs: Vec<Crumb>,
+    pub body: ViewerBody,
+    pub download_href: String,
+    pub close_href: String,
+    pub prev_href: Option<String>,
+    pub next_href: Option<String>,
+    /// (folder URL, CSRF token): the visitor may move the file to the trash.
+    pub delete: Option<(String, String)>,
+    pub share_href: Option<String>,
+    pub share: Option<ShareHead>,
+}
+
+/// The picture, player or text of a file (viewer and single-file share).
+pub fn viewer_stage(
+    ctx: &Ctx,
+    name: &str,
+    ftype: &str,
+    body: &ViewerBody,
+    download: &str,
+) -> Markup {
+    html! {
+        div class="viewer__stage" data-state=(body.state()) {
+            @match body {
+                ViewerBody::Image { src, full } => {
+                    a class="viewer__picture" href=(full) {
+                        img class="viewer__image" src=(src) alt=(name);
+                    }
+                    a class="viewer__full-size" href=(full) { (ctx.t("viewer.full_size")) }
+                }
+                ViewerBody::Rendered { src } => {
+                    img class="viewer__image" src=(src) alt=(name);
+                }
+                ViewerBody::Video { src, poster } => {
+                    video class="viewer__video" src=(src) poster=(poster) controls preload="metadata" {}
+                    p class="viewer__hint" { (ctx.t("viewer.no_playback")) }
+                }
+                ViewerBody::Audio { src } => {
+                    audio class="viewer__audio" src=(src) controls preload="metadata" {}
+                    p class="viewer__hint" { (ctx.t("viewer.no_playback")) }
+                }
+                ViewerBody::Pdf { src } => {
+                    iframe class="viewer__pdf" src=(src) title=(name) {}
+                }
+                ViewerBody::Text { text, truncated } => {
+                    pre class="viewer__text" { (text) }
+                    @if *truncated {
+                        p class="viewer__hint" { (ctx.t("viewer.truncated")) }
+                    }
+                }
+                ViewerBody::Markdown { html, truncated } => {
+                    div class="viewer__markdown" { (maud::PreEscaped(html)) }
+                    @if *truncated {
+                        p class="viewer__hint" { (ctx.t("viewer.truncated")) }
+                    }
+                }
+                ViewerBody::None => {
+                    (file_icon(ftype))
+                    p class="viewer__none" { (ctx.t("viewer.no_preview")) }
+                    a class="viewer__download-big" href=(download) download { (ctx.t("viewer.download")) }
+                }
+            }
+        }
+    }
+}
+
+pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
+    layout(
+        ctx,
+        &v.name,
+        html! {
+            @if let Some(h) = &v.share {
+                (share_head(ctx, h))
+            }
+            article class="viewer" data-type=(v.ftype) aria-labelledby="viewer-name" {
+                header class="viewer__bar" {
+                    (breadcrumb(ctx, &v.crumbs, false))
+                    h1 class="viewer__name" id="viewer-name" { (v.name) }
+                    nav class="viewer__nav" aria-label=(ctx.t("viewer.nav")) {
+                        @if let Some(h) = &v.prev_href {
+                            a class="viewer__prev" rel="prev" href=(h) { (ctx.t("viewer.prev")) }
+                        }
+                        @if let Some(h) = &v.next_href {
+                            a class="viewer__next" rel="next" href=(h) { (ctx.t("viewer.next")) }
+                        }
+                    }
+                    a class="viewer__close" href=(v.close_href) { (ctx.t("viewer.close")) }
+                }
+                (viewer_stage(ctx, &v.name, v.ftype, &v.body, &v.download_href))
+                aside class="viewer__info" aria-label=(ctx.t("viewer.info")) {
+                    dl {
+                        dt { (ctx.t("viewer.size")) } dd { (v.size) }
+                        dt { (ctx.t("viewer.modified")) } dd { (v.modified) }
+                        dt { (ctx.t("viewer.location")) } dd { (v.location) }
+                        dt { (ctx.t("viewer.type")) } dd { (v.type_label) }
+                    }
+                }
+                div class="viewer__actions" {
+                    a class="viewer__download" href=(v.download_href) download { (ctx.t("viewer.download")) }
+                    @if let Some(href) = &v.share_href {
+                        a class="viewer__share" href=(href) { (ctx.t("viewer.share")) }
+                    }
+                    @if let Some((folder, csrf)) = &v.delete {
+                        form class="viewer__delete" method="post" action=(folder) {
+                            input type="hidden" name="csrf" value=(csrf);
+                            input type="hidden" name="op" value="delete";
+                            input type="hidden" name="n" value=(v.name);
+                            button type="submit" { (ctx.t("viewer.delete")) }
+                        }
+                    }
+                }
             }
         },
     )

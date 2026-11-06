@@ -9,6 +9,7 @@ mod guest;
 mod headers;
 pub mod jobs;
 mod limits;
+mod preview;
 mod public;
 mod query;
 mod share;
@@ -51,6 +52,9 @@ pub struct AppState {
     pub uploads: Uploads,
     /// Passphrase word lists for share and public upload passwords.
     pub words: crate::shares::words::WordLists,
+    pub thumbs: crate::fs::thumbs::Thumbs,
+    /// New thumbnails per IP for anonymous visitors.
+    pub thumb_limiter: governor::DefaultKeyedRateLimiter<std::net::IpAddr>,
     /// Lets tests act as a principal without signing in.
     #[cfg(test)]
     pub test_principal: std::sync::Mutex<Option<Principal>>,
@@ -67,6 +71,8 @@ impl AppState {
             tracing::warn!("{w}");
         }
         AppState {
+            thumbs: crate::fs::thumbs::Thumbs::new(&cfg),
+            thumb_limiter: preview::anon_limiter(),
             cfg: Arc::new(cfg),
             volumes,
             i18n,
@@ -284,6 +290,7 @@ pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()>
     let state = Arc::new(AppState::new(cfg, i18n, db));
     jobs::sweep_leftovers(state.clone()).await;
     jobs::spawn(state.clone());
+    state.thumbs.start();
     let addr = state.cfg.server.listen;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, volumes = state.volumes.iter().count(), "chestcraft listening");

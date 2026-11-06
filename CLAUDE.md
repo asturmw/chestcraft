@@ -49,9 +49,24 @@ Plan steps 1–2 done. Step 3 (backend slices):
   upload + new folder, never overwrite. Same backoff as sign-in for both passwords.
   Language switch `/.cc/lang` on pages without an account. Delivery of the public-upload
   notify flag, "share locked" and "target missing" notifications wait for the alerts slice.
-- Next: slice 7, thumbnails/previews (incl. STL/3MF/G-code/SVG). The account page (app
-  passwords in the UI) and rename/move/copy in the UI come with the UI integration; the
-  primitives exist.
+- Slice 7 done: thumbnails (`src/fs/thumbs/`, `src/fs/filetype.rs`): `?thumb` (480 px) and
+  `?thumb=view` (2048 px), never enlarged; JPEG, PNG when transparent. Sources: images
+  (image crate, EXIF orientation), HEIC/AVIF/video frames (ffmpeg on the open fd as
+  `/proc/self/fd/0`, demuxer + protocol whitelist, empty env, timeout), STL + 3MF (embedded
+  slicer picture first, else own rasterizer: components, `p:path`, transforms), G-code/
+  bgcode (embedded picture), SVG (resvg, `<image>` loads only `data:`). Disk cache
+  `<cache_dir>/thumbs` keyed by dev/ino/size/mtime, failures cached empty, LRU trim at
+  `cache_gib`; one render per key at a time, CPU and ffmpeg semaphores; anonymous visitors
+  (public volumes, shares) limited per IP for new renders (governor). URLs carry `v=` →
+  immutable caching. Viewer `?view` (`web/preview.rs`): image/rendered thumbnail, video/
+  audio players, PDF iframe, text, Markdown (raw HTML shown as code, unsafe link schemes
+  dropped), prev/next by name, info, download/share/delete. Listings: icon type
+  (`data-type`), thumbnail `<img>`, name → viewer, download link, `?layout=grid`. Share
+  folders get the same; the single-file share card shows the preview.
+- Next: slice 8, collector + dashboard (auto-detected hardware) + alerts + Telegram/ntfy.
+  The account page (app passwords in the UI) and rename/move/copy in the UI come with the
+  UI integration; the primitives exist. A thumbnail that fails to load needs a JS fallback
+  to the type icon (UI integration).
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in
