@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod apitoken;
 pub mod apppass;
 pub mod backoff;

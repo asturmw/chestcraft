@@ -15,6 +15,7 @@ pub mod fs;
 pub mod health;
 pub mod i18n;
 pub mod import;
+pub mod mcp;
 pub mod notify;
 pub mod shares;
 pub mod tools;

@@ -531,6 +531,7 @@ impl Env {
                 last_login: None,
                 settings: Default::default(),
                 known_remote_ips: vec![],
+                kind: Default::default(),
             })
             .unwrap();
     }

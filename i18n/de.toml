@@ -534,6 +534,9 @@ sessions = "Angemeldete Sitzungen"
 transfers = "Laufende Uploads"
 shares = "Aktive Freigabelinks"
 failed_logins = "Fehlgeschlagene Anmeldungen (24 h)"
+agent_calls = "Agent-Aufrufe (24 h)"
+agent_last = "Agent {agent} ({role}): letzter Aufruf {time}"
+agent_never = "Agent {agent} ({role}): noch kein Aufruf"
 role_missing = "{user} hat die Rolle {role}, die in der Konfiguration fehlt, und kann deshalb nichts öffnen."
 
 [alerts]
@@ -610,6 +613,8 @@ stuffing = "Viele falsche Passwörter für {account} von vielen Adressen"
 share_locked = "Falsche Passwörter für die Freigabe {target} von {ip}: für {minutes} min gebremst"
 public_locked = "Falsche Passwörter für öffentliche Uploads in {target} von {ip}: für {minutes} min gebremst"
 public_upload = "Öffentlicher Upload in {volume}: {path} von {ip} (weitere in den nächsten 10 Minuten stehen nur im Protokoll)"
+agent_share = "Agent {agent} hat {path} im Internet geteilt ({mode}, bis {until}): {link}"
+agent_share_forever = "Agent {agent} hat {path} ohne Ablaufdatum im Internet geteilt ({mode}): {link}"
 
 [digest]
 title = "chestcraft-Wochenbericht"

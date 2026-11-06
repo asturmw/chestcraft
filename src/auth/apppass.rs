@@ -50,6 +50,8 @@ pub enum CreateError {
     TooMany,
     #[error("no such account")]
     NoUser,
+    #[error("agents use MCP tokens, not app passwords")]
+    Agent,
     #[error("{0}")]
     Db(#[from] DbError),
 }
@@ -72,6 +74,9 @@ pub fn create(
 ) -> Result<(String, AppPassword), CreateError> {
     let label = clean_label(label)?;
     let user = db.user(user_name)?.ok_or(CreateError::NoUser)?;
+    if user.is_agent() {
+        return Err(CreateError::Agent);
+    }
     let key = User::key(&user.name);
     let existing = db.app_passwords_of(&key)?;
     if existing
@@ -135,7 +140,7 @@ pub fn verify(db: &Db, user_name: &str, secret: &str) -> Result<Option<Verified>
         return Ok(None);
     };
     // A reset password (must change) also stops WebDAV until the owner signs in again.
-    if user.disabled || user.must_change_password {
+    if user.disabled || user.must_change_password || user.is_agent() {
         return Ok(None);
     }
     Ok(Some(Verified { user, pass, hash }))
@@ -175,6 +180,7 @@ mod tests {
                 last_login: None,
                 settings: UserSettings::default(),
                 known_remote_ips: vec![],
+                kind: Default::default(),
             })
             .unwrap();
         }

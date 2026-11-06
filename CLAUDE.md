@@ -7,7 +7,8 @@ dashboard with ZFS/SMART health and Telegram alerts. Replaces copyparty.
 
 ## Status
 
-Plan steps 1–2 done. Step 3 (backend slices):
+Plan steps 1–3 done (step 3 = the backend slices below; `deploy/release.sh` and
+`install.sh` don't exist yet). Next: NAS setup (step 4), UI integration (7), staging (8).
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -128,12 +129,31 @@ Plan steps 1–2 done. Step 3 (backend slices):
   `/.cc/admin/api-tokens` (add → shown once / revoke), audited; `chestcraft api-token
   add|list|revoke` (service stopped). The future `install.sh` must treat `collector` as
   "not the binary's fault" (a fresh install says it until `collect` has run).
-- Next: slice 12, MCP server for agents (Addendum 2). The account page still lacks app
-  passwords and "sign out everywhere", and rename/move/copy in the UI come with the UI
-  integration; the primitives exist. A thumbnail that fails to load needs a JS fallback to
-  the type icon (UI integration). The dashboard/alerts and volumes/API-token markup is
-  provisional until the design session delivers those screens. The nightly state backup (not built yet) must include
-  `<state_dir>/backgrounds`.
+- Slice 12 done: MCP server for agents (`src/mcp/`, `docs/mcp.md`): rmcp 3.9 (C-free) on its
+  own listener `[mcp] listen` at `/mcp`, stateless JSON, 2026-07-28 (`server/discover`) and
+  legacy `initialize`. Gate before rmcp: LAN/Tailscale only (CF headers → 403), `Host` in
+  `[mcp] hosts`, no foreign `Origin`, `Bearer cca_…` (`auth/agent.rs`: 257-bit base58,
+  SHA-256 stored, label, expiry, last used, ≤ 20 per agent), wrong tokens → backoff scope
+  `mcp:token` + audit, per-agent `calls_per_minute` (governor) and `max_concurrent`. Agents
+  are `User.kind = agent` (no password, never admin, no web/WebDAV/app passwords; disabled →
+  tokens dead, shares paused). Tools (`mcp/tools.rs`, groups shown only when the role can
+  use them): volumes/list/stat/find/read_file (text, image, base64, pieces, `preview` via
+  thumbs), mkdir/write_file (NewFile)/rename/move/copy (transfer primitives)/delete
+  (trash)/trash_list/trash_restore, share_create (alert `agent_share` when
+  `notify_shares`)/share_list/share_revoke, health_summary/alerts/pool/disk/datasets
+  (`health_roles`, built on `status::build`). `on_clash` keep_both|skip only. Actor
+  `agent:<key>` in audit (`mcp_<tool>`, every call), trash and temps. CLI `chestcraft agent
+  add|list|role|disable|enable|token|revoke` (service stopped). Dashboard app section +
+  status API: `agent_calls_24h`, last call per agent. Verified with the Python MCP SDK 2.3
+  against a local `serve`; Claude Code + Hermes against staging :3926 still to do.
+- Open: `admin.sock` (plan: CLI state commands through it while the server runs) is not
+  built for any command; all CLI state commands need the service stopped. The account page
+  still lacks app passwords and "sign out everywhere", and rename/move/copy in the UI come
+  with the UI integration; the primitives exist. A thumbnail that fails to load needs a JS
+  fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token and
+  agent-activity markup is provisional until the design session delivers those screens;
+  the agents screen (Addendum 2 "UI") needs a note in its handoff. The nightly state backup
+  (not built yet) must include `<state_dir>/backgrounds`.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in

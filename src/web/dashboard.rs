@@ -645,6 +645,21 @@ fn app_section(ctx: &Ctx, s: &Snapshot) -> Markup {
             dt { (ctx.t("dashboard.transfers")) } dd { (a.transfers) }
             dt { (ctx.t("dashboard.shares")) } dd { a href="/.cc/shares?all=1" { (a.shares_active) } }
             dt { (ctx.t("dashboard.failed_logins")) } dd { (a.failed_logins_24h) }
+            @if !a.agents.is_empty() {
+                dt { (ctx.t("dashboard.agent_calls")) } dd { (a.agent_calls_24h) }
+            }
+        }
+        @if !a.agents.is_empty() {
+            ul class="dash-agents" {
+                @for ag in &a.agents {
+                    li data-state=(if ag.disabled { "off" } else { "ok" }) {
+                        @match ag.last_call {
+                            Some(t) => (ctx.tf("dashboard.agent_last", &[("agent", &ag.name), ("role", &ag.role), ("time", &ctx.datetime(t))])),
+                            None => (ctx.tf("dashboard.agent_never", &[("agent", &ag.name), ("role", &ag.role)])),
+                        }
+                    }
+                }
+            }
         }
         @if !a.missing_roles.is_empty() {
             ul class="dash-warnings" {

@@ -1,6 +1,7 @@
 # Health check and status API
 
-Two endpoints for watchdogs and monitoring tools. Neither one changes anything.
+Two endpoints for watchdogs and monitoring tools. Neither one changes anything. (Agents use
+the MCP server instead: `docs/mcp.md`.)
 
 ## `GET /healthz`
 
@@ -113,7 +114,8 @@ or removed; anything else gets a new version and URL.
     "mem_total": 0, "mem_available": 0, "cpu_temp": 45.0,
     "arc_size": 0, "arc_hit_rate": 98.5,
     "root_fs": { "total": 0, "used": 0, "avail": 0, "percent": 12 } },
-  "app": { "sessions": 3, "transfers": 0, "shares_active": 5, "failed_logins_24h": 0 },
+  "app": { "sessions": 3, "transfers": 0, "shares_active": 5, "failed_logins_24h": 0,
+           "agent_calls_24h": 12 },  // MCP tool calls by agents
   "channels": [                // configured alert channels
     { "kind": "telegram", "on": true, "problem": null,
       "last_ok": 1762400000, "last_error": null, "last_error_at": null } ]

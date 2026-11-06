@@ -281,6 +281,7 @@ pub fn apply(plan: &Plan, db: &Db, now: i64) -> Result<Vec<Imported>, DbError> {
             last_login: None,
             settings: Default::default(),
             known_remote_ips: vec![],
+            kind: Default::default(),
         };
         if !db.insert_user(&user)? {
             continue;
@@ -677,6 +678,7 @@ mod tests {
             last_login: None,
             settings: Default::default(),
             known_remote_ips: vec![],
+            kind: Default::default(),
         };
         assert!(db.insert_user(&u).unwrap());
         u.name = "kim".into();

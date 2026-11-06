@@ -60,6 +60,48 @@ pub struct Config {
     pub alerts: AlertsConfig,
     pub shares: SharesConfig,
     pub appearance: AppearanceConfig,
+    pub mcp: McpConfig,
+}
+
+/// The MCP server for agents: its own listener, LAN/Tailscale only.
+#[derive(Debug, Clone)]
+pub struct McpConfig {
+    /// None: no MCP server.
+    pub listen: Option<SocketAddr>,
+    /// `Host` header values clients may use (`name` or `name:port`; without a port any
+    /// port matches). Anything else gets 403 (DNS rebinding).
+    pub hosts: Vec<String>,
+    /// Browser origins allowed to call (`scheme://host:port`); requests carrying any other
+    /// `Origin` header get 403. Empty: every request with an `Origin` header is refused.
+    pub origins: Vec<String>,
+    /// Agent roles that may use the health tools.
+    pub health_roles: BTreeSet<String>,
+    /// Largest piece of a file one `read_file` call returns.
+    pub max_read_bytes: u64,
+    /// Largest file one `write_file` call writes.
+    pub max_write_bytes: u64,
+    /// Send an alert through the configured channels for every share an agent creates.
+    pub notify_shares: bool,
+    /// Calls one agent may have running at the same time.
+    pub max_concurrent: u32,
+    /// Calls one agent may make per minute.
+    pub calls_per_minute: u32,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        McpConfig {
+            listen: None,
+            hosts: Vec::new(),
+            origins: Vec::new(),
+            health_roles: BTreeSet::new(),
+            max_read_bytes: 4 << 20,
+            max_write_bytes: 16 << 20,
+            notify_shares: true,
+            max_concurrent: 4,
+            calls_per_minute: 120,
+        }
+    }
 }
 
 /// Limits for background images (the rest of the appearance is set in the admin UI).
@@ -278,6 +320,39 @@ struct RawConfig {
     shares: RawShares,
     #[serde(default)]
     appearance: RawAppearance,
+    #[serde(default)]
+    mcp: RawMcp,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct RawMcp {
+    listen: String,
+    hosts: Vec<String>,
+    origins: Vec<String>,
+    health_roles: Vec<String>,
+    max_read_mib: u32,
+    max_write_mib: u32,
+    notify_shares: bool,
+    max_concurrent: u32,
+    calls_per_minute: u32,
+}
+
+impl Default for RawMcp {
+    fn default() -> Self {
+        let d = McpConfig::default();
+        RawMcp {
+            listen: String::new(),
+            hosts: Vec::new(),
+            origins: Vec::new(),
+            health_roles: Vec::new(),
+            max_read_mib: (d.max_read_bytes >> 20) as u32,
+            max_write_mib: (d.max_write_bytes >> 20) as u32,
+            notify_shares: d.notify_shares,
+            max_concurrent: d.max_concurrent,
+            calls_per_minute: d.calls_per_minute,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -773,6 +848,8 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         deny_upload_roles,
     };
 
+    let mcp = validate_mcp(raw.mcp, server.as_ref(), &roles, errs);
+
     Some(Config {
         server: server?,
         paths: paths?,
@@ -787,7 +864,132 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         alerts,
         shares: SharesConfig { wordlists },
         appearance,
+        mcp,
     })
+}
+
+fn validate_mcp(
+    raw: RawMcp,
+    server: Option<&ServerConfig>,
+    roles: &BTreeMap<String, RoleConfig>,
+    errs: &mut Vec<String>,
+) -> McpConfig {
+    let listen = match raw.listen.trim() {
+        "" => None,
+        s => match s.parse::<SocketAddr>() {
+            Ok(a) => Some(a),
+            Err(_) => {
+                errs.push(format!("mcp.listen: \"{s}\" is not an address:port"));
+                None
+            }
+        },
+    };
+    if let (Some(a), Some(srv)) = (listen, server)
+        && a.port() == srv.listen.port()
+    {
+        errs.push(format!(
+            "mcp.listen: port {} is the web server's; the MCP server needs its own",
+            a.port()
+        ));
+    }
+    let mut hosts = Vec::new();
+    for h in raw.hosts {
+        let h = h.trim().to_ascii_lowercase();
+        if valid_authority(&h) {
+            hosts.push(h);
+        } else {
+            errs.push(format!(
+                "mcp.hosts: \"{h}\" is not a host name or address (optionally with :port)"
+            ));
+        }
+    }
+    if listen.is_some() && hosts.is_empty() {
+        errs.push(
+            "mcp.hosts: list the host names clients use for the MCP server, e.g. \
+             [\"nas.lan:3925\", \"100.64.0.5:3925\"] (requests for other hosts get 403)"
+                .into(),
+        );
+    }
+    let mut origins = Vec::new();
+    for o in raw.origins {
+        let o = o.trim().trim_end_matches('/').to_ascii_lowercase();
+        match o.parse::<http::Uri>() {
+            Ok(u)
+                if matches!(u.scheme_str(), Some("http" | "https"))
+                    && u.authority().is_some()
+                    && matches!(u.path(), "" | "/") =>
+            {
+                origins.push(o)
+            }
+            _ => errs.push(format!(
+                "mcp.origins: \"{o}\" is not an origin like \"https://app.example.org:443\""
+            )),
+        }
+    }
+    let mut health_roles = BTreeSet::new();
+    for role in raw.health_roles {
+        if role == crate::auth::perm::ADMIN_ROLE {
+            errs.push("mcp.health_roles: agents never have the admin role".into());
+        } else if !roles.contains_key(&role) {
+            errs.push(format!("mcp.health_roles: unknown role \"{role}\""));
+        } else {
+            health_roles.insert(role);
+        }
+    }
+    McpConfig {
+        listen,
+        hosts,
+        origins,
+        health_roles,
+        max_read_bytes: u64::from(in_range(raw.max_read_mib, 1, 64, "mcp.max_read_mib", errs))
+            << 20,
+        max_write_bytes: u64::from(in_range(
+            raw.max_write_mib,
+            1,
+            64,
+            "mcp.max_write_mib",
+            errs,
+        )) << 20,
+        notify_shares: raw.notify_shares,
+        max_concurrent: in_range(raw.max_concurrent, 1, 64, "mcp.max_concurrent", errs),
+        calls_per_minute: in_range(
+            raw.calls_per_minute,
+            1,
+            10_000,
+            "mcp.calls_per_minute",
+            errs,
+        ),
+    }
+}
+
+/// `name`, `name:port`, `1.2.3.4:port` or `[::1]:port`.
+fn valid_authority(s: &str) -> bool {
+    if s.is_empty() || s.contains(['/', '@', ' ']) {
+        return false;
+    }
+    let (host, port) = if let Some(rest) = s.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((h, "")) => (h, None),
+            Some((h, p)) => match p.strip_prefix(':') {
+                Some(p) => (h, Some(p)),
+                None => return false,
+            },
+            None => return false,
+        }
+    } else {
+        match s.rsplit_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (s, None),
+        }
+    };
+    let port_ok = port.is_none_or(|p| p.parse::<u16>().is_ok_and(|n| n > 0));
+    let host_ok = host.parse::<IpAddr>().is_ok()
+        || (!host.is_empty()
+            && host.len() <= 253
+            && host.split('.').all(|l| {
+                !l.is_empty() && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            }));
+    port_ok && host_ok
 }
 
 fn validate_thresholds(raw: &RawThresholds, errs: &mut Vec<String>) -> Thresholds {
@@ -1473,6 +1675,51 @@ mod tests {
         assert_eq!(cfg.alerts.ntfy.as_ref().unwrap().server, "https://ntfy.sh");
         assert_eq!(cfg.alerts.telegram.as_ref().unwrap().chat_id, -100123);
         assert!(is_language_code("de") && !is_language_code("DE") && !is_language_code("pt-br"));
+    }
+
+    #[test]
+    fn mcp_section() {
+        let cfg = Config::from_toml_str(MINIMAL).unwrap();
+        assert!(cfg.mcp.listen.is_none() && cfg.mcp.notify_shares);
+        assert_eq!(
+            (
+                cfg.mcp.max_read_bytes,
+                cfg.mcp.max_write_bytes,
+                cfg.mcp.max_concurrent
+            ),
+            (4 << 20, 16 << 20, 4)
+        );
+        let cfg = Config::from_toml_str(&with_volumes(
+            "[volumes.V]\npath = \"/srv/v\"\n[roles.bots]\nV = \"r\"\n\
+             [mcp]\nlisten = \"0.0.0.0:3925\"\nhosts = [\"NAS.lan:3925\", \"[::1]:3925\", \"10.0.0.2\"]\n\
+             origins = [\"https://App.example.org:8443/\"]\nhealth_roles = [\"bots\"]\nmax_read_mib = 1\n",
+        ))
+        .unwrap();
+        assert_eq!(cfg.mcp.listen.unwrap().port(), 3925);
+        assert_eq!(cfg.mcp.hosts, ["nas.lan:3925", "[::1]:3925", "10.0.0.2"]);
+        assert_eq!(cfg.mcp.origins, ["https://app.example.org:8443"]);
+        assert!(cfg.mcp.health_roles.contains("bots"));
+        assert_eq!(cfg.mcp.max_read_bytes, 1 << 20);
+
+        let e = errors_of(&with_volumes(
+            "[mcp]\nlisten = \"0.0.0.0:3923\"\nhosts = [\"a b\", \"http://x\"]\n\
+             origins = [\"x.org\"]\nhealth_roles = [\"admin\", \"ghost\"]\nmax_write_mib = 0\n",
+        ));
+        for want in [
+            "web server's",
+            "\"a b\"",
+            "\"http://x\"",
+            "mcp.origins",
+            "never have the admin role",
+            "unknown role \"ghost\"",
+            "max_write_mib",
+        ] {
+            assert!(e.iter().any(|m| m.contains(want)), "{want}: {e:?}");
+        }
+        let e = errors_of(&with_volumes("[mcp]\nlisten = \"0.0.0.0:3925\"\n"));
+        assert!(e.iter().any(|m| m.contains("mcp.hosts")), "{e:?}");
+        assert!(valid_authority("nas") && valid_authority("192.0.2.1:80"));
+        assert!(!valid_authority("nas:0") && !valid_authority("[::1") && !valid_authority(""));
     }
 
     #[test]
