@@ -7,6 +7,7 @@ A self-hosted file manager and sharing app for a home NAS, written in Rust.
 - Optional public volumes, with password-protected public uploads
 - WebDAV for desktop mounts
 - Admin dashboard: ZFS pool, datasets, disks (SMART), boot mirror, host; alerts via Telegram
+- `/healthz` and a read-only JSON status API for watchdogs ([docs/api.md](docs/api.md))
 - One static binary with pure-Rust dependencies and no JavaScript build step
 
 Status: early development, not usable yet.

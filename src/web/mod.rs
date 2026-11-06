@@ -20,6 +20,7 @@ mod query;
 mod share;
 mod share_views;
 mod shares;
+pub mod status;
 mod stream;
 #[cfg(test)]
 mod tests;
@@ -204,7 +205,6 @@ async fn dav_or_405(State(st): State<Shared>, req: Request) -> Response {
 pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/", get(files::landing).fallback(dav_or_405))
-        .route("/healthz", get(healthz))
         .route("/robots.txt", get(robots))
         .route("/favicon.ico", get(favicon))
         .route("/.cc/assets/{*path}", get(assets::serve))
@@ -266,11 +266,16 @@ pub fn router(state: Shared) -> Router {
         .route("/s/{id}", any(share::handle))
         .route("/s/{id}/", any(share::handle))
         .route("/s/{id}/{*rest}", any(share::handle))
+        .route("/.cc/admin/api-tokens", post(public::tokens_submit))
         .fallback(dav_or_files)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::principal_layer,
         ))
+        // No sessions or Basic auth here: these answer even when the database hangs, and
+        // the API takes only its own tokens.
+        .route("/healthz", get(status::healthz))
+        .route("/api/v1/status", get(status::status))
         .layer(middleware::from_fn_with_state(state.clone(), client::layer))
         .layer(middleware::from_fn(headers::security))
         .with_state(state)
@@ -301,10 +306,6 @@ async fn lang(
         }
     }
     res
-}
-
-async fn healthz() -> &'static str {
-    "ok\n"
 }
 
 async fn robots() -> Response {

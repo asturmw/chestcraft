@@ -1,7 +1,8 @@
 //! The health monitor: a snapshot of the machine every minute, alert rules over it, and
 //! messages to the alert channels; one reading per hour for the charts; the weekly digest.
 //! Events from requests (an admin signing in from a new address, a share slowed down by
-//! wrong passwords, public uploads) go out through [`raise`].
+//! wrong passwords, public uploads) go out through [`raise`]. A database heartbeat every
+//! minute and the age of the newest snapshot feed `/healthz` ([`Monitor::problems`]).
 
 use super::Shared;
 use crate::config::WeeklyTime;
@@ -15,11 +16,46 @@ use crate::notify::{Level, Message};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 const INTERVAL: Duration = Duration::from_secs(60);
 const LOG_KEEP_SECS: i64 = 365 * 86_400;
+/// After a start, `/healthz` says "starting" (not "db"/"monitor") this long while the first
+/// heartbeat and snapshot are still missing.
+pub const START_GRACE_SECS: i64 = 120;
+/// The newest snapshot may be this old before `/healthz` reports the monitor as stuck
+/// (the same limit as the dashboard's "stale" verdict).
+pub const SNAPSHOT_MAX_AGE: i64 = 5 * 60;
+/// The last good database heartbeat may be this old.
+pub const HEARTBEAT_MAX_AGE: i64 = 3 * 60;
+
+/// Why `/healthz` answers 503, in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Problem {
+    /// Just started; no heartbeat or snapshot yet.
+    Starting,
+    /// The state database doesn't take writes.
+    Db,
+    /// No fresh snapshot: the monitor loop is stuck.
+    Monitor,
+    /// A health source fails: the SMART collector's file is missing, broken or stale, or
+    /// `zpool`/`zfs`/mdstat can't be read.
+    Collector,
+}
+
+impl Problem {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Problem::Starting => "starting",
+            Problem::Db => "db",
+            Problem::Monitor => "monitor",
+            Problem::Collector => "collector",
+        }
+    }
+}
 
 pub struct Monitor {
     latest: RwLock<Option<Arc<Snapshot>>>,
@@ -27,6 +63,10 @@ pub struct Monitor {
     history: RwLock<Arc<Vec<(i64, Sample)>>>,
     arc_prev: Mutex<Option<(u64, u64)>>,
     last_hour: Mutex<i64>,
+    /// When the server started.
+    started: AtomicI64,
+    /// Time of the last good database heartbeat; 0 = none yet.
+    db_ok: AtomicI64,
     pub cooldowns: Cooldowns,
     pub roots: Roots,
 }
@@ -39,6 +79,8 @@ impl Default for Monitor {
             history: RwLock::new(Arc::new(Vec::new())),
             arc_prev: Mutex::new(None),
             last_hour: Mutex::new(0),
+            started: AtomicI64::new(super::now()),
+            db_ok: AtomicI64::new(0),
             cooldowns: Cooldowns::default(),
             roots: Roots::default(),
         }
@@ -73,6 +115,59 @@ impl Monitor {
 
     pub fn set_history(&self, h: Vec<(i64, Sample)>) {
         *self.history.write().unwrap() = Arc::new(h);
+    }
+
+    pub fn started(&self) -> i64 {
+        self.started.load(Ordering::Relaxed)
+    }
+
+    /// Pretend the server started at `t` (tests).
+    pub fn set_started(&self, t: i64) {
+        self.started.store(t, Ordering::Relaxed);
+    }
+
+    /// Record a good database heartbeat at `t`.
+    pub fn db_ok(&self, t: i64) {
+        self.db_ok.store(t, Ordering::Relaxed);
+    }
+
+    /// What keeps chestcraft or its monitoring from working right now; empty = healthy.
+    /// Problems of the machine itself (a degraded pool, a hot disk) don't count: those are
+    /// alerts, and the status API reports them.
+    pub fn problems(&self, now: i64) -> Vec<Problem> {
+        // Nothing yet: fine for a moment after the start, then it's broken.
+        let missing = |p: Problem| {
+            if now - self.started() < START_GRACE_SECS {
+                Problem::Starting
+            } else {
+                p
+            }
+        };
+        let mut out = Vec::new();
+        match self.db_ok.load(Ordering::Relaxed) {
+            0 => out.push(missing(Problem::Db)),
+            t if now - t > HEARTBEAT_MAX_AGE => out.push(Problem::Db),
+            _ => {}
+        }
+        match self.latest() {
+            None => out.push(missing(Problem::Monitor)),
+            Some(s) if now - s.taken > SNAPSHOT_MAX_AGE => out.push(Problem::Monitor),
+            // Alerts belong to the snapshot they came from; only a fresh one counts.
+            Some(_) => {
+                let collector = self
+                    .active
+                    .read()
+                    .unwrap()
+                    .keys()
+                    .any(|k| k.starts_with("smart:") || k.starts_with("probe:"));
+                if collector {
+                    out.push(Problem::Collector);
+                }
+            }
+        }
+        out.sort_by_key(|p| *p as u8);
+        out.dedup();
+        out
     }
 }
 
@@ -213,6 +308,33 @@ pub async fn tick(st: &Shared) {
         Err(_) => tracing::error!("evaluating alerts crashed"),
     }
     *st.health.latest.write().unwrap() = Some(snap);
+}
+
+/// Write to the database once a minute; `/healthz` reports it when that stops working. A
+/// write that hangs simply never reports back, so the last good time ages.
+async fn heartbeat(st: Shared) {
+    let mut failing = false;
+    loop {
+        let db = st.db.clone();
+        let now = super::now();
+        match tokio::task::spawn_blocking(move || db.heartbeat(now)).await {
+            Ok(Ok(())) => {
+                st.health.db_ok(now);
+                if failing {
+                    tracing::info!("the database takes writes again");
+                    failing = false;
+                }
+            }
+            Ok(Err(e)) => {
+                if !failing {
+                    tracing::error!("database heartbeat failed: {e}");
+                    failing = true;
+                }
+            }
+            Err(_) => tracing::error!("database heartbeat crashed"),
+        }
+        tokio::time::sleep(INTERVAL).await;
+    }
 }
 
 /// Seconds from `now` until the next `at` (weekday + time) in `tz`.
@@ -356,6 +478,7 @@ pub fn spawn(st: Shared) {
             }
         });
     }
+    tokio::spawn(heartbeat(st.clone()));
     tokio::spawn(st.notifier.clone().run());
     tokio::spawn(async move {
         loop {

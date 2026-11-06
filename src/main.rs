@@ -3,11 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Set by deploy/release.sh from `git describe`; falls back to the crate version.
-const VERSION: &str = match option_env!("CHESTCRAFT_VERSION") {
-    Some(v) => v,
-    None => env!("CARGO_PKG_VERSION"),
-};
+use chestcraft::VERSION;
 
 #[derive(Parser)]
 #[command(name = "chestcraft", version = VERSION, about = "File sharing for a home NAS")]
@@ -41,6 +37,10 @@ enum Cmd {
     /// Manage accounts (run as the service user while the service is stopped)
     #[command(subcommand)]
     User(UserCmd),
+    /// Manage read-only tokens for the status API, /api/v1/status (run as the service user
+    /// while the service is stopped; the admin can also do this on the volumes page)
+    #[command(subcommand, name = "api-token")]
+    ApiToken(ApiTokenCmd),
     /// Create accounts from a copyparty config file; each keeps its copyparty password until
     /// it picks a new one at the first sign-in. Existing accounts are never changed. Run as
     /// the service user while the service is stopped; the file is only read.
@@ -106,12 +106,26 @@ enum AppPasswordCmd {
     Revoke { name: String, which: String },
 }
 
+#[derive(Subcommand)]
+enum ApiTokenCmd {
+    /// Create a token; prints it once
+    Add {
+        /// What it is for, e.g. "watchdog"
+        label: String,
+    },
+    /// List tokens
+    List,
+    /// Revoke a token by its id or label
+    Revoke { which: String },
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Cmd::Check { offline } => check(&cli.config, offline),
         Cmd::Serve => serve(&cli.config),
         Cmd::User(cmd) => user(&cli.config, cmd),
+        Cmd::ApiToken(cmd) => api_token(&cli.config, cmd),
         Cmd::Collect => collect(&cli.config),
         Cmd::TelegramSetup { secrets } => telegram_setup(&cli.config, secrets),
         Cmd::ImportCopyparty {
@@ -536,6 +550,101 @@ fn user(path: &Path, cmd: UserCmd) -> ExitCode {
                 ExitCode::SUCCESS
             }
             UserCmd::AppPassword(cmd) => app_password(&db, cmd, &cfg.server.timezone, now)?,
+        })
+    })();
+    result.unwrap_or_else(|e| fail(e.to_string()))
+}
+
+fn api_token(path: &Path, cmd: ApiTokenCmd) -> ExitCode {
+    use chestcraft::auth::apitoken::{self, CreateError};
+    use chestcraft::db::AuditEvent;
+    if let Some(code) = refuse_root("api-token") {
+        return code;
+    }
+    let cfg = match Config::load(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{}:\n{e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let db = match chestcraft::web::open_db(&cfg) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let fail = |msg: String| {
+        eprintln!("{msg}");
+        ExitCode::FAILURE
+    };
+    let tz = &cfg.server.timezone;
+    let date = |t: i64| {
+        jiff::Timestamp::from_second(t)
+            .map(|ts| {
+                ts.to_zoned(tz.clone())
+                    .strftime("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_default()
+    };
+    let now = jiff::Timestamp::now().as_second();
+    let audit = |action: &str, rec: &chestcraft::db::ApiToken| {
+        db.audit(&AuditEvent {
+            time: now,
+            actor: "cli".into(),
+            ip: String::new(),
+            action: action.into(),
+            target: rec.label.clone(),
+            detail: rec.id.clone(),
+        })
+    };
+    let result: Result<ExitCode, chestcraft::db::DbError> = (|| {
+        Ok(match cmd {
+            ApiTokenCmd::Add { label } => match apitoken::create(&db, &label, "cli", now) {
+                Ok((token, rec)) => {
+                    audit("api_token_created", &rec)?;
+                    println!("Status API token \"{}\" (id {}):", rec.label, rec.id);
+                    println!("{token}");
+                    println!(
+                        "It is shown only now. Send it as \"Authorization: Bearer <token>\" to \
+                         /api/v1/status, from the LAN or Tailscale."
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(CreateError::Db(e)) => return Err(e),
+                Err(e) => fail(e.to_string()),
+            },
+            ApiTokenCmd::List => {
+                let all = db.api_tokens()?;
+                if all.is_empty() {
+                    println!("No status API tokens");
+                }
+                for (_, r) in all {
+                    let used = match (r.last_used, &r.last_ip) {
+                        (Some(t), Some(ip)) => format!("last used {} from {ip}", date(t)),
+                        (Some(t), None) => format!("last used {}", date(t)),
+                        _ => "never used".to_string(),
+                    };
+                    println!(
+                        "{:<12} {:<30} created {} by {}, {used}",
+                        r.id,
+                        r.label,
+                        date(r.created),
+                        r.created_by
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            ApiTokenCmd::Revoke { which } => match apitoken::revoke(&db, &which)? {
+                Some(r) => {
+                    audit("api_token_revoked", &r)?;
+                    println!("Revoked \"{}\" (id {})", r.label, r.id);
+                    ExitCode::SUCCESS
+                }
+                None => fail(format!("no token \"{which}\"")),
+            },
         })
     })();
     result.unwrap_or_else(|e| fail(e.to_string()))

@@ -1,3 +1,4 @@
+pub mod apitoken;
 pub mod apppass;
 pub mod backoff;
 pub mod password;

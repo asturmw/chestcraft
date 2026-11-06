@@ -3,16 +3,20 @@
 //! limit, optional notification); opening again sets a new password and ends every visitor
 //! session. Visitors enter the password at `/.cc/public-write?vol=…` and may then upload
 //! and create folders in that volume for 12 hours, never overwrite or delete.
+//!
+//! The same admin page lists the status API tokens; they are created and revoked at
+//! `/.cc/admin/api-tokens` (see [`super::status`]).
 
 use super::auth::{audit, csrf_ok, forbidden, now, safe_next, same_origin};
 use super::files::{Fail, enc, fail};
 use super::guest::{self, Unlock};
-use super::share_views::{self, PublicState, VolumeRow, VolumesView};
+use super::share_views::{self, PublicState, TokenRow, VolumeRow, VolumesView};
 use super::shares::expiry_choices;
 use super::views::Ctx;
 use super::{ClientInfo, Current, Shared, page_ctx};
+use crate::auth::apitoken;
 use crate::auth::perm::Principal;
-use crate::db::PublicWrite;
+use crate::db::{ApiToken, PublicWrite};
 use crate::shares::{self, Expiry, Password};
 use axum::extract::{Extension, Form, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -174,9 +178,10 @@ fn volumes_view(
     ctx: &Ctx,
     st: &Shared,
     csrf: &str,
-    writes: &[PublicWrite],
+    data: &Stored,
     error: Option<String>,
 ) -> VolumesView {
+    let writes = &data.writes;
     let rows = st
         .cfg
         .volumes
@@ -231,18 +236,52 @@ fn volumes_view(
             }
         })
         .collect();
+    let tokens = data
+        .tokens
+        .iter()
+        .map(|t| TokenRow {
+            id: t.id.clone(),
+            label: t.label.clone(),
+            created: ctx.datetime(t.created),
+            last_used: match (t.last_used, &t.last_ip) {
+                (Some(when), Some(ip)) => ctx.tf(
+                    "api_tokens.used_from",
+                    &[("date", &ctx.datetime(when)), ("ip", ip)],
+                ),
+                (Some(when), None) => ctx.datetime(when),
+                (None, _) => ctx.t("api_tokens.never_used").to_string(),
+            },
+        })
+        .collect();
     VolumesView {
         csrf: csrf.to_string(),
         rows,
+        tokens,
         error,
     }
 }
 
-async fn all_writes(st: &Shared) -> Vec<PublicWrite> {
+/// What the volumes page shows from the database.
+#[derive(Default)]
+struct Stored {
+    writes: Vec<PublicWrite>,
+    tokens: Vec<ApiToken>,
+}
+
+async fn page_data(st: &Shared) -> Stored {
     let st = st.clone();
-    blocking(move || st.db.public_writes().unwrap_or_default())
-        .await
-        .unwrap_or_default()
+    blocking(move || Stored {
+        writes: st.db.public_writes().unwrap_or_default(),
+        tokens: st
+            .db
+            .api_tokens()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect(),
+    })
+    .await
+    .unwrap_or_default()
 }
 
 pub async fn volumes_page(
@@ -255,8 +294,8 @@ pub async fn volumes_page(
     let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
         return fail(&ctx, Fail::NotFound);
     };
-    let writes = all_writes(&st).await;
-    share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &writes, None))
+    let data = page_data(&st).await;
+    share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &data, None))
         .into_response()
 }
 
@@ -293,18 +332,15 @@ pub async fn volumes_submit(
     if !csrf_ok(&headers, &st, cu, &form.csrf) {
         return forbidden(&ctx);
     }
-    let rerender = |writes: Vec<PublicWrite>, msg: String| {
+    let rerender = |data: Stored, msg: String| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            share_views::admin_volumes(
-                &ctx,
-                &volumes_view(&ctx, &st, &cu.csrf, &writes, Some(msg)),
-            ),
+            share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &data, Some(msg))),
         )
             .into_response()
     };
     if !is_public(&st, &form.vol) {
-        return rerender(all_writes(&st).await, ctx.t("volumes.not_public").into());
+        return rerender(page_data(&st).await, ctx.t("volumes.not_public").into());
     }
     let actor = format!("user:{}", cu.key);
     let scope = shares::public_scope(&form.vol);
@@ -319,7 +355,7 @@ pub async fn volumes_submit(
             };
             if password.check().is_err() {
                 return rerender(
-                    all_writes(&st).await,
+                    page_data(&st).await,
                     ctx.tf(
                         "share_create.password_too_short",
                         &[("min", &shares::MIN_OWN_PASSWORD.to_string())],
@@ -334,7 +370,7 @@ pub async fn volumes_submit(
                     Ok(n) if (1..=(1 << 24)).contains(&n) => Some(n << 20),
                     _ => {
                         return rerender(
-                            all_writes(&st).await,
+                            page_data(&st).await,
                             ctx.t("share_create.bad_size").into(),
                         );
                     }
@@ -362,7 +398,7 @@ pub async fn volumes_submit(
                 .await
             };
             if !matches!(stored, Some(Ok(()))) {
-                return rerender(all_writes(&st).await, ctx.t("ops.failed").into());
+                return rerender(page_data(&st).await, ctx.t("ops.failed").into());
             }
             audit(
                 &st,
@@ -396,12 +432,12 @@ pub async fn volumes_submit(
                 .await
             };
             if !matches!(done, Some(Ok(()))) {
-                return rerender(all_writes(&st).await, ctx.t("ops.failed").into());
+                return rerender(page_data(&st).await, ctx.t("ops.failed").into());
             }
             audit(&st, actor, client.ip, "public_write_closed", &form.vol, "");
             Redirect::to("/.cc/admin/volumes").into_response()
         }
-        _ => rerender(all_writes(&st).await, ctx.t("ops.invalid").into()),
+        _ => rerender(page_data(&st).await, ctx.t("ops.invalid").into()),
     }
 }
 
@@ -428,4 +464,110 @@ fn secret(
         back_label: ctx.t("volumes.back").into(),
     };
     share_views::secret(&ctx2, &view).into_response()
+}
+
+// ---------------------------------------------------------------------------------------
+// Admin: status API tokens (shown on the volumes page)
+
+#[derive(Deserialize, Default)]
+pub struct TokenForm {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    op: String,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    id: String,
+}
+
+pub async fn tokens_submit(
+    State(st): State<Shared>,
+    Extension(client): Extension<ClientInfo>,
+    Extension(principal): Extension<Principal>,
+    Extension(current): Extension<Current>,
+    headers: HeaderMap,
+    Form(form): Form<TokenForm>,
+) -> Response {
+    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
+    let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
+        return fail(&ctx, Fail::NotFound);
+    };
+    if !csrf_ok(&headers, &st, cu, &form.csrf) {
+        return forbidden(&ctx);
+    }
+    let rerender = |data: Stored, msg: String| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &data, Some(msg))),
+        )
+            .into_response()
+    };
+    let actor = format!("user:{}", cu.key);
+    match form.op.as_str() {
+        "add" => {
+            let created = {
+                let (st, label, by) = (st.clone(), form.label.clone(), actor.clone());
+                blocking(move || apitoken::create(&st.db, &label, &by, now())).await
+            };
+            let (token, rec) = match created {
+                Some(Ok(t)) => t,
+                Some(Err(e)) => {
+                    let msg = match e {
+                        apitoken::CreateError::BadLabel => ctx.tf(
+                            "api_tokens.bad_label",
+                            &[("max", &apitoken::MAX_LABEL_CHARS.to_string())],
+                        ),
+                        apitoken::CreateError::Duplicate => {
+                            ctx.t("api_tokens.duplicate").to_string()
+                        }
+                        apitoken::CreateError::TooMany => ctx.tf(
+                            "api_tokens.too_many",
+                            &[("max", &apitoken::MAX_TOKENS.to_string())],
+                        ),
+                        apitoken::CreateError::Db(_) => ctx.t("ops.failed").to_string(),
+                    };
+                    return rerender(page_data(&st).await, msg);
+                }
+                None => return rerender(page_data(&st).await, ctx.t("ops.failed").into()),
+            };
+            audit(
+                &st,
+                actor,
+                client.ip,
+                "api_token_created",
+                &rec.label,
+                &rec.id,
+            );
+            let mut ctx2 = ctx.clone();
+            ctx2.scripts.push("copy.js");
+            let mut res = share_views::api_token_created(&ctx2, &rec.label, &token).into_response();
+            // The token must not stay in the browser's cache.
+            res.headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            res
+        }
+        "revoke" => {
+            let revoked = {
+                let (st, id) = (st.clone(), form.id.clone());
+                blocking(move || apitoken::revoke(&st.db, &id)).await
+            };
+            match revoked {
+                Some(Ok(Some(rec))) => {
+                    audit(
+                        &st,
+                        actor,
+                        client.ip,
+                        "api_token_revoked",
+                        &rec.label,
+                        &rec.id,
+                    );
+                    Redirect::to("/.cc/admin/volumes#api-tokens").into_response()
+                }
+                Some(Ok(None)) => rerender(page_data(&st).await, ctx.t("api_tokens.gone").into()),
+                _ => rerender(page_data(&st).await, ctx.t("ops.failed").into()),
+            }
+        }
+        _ => rerender(page_data(&st).await, ctx.t("ops.invalid").into()),
+    }
 }

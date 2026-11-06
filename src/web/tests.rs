@@ -391,6 +391,8 @@ async fn every_response_carries_the_security_headers() {
 async fn robots_health_assets_and_methods() {
     let e = env();
     assert!(e.get("/robots.txt").await.text().contains("Disallow: /"));
+    e.state.health.db_ok(now());
+    e.state.health.set_latest(Snapshot::empty(now()));
     assert_eq!(e.get("/healthz").await.text(), "ok\n");
     let r = e.get("/.cc/assets/app.css").await;
     assert_eq!(
@@ -3601,3 +3603,4 @@ async fn public_uploads_notify_once_per_burst() {
 }
 
 mod appearance;
+mod status;
