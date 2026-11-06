@@ -260,7 +260,7 @@ pub fn same_origin(headers: &HeaderMap, public_url: &str) -> bool {
     }
 }
 
-fn token_eq(a: &str, b: &str) -> bool {
+pub fn token_eq(a: &str, b: &str) -> bool {
     a.len() == b.len()
         && a.bytes()
             .zip(b.bytes())

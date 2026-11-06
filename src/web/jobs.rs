@@ -1,6 +1,7 @@
 //! Daily maintenance at `trash.purge_at` (server time zone): purge trash items older than
-//! their volume's `trash_days`, and clean up uploads (and temporary WebDAV entries) abandoned
-//! for `uploads.abandoned_days`.
+//! their volume's `trash_days`, clean up uploads (and temporary WebDAV entries) abandoned
+//! for `uploads.abandoned_days`, and drop guest sessions (share visitors, public uploaders)
+//! that ran out.
 
 use super::Shared;
 use crate::config::TimeOfDay;
@@ -48,12 +49,14 @@ pub async fn run(st: Shared) {
         let max_age = i64::from(st.cfg.uploads.abandoned_days) * 86_400;
         let (uploads, batches) = st.uploads.sweep(&st.volumes, max_age, now);
         let temps = transfer::sweep_temps(&st.db, &st.volumes, Some(max_age), now);
+        let guests = crate::shares::sweep_guests(&st.db, now);
         tracing::info!(
             purged,
             failed,
             abandoned_uploads = uploads,
             abandoned_folders = batches,
             abandoned_temps = temps,
+            expired_guest_sessions = guests,
             "daily cleanup done"
         );
     })

@@ -5,10 +5,15 @@ mod assets;
 mod auth;
 mod client;
 mod files;
+mod guest;
 mod headers;
 pub mod jobs;
 mod limits;
+mod public;
 mod query;
+mod share;
+mod share_views;
+mod shares;
 mod stream;
 #[cfg(test)]
 mod tests;
@@ -23,12 +28,12 @@ use crate::fs::upload::Uploads;
 use crate::fs::volume::Volumes;
 use crate::i18n::{I18n, Lang};
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::{Extension, Request, State};
 use axum::handler::Handler;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::routing::{any, get, post, put};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -44,6 +49,8 @@ pub struct AppState {
     pub backoff: Backoff,
     pub limiter: limits::DownloadLimiter,
     pub uploads: Uploads,
+    /// Passphrase word lists for share and public upload passwords.
+    pub words: crate::shares::words::WordLists,
     /// Lets tests act as a principal without signing in.
     #[cfg(test)]
     pub test_principal: std::sync::Mutex<Option<Principal>>,
@@ -55,11 +62,16 @@ impl AppState {
     pub fn new(cfg: Config, i18n: I18n, db: Db) -> AppState {
         let volumes = Volumes::open(&cfg);
         let db = Arc::new(db);
+        let (words, warnings) = crate::shares::words::WordLists::load(&cfg.shares.wordlists);
+        for w in warnings {
+            tracing::warn!("{w}");
+        }
         AppState {
             cfg: Arc::new(cfg),
             volumes,
             i18n,
             uploads: Uploads::new(db.clone()),
+            words,
             db,
             backoff: Backoff::default(),
             limiter: limits::DownloadLimiter::default(),
@@ -121,6 +133,12 @@ pub fn page_ctx<'a>(
         user_name: current.map(|c| c.name.as_str()),
         csrf: current.map(|c| c.csrf.as_str()),
         tz: &st.cfg.server.timezone,
+        scripts: if current.is_some() {
+            vec!["upload.js"]
+        } else {
+            Vec::new()
+        },
+        lang_switch: None,
     }
 }
 
@@ -174,6 +192,27 @@ pub fn router(state: Shared) -> Router {
         .route("/.cc/trash", get(trash::page))
         .route("/.cc/trash/restore", post(trash::restore))
         .route("/.cc/trash/empty", post(trash::empty))
+        .route("/.cc/lang", get(lang))
+        .route("/.cc/shares", get(shares::list))
+        .route(
+            "/.cc/shares/new",
+            get(shares::new_page).post(shares::new_submit),
+        )
+        .route(
+            "/.cc/shares/{id}",
+            get(shares::detail).post(shares::detail_submit),
+        )
+        .route(
+            "/.cc/public-write",
+            get(public::unlock_page).post(public::unlock_submit),
+        )
+        .route(
+            "/.cc/admin/volumes",
+            get(public::volumes_page).post(public::volumes_submit),
+        )
+        .route("/s/{id}", any(share::handle))
+        .route("/s/{id}/", any(share::handle))
+        .route("/s/{id}/{*rest}", any(share::handle))
         .fallback(dav_or_files)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -182,6 +221,33 @@ pub fn router(state: Shared) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), client::layer))
         .layer(middleware::from_fn(headers::security))
         .with_state(state)
+}
+
+#[derive(serde::Deserialize)]
+struct LangQuery {
+    set: String,
+    #[serde(default)]
+    next: String,
+}
+
+/// `/.cc/lang?set=de&next=/s/…`: the language switch of pages without an account.
+async fn lang(
+    State(st): State<Shared>,
+    Extension(client): Extension<ClientInfo>,
+    axum::extract::Query(q): axum::extract::Query<LangQuery>,
+) -> Response {
+    let mut res = Redirect::to(&auth::safe_next(&q.next)).into_response();
+    if st.i18n.by_code(&q.set).is_some() {
+        let secure = if client.https { "; Secure" } else { "" };
+        let cookie = format!(
+            "cc_lang={}; Path=/; SameSite=Lax; Max-Age=31536000{secure}",
+            q.set
+        );
+        if let Ok(v) = axum::http::HeaderValue::from_str(&cookie) {
+            res.headers_mut().insert(header::SET_COOKIE, v);
+        }
+    }
+    res
 }
 
 async fn healthz() -> &'static str {

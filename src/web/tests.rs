@@ -77,6 +77,8 @@ fn env() -> Env {
         Eingang = "rw"
         [roles.leser]
         Medien = "r"
+        [roles.teiler]
+        Medien = "rwmds"
         "#,
         r.display()
     ))
@@ -843,9 +845,13 @@ impl Env {
     }
 
     async fn put_chunk(&self, s: &Login, id: &str, n: u32, data: &[u8]) -> Res {
+        self.put_chunk_at("/.cc", s, id, n, data).await
+    }
+
+    async fn put_chunk_at(&self, base: &str, s: &Login, id: &str, n: u32, data: &[u8]) -> Res {
         let mut b = Request::builder()
             .method("PUT")
-            .uri(format!("/.cc/upload/{id}/chunk/{n}"))
+            .uri(format!("{base}/upload/{id}/chunk/{n}"))
             .header("cookie", &s.cookie)
             .header("x-csrf-token", &s.csrf)
             .header("content-length", data.len());
@@ -879,8 +885,27 @@ impl Env {
         data: &[u8],
         clash: &str,
     ) -> Res {
+        self.upload_at("/.cc", s, vol, dir, name, data, clash).await
+    }
+
+    /// Like `upload`, against the API at `base` (`/s/<id>/.cc` for share visitors).
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_at(
+        &self,
+        base: &str,
+        s: &Login,
+        vol: &str,
+        dir: &str,
+        name: &str,
+        data: &[u8],
+        clash: &str,
+    ) -> Res {
+        let body = serde_json::json!({
+            "vol": vol, "dir": dir, "name": name, "size": data.len(),
+            "mtime": 1_700_000_000_000i64, "clash": clash,
+        });
         let r = self
-            .start_upload(s, vol, dir, name, data.len(), clash, None)
+            .call(s, "POST", &format!("{base}/upload"), body.to_string())
             .await;
         if r.status != StatusCode::CREATED {
             return r;
@@ -889,11 +914,16 @@ impl Env {
         let id = st["id"].as_str().unwrap().to_string();
         let chunk = st["chunk"].as_u64().unwrap() as usize;
         for (n, part) in data.chunks(chunk).enumerate().rev() {
-            let c = self.put_chunk(s, &id, n as u32, part).await;
+            let c = self.put_chunk_at(base, s, &id, n as u32, part).await;
             assert_eq!(c.status, StatusCode::OK, "{}", c.text());
         }
-        self.call(s, "POST", &format!("/.cc/upload/{id}/done"), String::new())
-            .await
+        self.call(
+            s,
+            "POST",
+            &format!("{base}/upload/{id}/done"),
+            String::new(),
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1610,7 +1640,8 @@ async fn webdav_listings_follow_the_web_rules() {
         .await
         .text();
     assert!(
-        t.contains("<D:quota-available-bytes>") && !t.contains("404"),
+        // (Not just "404": the byte counts may contain those digits.)
+        t.contains("<D:quota-available-bytes>") && !t.contains("404 Not Found"),
         "{t}"
     );
 
@@ -2069,4 +2100,893 @@ async fn startup_sweeps_temporaries_left_by_a_crash() {
     assert!(e.state.db.temps().unwrap().is_empty());
     assert_eq!(std::fs::read_dir(&uploads).unwrap().count(), 0);
     assert!(!e.root().join("medien/big.iso").exists());
+}
+
+// ---------------------------------------------------------------------------------------
+// Shares and public uploads
+
+fn attr_after(page: &str, marker: &str, attr: &str) -> String {
+    let i = page
+        .find(marker)
+        .unwrap_or_else(|| panic!("{marker} not in page: {page}"));
+    let rest = &page[i..];
+    let key = format!("{attr}=\"");
+    let j = rest
+        .find(&key)
+        .unwrap_or_else(|| panic!("no {attr} after {marker}"))
+        + key.len();
+    let end = rest[j..].find('"').unwrap();
+    rest[j..j + end].to_string()
+}
+
+fn enc(s: &str) -> String {
+    percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
+}
+
+/// A share visitor: cookie + the CSRF token of the upload API.
+fn visitor(cookie: String, csrf: String) -> Login {
+    Login { cookie, csrf }
+}
+
+impl Env {
+    /// Create a share through the form; returns (id, password). `extra` overrides fields.
+    async fn create_share(
+        &self,
+        s: &Login,
+        vol: &str,
+        path: &str,
+        extra: &[(&str, &str)],
+    ) -> (String, String) {
+        let page = self
+            .get_h(
+                &format!("/.cc/shares/new?vol={}&path={}", enc(vol), enc(path)),
+                &[("cookie", &s.cookie)],
+            )
+            .await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.text());
+        let pp = attr_after(&page.text(), "name=\"passphrase\"", "value");
+        let mut pairs: Vec<(&str, &str)> = vec![
+            ("vol", vol),
+            ("path", path),
+            ("passphrase", &pp),
+            ("op", "create"),
+            ("expiry", "30d"),
+            ("mode", "view"),
+        ];
+        for (k, v) in extra {
+            pairs.retain(|(pk, _)| pk != k);
+            pairs.push((k, v));
+        }
+        let r = self.form_post(s, "/.cc/shares/new", &pairs).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        let t = r.text();
+        let link = attr_after(&t, "id=\"secret-link\"", "value");
+        assert!(link.starts_with("https://files.example.org/s/"), "{link}");
+        let password = attr_after(&t, "id=\"secret-password\"", "value");
+        // Ready-to-send messages: the creator's language first, then the other one.
+        let (en, de) = (t.find("Password: ").unwrap(), t.find("Passwort: ").unwrap());
+        assert!(en < de && t.contains("Message (Deutsch)"), "{t}");
+        assert!(t.contains("copy.js"), "{t}");
+        (link.rsplit('/').next().unwrap().to_string(), password)
+    }
+
+    async fn unlock(&self, id: &str, pw: &str, peer: &str, headers: &[(&str, &str)]) -> Res {
+        let mut h = vec![FORM];
+        h.extend_from_slice(headers);
+        self.send_body(
+            "POST",
+            &format!("/s/{id}/.cc/unlock"),
+            peer,
+            &h,
+            form(&[("password", pw)]),
+        )
+        .await
+    }
+
+    /// Unlock from the LAN; returns the visitor's cookie.
+    async fn visit(&self, id: &str, pw: &str) -> String {
+        let r = self.unlock(id, pw, "127.0.0.1", &[]).await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+        assert!(
+            r.header("set-cookie").contains(&format!("Path=/s/{id};")),
+            "{}",
+            r.header("set-cookie")
+        );
+        cookie_of(&r)
+    }
+
+    fn share(&self, id: &str) -> crate::db::Share {
+        self.state.db.share(id).unwrap().unwrap()
+    }
+
+    /// Share log actions, once `expected` are all written.
+    async fn share_log(&self, id: &str, expected: &[&str]) -> Vec<String> {
+        let mut actions = Vec::new();
+        for _ in 0..100 {
+            actions = self
+                .state
+                .db
+                .share_log_of(id, 100)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.action)
+                .collect::<Vec<_>>();
+            if expected.iter().all(|x| actions.iter().any(|a| a == x)) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        actions
+    }
+}
+
+#[tokio::test]
+async fn folder_share_round_trip() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let (id, pw) = e
+        .create_share(
+            &admin,
+            "Medien",
+            "Urlaub Gardasee",
+            &[("note", "Fotos vom See")],
+        )
+        .await;
+    assert_eq!(pw.split('-').count(), 4, "{pw}");
+
+    // Before the password: nothing about the content.
+    let r = e.get(&format!("/s/{id}")).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let t = r.text();
+    assert!(
+        t.contains("/.cc/unlock")
+            && !t.contains("Urlaub")
+            && !t.contains("IMG_2041")
+            && !t.contains("Fotos vom See"),
+        "{t}"
+    );
+    assert!(t.contains("lang-switch"), "{t}");
+    let r = e.get(&format!("/s/{id}/IMG_2041.jpg")).await;
+    assert!(!r.text().contains("jpegdata"));
+
+    let r = e.unlock(&id, "falsch-falsch", "127.0.0.1", &[]).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    // Case and separators don't matter for passphrases (phones capitalize).
+    let typed = pw.replace('-', " ").to_uppercase();
+    let r = e
+        .unlock(
+            &id,
+            &typed,
+            "192.0.2.10",
+            &[("cf-connecting-ip", "203.0.113.9"), ("cf-ipcountry", "AT")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    assert_eq!(r.header("location"), format!("/s/{id}/"));
+    let cookie = cookie_of(&r);
+    let c = [("cookie", cookie.as_str())];
+
+    let t = e.get_h(&format!("/s/{id}/"), &c).await.text();
+    assert!(
+        t.contains("IMG_2041.jpg") && t.contains("Fotos vom See") && t.contains("Admin"),
+        "{t}"
+    );
+    assert!(!t.contains("data-js=\"upload\""), "view only: {t}");
+    let r = e.get_h(&format!("/s/{id}/IMG_2041.jpg"), &c).await;
+    assert_eq!(
+        (r.status, r.body.as_slice()),
+        (StatusCode::OK, b"jpegdata".as_slice())
+    );
+    let r = e.get_h(&format!("/s/{id}/?zip"), &c).await;
+    assert_eq!(zip_names(&r.body), ["IMG_2041.jpg"]);
+    let r = e
+        .send_body(
+            "POST",
+            &format!("/s/{id}/"),
+            "127.0.0.1",
+            &[FORM, ("cookie", &cookie)],
+            form(&[("op", "zip"), ("n", "IMG_2041.jpg")]),
+        )
+        .await;
+    assert_eq!(zip_names(&r.body), ["IMG_2041.jpg"]);
+
+    // Nothing outside the shared folder, and no uploads in view mode.
+    for bad in ["/../a.txt", "/%2e%2e/a.txt", "/..%2fa.txt", "/.git/"] {
+        let r = e.get_h(&format!("/s/{id}{bad}"), &c).await;
+        assert!(
+            matches!(r.status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST),
+            "{bad}: {}",
+            r.status
+        );
+    }
+    let csrf = e
+        .state
+        .db
+        .guest(&crate::auth::session::hash_id(
+            cookie.trim_start_matches("cc_share="),
+        ))
+        .unwrap()
+        .unwrap()
+        .csrf;
+    let v = visitor(cookie.clone(), csrf);
+    let r = e
+        .upload_at(&format!("/s/{id}/.cc"), &v, "", "", "x.txt", b"x", "rename")
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+
+    // The owner sees opens, downloads and the log with the visitor's country.
+    let log = e
+        .share_log(&id, &["unlock", "download", "zip", "unlock_failed"])
+        .await;
+    assert!(log.contains(&"unlock_failed".to_string()), "{log:?}");
+    let s = e.share(&id);
+    assert_eq!((s.opens, s.downloads), (1, 3));
+    let t = e
+        .get_h(&format!("/.cc/shares/{id}"), &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(t.contains("203.0.113.9") && t.contains(">AT<"), "{t}");
+    let t = e
+        .get_h("/.cc/shares", &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(t.contains("Medien/Urlaub Gardasee"), "{t}");
+
+    // Revoked: the link says so, the cookie is dead.
+    let r = e
+        .form_post(
+            &admin,
+            &format!("/.cc/shares/{id}"),
+            &[("op", "revoke"), ("confirm", "1")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let r = e.get_h(&format!("/s/{id}/"), &c).await;
+    assert_eq!(r.status, StatusCode::GONE);
+    assert!(
+        e.state
+            .db
+            .guest(&crate::auth::session::hash_id(
+                cookie.trim_start_matches("cc_share=")
+            ))
+            .unwrap()
+            .is_none()
+    );
+    let r = e
+        .form_post(&admin, &format!("/.cc/shares/{id}"), &[("op", "password")])
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::CONFLICT,
+        "revoked shares can't change"
+    );
+}
+
+#[tokio::test]
+async fn file_share_expiry_and_unknown_links() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let (id, pw) = e
+        .create_share(
+            &admin,
+            "Medien",
+            "a.txt",
+            &[("password_kind", "own"), ("own_password", "Mein Passwort")],
+        )
+        .await;
+    assert_eq!(pw, "Mein Passwort");
+    assert_eq!(
+        e.unlock(&id, "mein passwort", "127.0.0.1", &[])
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED,
+        "own passwords are exact"
+    );
+    let cookie = e.visit(&id, "Mein Passwort").await;
+    let c = [("cookie", cookie.as_str())];
+    let t = e.get_h(&format!("/s/{id}"), &c).await.text();
+    assert!(
+        t.contains("a.txt") && t.contains(&format!("/s/{id}/a.txt?dl")),
+        "{t}"
+    );
+    let r = e.get_h(&format!("/s/{id}/a.txt"), &c).await;
+    assert_eq!(r.body, b"0123456789");
+    assert_eq!(
+        e.get_h(&format!("/s/{id}/b.txt"), &c).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // The cookie belongs to this share only.
+    let (other, _) = e.create_share(&admin, "Medien", "page.html", &[]).await;
+    let t = e.get_h(&format!("/s/{other}"), &c).await.text();
+    assert!(t.contains("/.cc/unlock"), "{t}");
+
+    e.state
+        .db
+        .update_share(&id, true, |s| s.expires = Some(1))
+        .unwrap();
+    let r = e.get_h(&format!("/s/{id}/a.txt"), &c).await;
+    assert_eq!(r.status, StatusCode::GONE);
+    assert!(r.text().contains("expired"), "{}", r.text());
+    assert_eq!(e.get("/s/123456789abc").await.status, StatusCode::NOT_FOUND);
+    assert_eq!(e.get("/s/nope").await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn upload_only_shares_never_overwrite_and_show_only_own_uploads() {
+    let e = env();
+    let jana = e.session("jana", "teiler").await;
+    let (id, pw) = e
+        .create_share(
+            &jana,
+            "Medien",
+            "Urlaub Gardasee",
+            &[("mode", "upload"), ("max_mib", "1")],
+        )
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let c = [("cookie", cookie.as_str())];
+    let page = e.get_h(&format!("/s/{id}"), &c).await.text();
+    assert!(!page.contains("IMG_2041"), "{page}");
+    assert!(
+        page.contains(&format!("data-api=\"/s/{id}/.cc\"")),
+        "{page}"
+    );
+    let csrf = attr_after(&page, "data-js=\"upload\"", "data-csrf");
+    let v = visitor(cookie.clone(), csrf);
+    let base = format!("/s/{id}/.cc");
+
+    // A taken name is kept as a copy, even when "replace" is asked for.
+    let r = e
+        .upload_at(&base, &v, "", "", "IMG_2041.jpg", b"new photo", "replace")
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(json_of(&r)["path"], "IMG_2041 (1).jpg");
+    let dir = e.root().join("medien/Urlaub Gardasee");
+    assert_eq!(
+        std::fs::read(dir.join("IMG_2041.jpg")).unwrap(),
+        b"jpegdata"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("IMG_2041 (1).jpg")).unwrap(),
+        b"new photo"
+    );
+    let r = e
+        .upload_at(&base, &v, "", "", "Scan/sub/b.pdf", b"pdf", "ask")
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(dir.join("Scan/sub/b.pdf").is_file());
+
+    // Above the size limit.
+    let big = vec![0u8; MIB + 1];
+    let r = e.upload_at(&base, &v, "", "", "big.bin", &big, "ask").await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", r.text());
+    assert_eq!(json_of(&r)["error"], "too_large");
+
+    // The page lists this visitor's uploads, nothing else; downloads don't exist.
+    let page = e.get_h(&format!("/s/{id}"), &c).await.text();
+    assert!(
+        page.contains("IMG_2041 (1).jpg") && page.contains("Scan/sub/b.pdf"),
+        "{page}"
+    );
+    assert!(!page.contains("IMG_2041.jpg<"), "{page}");
+    assert_eq!(
+        e.get_h(&format!("/s/{id}/IMG_2041.jpg"), &c).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // A second visitor doesn't see the first one's uploads.
+    let other = e.visit(&id, &pw).await;
+    let page = e
+        .get_h(&format!("/s/{id}"), &[("cookie", &other)])
+        .await
+        .text();
+    assert!(!page.contains("IMG_2041 (1).jpg"), "{page}");
+
+    // No CSRF token, no upload.
+    let r = e
+        .send_body(
+            "POST",
+            &format!("{base}/upload"),
+            "127.0.0.1",
+            &[JSON, ("cookie", &cookie)],
+            serde_json::json!({"dir": "", "name": "y.txt", "size": 1}).to_string(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(e.share(&id).uploads, 2);
+    let log = e.share_log(&id, &["upload"]).await;
+    assert_eq!(log.iter().filter(|a| *a == "upload").count(), 2, "{log:?}");
+}
+
+#[tokio::test]
+async fn view_and_upload_share_uploads_into_subfolders() {
+    let e = env();
+    let jana = e.session("jana", "teiler").await;
+    std::fs::create_dir(e.root().join("medien/Urlaub Gardasee/Tag 2")).unwrap();
+    let (id, pw) = e
+        .create_share(
+            &jana,
+            "Medien",
+            "Urlaub Gardasee",
+            &[("mode", "view_upload")],
+        )
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let page = e
+        .get_h(&format!("/s/{id}/Tag%202/"), &[("cookie", &cookie)])
+        .await
+        .text();
+    assert!(page.contains("data-dir=\"Tag 2\""), "{page}");
+    let csrf = attr_after(&page, "data-js=\"upload\"", "data-csrf");
+    let v = visitor(cookie, csrf);
+    let r = e
+        .upload_at(
+            &format!("/s/{id}/.cc"),
+            &v,
+            "Medien",
+            "Tag 2",
+            "c.jpg",
+            b"c",
+            "ask",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(
+        e.root()
+            .join("medien/Urlaub Gardasee/Tag 2/c.jpg")
+            .is_file()
+    );
+    // `dir` is relative to the share: no way out.
+    let r = e
+        .upload_at(
+            &format!("/s/{id}/.cc"),
+            &v,
+            "Medien",
+            "../x",
+            "d.jpg",
+            b"d",
+            "ask",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+}
+
+#[tokio::test]
+async fn shares_never_exceed_the_creator_and_pause_with_them() {
+    let e = env();
+    let leser = e.session("mika", "leser").await;
+    let r = e
+        .get_h(
+            "/.cc/shares/new?vol=Medien&path=a.txt",
+            &[("cookie", &leser.cookie)],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let t = e
+        .get_h("/Medien/", &[("cookie", &leser.cookie)])
+        .await
+        .text();
+    assert!(!t.contains("/.cc/shares/new"), "{t}");
+
+    // Home-only volumes can't be shared, with the reason in the listing.
+    let admin = e.session("Admin", "admin").await;
+    let t = e
+        .get_h("/Backups/", &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(
+        t.contains("only reachable at home") && !t.contains("/.cc/shares/new"),
+        "{t}"
+    );
+    let r = e
+        .get_h(
+            "/.cc/shares/new?vol=Backups&path=dump.bin",
+            &[("cookie", &admin.cookie)],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // A sharing role gets links and badges.
+    let jana = e.session("jana", "teiler").await;
+    let t = e
+        .get_h("/Medien/", &[("cookie", &jana.cookie)])
+        .await
+        .text();
+    assert!(
+        t.contains("/.cc/shares/new?vol=Medien&amp;path=a.txt")
+            || t.contains("/.cc/shares/new?vol=Medien&path=a.txt"),
+        "{t}"
+    );
+    let r = e
+        .get_h(
+            "/.cc/shares/new?vol=Medien&path=a.txt",
+            &[("cookie", &jana.cookie)],
+        )
+        .await
+        .text();
+    assert!(
+        !r.contains("value=\"upload\""),
+        "files can't take uploads: {r}"
+    );
+    let (id, pw) = e
+        .create_share(&jana, "Medien", "Urlaub Gardasee", &[])
+        .await;
+    let t = e
+        .get_h("/Medien/", &[("cookie", &jana.cookie)])
+        .await
+        .text();
+    assert!(t.contains("data-state=\"shared\""), "{t}");
+    let cookie = e.visit(&id, &pw).await;
+    let c = [("cookie", cookie.as_str())];
+
+    // Creator disabled → paused; enabled again → works.
+    let mut u = e.state.db.user("jana").unwrap().unwrap();
+    u.disabled = true;
+    e.state.db.put_user(&u).unwrap();
+    assert_eq!(
+        e.get_h(&format!("/s/{id}/"), &c).await.status,
+        StatusCode::FORBIDDEN
+    );
+    u.disabled = false;
+    e.state.db.put_user(&u).unwrap();
+    assert_eq!(
+        e.get_h(&format!("/s/{id}/"), &c).await.status,
+        StatusCode::OK
+    );
+    // Role lost the right to share → paused.
+    u.role = "leser".into();
+    e.state.db.put_user(&u).unwrap();
+    assert_eq!(
+        e.get_h(&format!("/s/{id}/"), &c).await.status,
+        StatusCode::FORBIDDEN
+    );
+    u.role = "teiler".into();
+    e.state.db.put_user(&u).unwrap();
+
+    // Target in the trash → paused; restored → works again.
+    let r = e
+        .form_post(
+            &jana,
+            "/Medien/",
+            &[("op", "delete"), ("n", "Urlaub Gardasee")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = e.get_h(&format!("/s/{id}/"), &c).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert!(r.text().contains("paused"), "{}", r.text());
+    let item = e.state.db.trash_items().unwrap().pop().unwrap();
+    let r = e
+        .form_post(&jana, "/.cc/trash/restore", &[("id", &item.id)])
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        e.get_h(&format!("/s/{id}/"), &c).await.status,
+        StatusCode::OK
+    );
+
+    // Moved through WebDAV → the share follows; moved behind chestcraft's back → missing.
+    let auth = e.dav_user("admin2", "admin");
+    let h = [("destination", "/Medien/Urlaub%202025")];
+    let r = e
+        .dav(&auth, "MOVE", "/Medien/Urlaub%20Gardasee", &h, "")
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(e.share(&id).path, "Urlaub 2025");
+    let t = e.get_h(&format!("/s/{id}/"), &c).await.text();
+    assert!(t.contains("IMG_2041.jpg"), "{t}");
+    std::fs::rename(
+        e.root().join("medien/Urlaub 2025"),
+        e.root().join("medien/weg"),
+    )
+    .unwrap();
+    let r = e.get_h(&format!("/s/{id}/"), &c).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let t = e
+        .get_h("/.cc/shares", &[("cookie", &jana.cookie)])
+        .await
+        .text();
+    assert!(t.contains("data-state=\"missing\""), "{t}");
+}
+
+#[tokio::test]
+async fn wrong_share_passwords_back_off_per_address() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let (id, pw) = e.create_share(&admin, "Medien", "a.txt", &[]).await;
+    let remote = |ip: &'static str| [("cf-connecting-ip", ip)];
+    for _ in 0..crate::auth::backoff::FREE_TRIES {
+        let r = e
+            .unlock(&id, "nein-nein-nein", "192.0.2.10", &remote("203.0.113.5"))
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    let r = e
+        .unlock(&id, &pw, "192.0.2.10", &remote("203.0.113.5"))
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "even the right password waits"
+    );
+    assert!(r.text().contains("min"), "{}", r.text());
+    let r = e
+        .unlock(&id, &pw, "192.0.2.10", &remote("203.0.113.6"))
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::SEE_OTHER,
+        "another address isn't affected"
+    );
+}
+
+#[tokio::test]
+async fn a_new_share_password_ends_visitor_sessions() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let (id, pw) = e
+        .create_share(&admin, "Medien", "Urlaub Gardasee", &[])
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let r = e
+        .form_post(&admin, &format!("/.cc/shares/{id}"), &[("op", "password")])
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let new_pw = attr_after(&r.text(), "id=\"secret-password\"", "value");
+    assert_ne!(new_pw, pw);
+    let t = e
+        .get_h(&format!("/s/{id}/"), &[("cookie", &cookie)])
+        .await
+        .text();
+    assert!(t.contains("/.cc/unlock"), "{t}");
+    assert_eq!(
+        e.unlock(&id, &pw, "127.0.0.1", &[]).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    e.visit(&id, &new_pw).await;
+
+    // Edit: mode and expiry; a file can't become an upload share; others can't edit.
+    let r = e
+        .form_post(
+            &admin,
+            &format!("/.cc/shares/{id}"),
+            &[
+                ("op", "edit"),
+                ("mode", "view_upload"),
+                ("expiry", "1d"),
+                ("note", "neu"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let s = e.share(&id);
+    assert_eq!((s.mode.as_str(), s.note.as_str()), ("view_upload", "neu"));
+    assert!(s.expires.unwrap() - crate::web::now() <= 86_400);
+    let jana = e.session("jana", "teiler").await;
+    let r = e
+        .get_h(&format!("/.cc/shares/{id}"), &[("cookie", &jana.cookie)])
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let r = e
+        .form_post(
+            &jana,
+            &format!("/.cc/shares/{id}"),
+            &[("op", "revoke"), ("confirm", "1")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    assert!(e.share(&id).revoked.is_none());
+}
+
+#[tokio::test]
+async fn public_uploads_open_with_a_password_and_never_overwrite() {
+    let e = env();
+    // Closed: no upload offer, and the upload API refuses anonymous visitors.
+    let t = e.get("/Share/").await.text();
+    assert!(!t.contains("/.cc/public-write"), "{t}");
+    let admin = e.session("Admin", "admin").await;
+    let jana = e.session("jana", "teiler").await;
+    assert_eq!(
+        e.get_h("/.cc/admin/volumes", &[("cookie", &jana.cookie)])
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/admin/volumes",
+            &[("op", "open"), ("vol", "Medien")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/admin/volumes",
+            &[
+                ("op", "open"),
+                ("vol", "Share"),
+                ("expiry", "7d"),
+                ("own_password", "Briefkasten 7"),
+                ("max_mib", "1"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(
+        attr_after(&r.text(), "id=\"secret-password\"", "value"),
+        "Briefkasten 7"
+    );
+    let t = e
+        .get_h("/.cc/admin/volumes", &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(t.contains("data-state=\"open\""), "{t}");
+
+    let t = e.get("/Share/").await.text();
+    assert!(t.contains("/.cc/public-write?vol=Share"), "{t}");
+    let unlock = |pw: &str| form(&[("vol", "Share"), ("password", pw), ("next", "/Share/")]);
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/public-write",
+            "127.0.0.1",
+            &[FORM],
+            unlock("falsch"),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/public-write",
+            "127.0.0.1",
+            &[FORM],
+            unlock("Briefkasten 7"),
+        )
+        .await;
+    assert_eq!(
+        (r.status, r.header("location")),
+        (StatusCode::SEE_OTHER, "/Share/")
+    );
+    assert!(
+        r.header("set-cookie").contains("Path=/;"),
+        "{}",
+        r.header("set-cookie")
+    );
+    let cookie = cookie_of(&r);
+    let page = e.get_h("/Share/", &[("cookie", &cookie)]).await.text();
+    let csrf = attr_after(&page, "data-js=\"upload\"", "data-csrf");
+    assert!(page.contains("name=\"op\" value=\"mkdir\""), "{page}");
+    let v = visitor(cookie.clone(), csrf.clone());
+
+    let r = e
+        .upload(&v, "Share", "", "hello.txt", b"replaced?", "replace")
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(json_of(&r)["path"], "hello (1).txt");
+    assert_eq!(
+        std::fs::read(e.root().join("share/hello.txt")).unwrap(),
+        b"hello"
+    );
+    let r = e
+        .upload(&v, "Share", "", "big.bin", &vec![0u8; MIB + 1], "ask")
+        .await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE);
+    let r = e.upload(&v, "Medien", "", "x.txt", b"x", "ask").await;
+    assert!(
+        matches!(r.status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN),
+        "{}",
+        r.status
+    );
+    let r = e
+        .form_post(&v, "/Share/", &[("op", "mkdir"), ("name", "Abgabe")])
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    assert!(e.root().join("share/Abgabe").is_dir());
+    let r = e
+        .form_post(&v, "/Share/", &[("op", "delete"), ("n", "hello.txt")])
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert!(e.root().join("share/hello.txt").is_file());
+    assert!(
+        e.audited(&["public_upload", "public_unlock"])
+            .await
+            .contains(&"public_upload".to_string())
+    );
+
+    // Opening again sets a new password and ends the sessions; closing ends uploads.
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/admin/volumes",
+            &[("op", "open"), ("vol", "Share"), ("expiry", "1d")],
+        )
+        .await;
+    let generated = attr_after(&r.text(), "id=\"secret-password\"", "value");
+    assert_eq!(generated.split('-').count(), 4);
+    let r = e.upload(&v, "Share", "", "late.txt", b"x", "ask").await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.text());
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/public-write",
+            "127.0.0.1",
+            &[FORM],
+            unlock(&generated),
+        )
+        .await;
+    let v2 = visitor(cookie_of(&r), String::new());
+    let page = e.get_h("/Share/", &[("cookie", &v2.cookie)]).await.text();
+    let v2 = visitor(
+        v2.cookie,
+        attr_after(&page, "data-js=\"upload\"", "data-csrf"),
+    );
+    assert_eq!(
+        e.upload(&v2, "Share", "", "ok.txt", b"ok", "ask")
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/admin/volumes",
+            &[("op", "close"), ("vol", "Share")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        e.upload(&v2, "Share", "", "closed.txt", b"x", "ask")
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(!e.get("/Share/").await.text().contains("/.cc/public-write"));
+    let _ = csrf;
+}
+
+#[tokio::test]
+async fn public_uploads_close_by_themselves() {
+    let e = env();
+    e.state
+        .db
+        .put_public_write(&crate::db::PublicWrite {
+            volume: "Share".into(),
+            password_hash: crate::auth::password::hash("Briefkasten 7"),
+            passphrase: false,
+            opened: 0,
+            until: Some(1),
+            max_file: None,
+            notify: false,
+            by: "admin".into(),
+        })
+        .unwrap();
+    assert!(!e.get("/Share/").await.text().contains("/.cc/public-write"));
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/public-write",
+            "127.0.0.1",
+            &[FORM],
+            form(&[("vol", "Share"), ("password", "Briefkasten 7")]),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn language_switch_sets_a_cookie_and_stays_on_the_site() {
+    let e = env();
+    let r = e.get("/.cc/lang?set=de&next=%2Fs%2Fabc").await;
+    assert_eq!(
+        (r.status, r.header("location")),
+        (StatusCode::SEE_OTHER, "/s/abc")
+    );
+    assert!(r.header("set-cookie").starts_with("cc_lang=de;"));
+    let r = e
+        .get("/.cc/lang?set=xx&next=https%3A%2F%2Fevil.example")
+        .await;
+    assert_eq!(r.header("location"), "/");
+    assert!(r.header("set-cookie").is_empty());
 }

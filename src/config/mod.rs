@@ -56,6 +56,13 @@ pub struct Config {
     /// Disk serial number → bay label.
     pub disks: BTreeMap<String, String>,
     pub alerts: AlertsConfig,
+    pub shares: SharesConfig,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SharesConfig {
+    /// Extra passphrase word lists: language code → file.
+    pub wordlists: BTreeMap<String, PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +209,14 @@ struct RawConfig {
     disks: BTreeMap<String, String>,
     #[serde(default)]
     alerts: RawAlerts,
+    #[serde(default)]
+    shares: RawShares,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+struct RawShares {
+    wordlists: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -577,6 +592,22 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         ntfy,
     };
 
+    let mut wordlists = BTreeMap::new();
+    for (lang, path) in raw.shares.wordlists {
+        if !is_language_code(&lang) {
+            errs.push(format!(
+                "shares.wordlists: \"{lang}\" is not a language code like \"de\" or \"en\""
+            ));
+            continue;
+        }
+        match abs_path(&path) {
+            Ok(p) => {
+                wordlists.insert(lang, p);
+            }
+            Err(e) => errs.push(format!("shares.wordlists.{lang}: {e}")),
+        }
+    }
+
     Some(Config {
         server: server?,
         paths: paths?,
@@ -589,6 +620,7 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         roles,
         disks,
         alerts,
+        shares: SharesConfig { wordlists },
     })
 }
 
@@ -977,6 +1009,20 @@ pub fn check_environment(cfg: &Config) -> EnvReport {
                 .push(format!("paths.{what}: {} doesn't exist yet", dir.display()));
         }
     }
+    for (lang, path) in &cfg.shares.wordlists {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                if let Err(e) = crate::shares::words::check(&text) {
+                    r.errors
+                        .push(format!("shares.wordlists.{lang}: {}: {e}", path.display()));
+                }
+            }
+            Err(e) => r.errors.push(format!(
+                "shares.wordlists.{lang}: can't read {}: {e}",
+                path.display()
+            )),
+        }
+    }
     for tool in tools::ALL {
         if !Path::new(tool).exists() {
             r.warnings.push(format!(
@@ -1153,6 +1199,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.server.local_networks[0].prefix_len(), 32);
+    }
+
+    #[test]
+    fn share_word_lists() {
+        let e = errors_of(&with_volumes(
+            "[shares.wordlists]\nFR = \"/x\"\nit = \"rel/words.txt\"\n",
+        ));
+        assert_eq!(e.len(), 2, "{e:?}");
+        let cfg = Config::from_toml_str(&with_volumes(
+            "[shares.wordlists]\nfr = \"/etc/chestcraft/words-fr.txt\"\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            cfg.shares.wordlists["fr"],
+            PathBuf::from("/etc/chestcraft/words-fr.txt")
+        );
     }
 
     #[test]

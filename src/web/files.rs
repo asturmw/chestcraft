@@ -2,12 +2,13 @@
 //! downloads, and the folder forms (download selection, new folder, move to trash).
 
 use super::auth::{audit, csrf_ok, forbidden, now};
+use super::guest::{self, PublicGuest};
 use super::headers::SANDBOX_CSP;
 use super::limits::DownloadGuard;
 use super::query::Query;
-use super::views::{self, Crumb, Ctx, ListingView, Row, UploadUi, VolumeCard};
+use super::views::{self, Crumb, Ctx, ListingView, Row, ShareHead, UploadUi, VolumeCard};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, api, page_ctx, stream};
-use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, volume_perms};
+use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, public_writer_perms, volume_perms};
 use crate::config::Note;
 use crate::fs::ops;
 use crate::fs::path::{RelPath, is_internal_name, validate_existing_name, validate_new_name};
@@ -61,7 +62,7 @@ const ACTIVE_TYPES: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Copy)]
-enum Fail {
+pub enum Fail {
     NotFound,
     BadRequest,
     TooMany,
@@ -69,7 +70,7 @@ enum Fail {
     Internal,
 }
 
-fn fail(ctx: &Ctx, f: Fail) -> Response {
+pub fn fail(ctx: &Ctx, f: Fail) -> Response {
     let (status, title, body) = match f {
         Fail::NotFound => (
             StatusCode::NOT_FOUND,
@@ -112,7 +113,7 @@ fn fail(ctx: &Ctx, f: Fail) -> Response {
     res
 }
 
-fn note_for(note: &Option<Note>, lang_code: &str) -> Option<String> {
+pub fn note_for(note: &Option<Note>, lang_code: &str) -> Option<String> {
     let n = note.as_ref()?;
     if lang_code == "de" {
         n.de.clone().or_else(|| n.en.clone())
@@ -121,7 +122,7 @@ fn note_for(note: &Option<Note>, lang_code: &str) -> Option<String> {
     }
 }
 
-fn enc(s: &str) -> String {
+pub fn enc(s: &str) -> String {
     utf8_percent_encode(s, SEGMENT).to_string()
 }
 
@@ -206,7 +207,18 @@ pub async fn handle(
         Err(_) => return fail(&ctx, Fail::NotFound),
     };
 
-    let perms = path_perms(&st.cfg, &principal, client.origin, vol.name(), &rel);
+    // A visitor with the public upload password of this volume.
+    let guest = if principal.is_anonymous() && vol.cfg.public {
+        guest::public_guest(&st, &headers)
+            .await
+            .filter(|g| g.volume == vol.name())
+    } else {
+        None
+    };
+    let perms = match &guest {
+        Some(_) => public_writer_perms(&st.cfg, client.origin, vol.name(), &rel),
+        None => path_perms(&st.cfg, &principal, client.origin, vol.name(), &rel),
+    };
     if !perms.contains(Perms::READ) {
         if principal == Principal::Anonymous {
             let next = match uri.query() {
@@ -259,6 +271,7 @@ pub async fn handle(
             &client,
             &principal,
             current.as_deref(),
+            guest.as_ref(),
             &headers,
             folder,
             body,
@@ -283,7 +296,28 @@ pub async fn handle(
                     Err(f) => fail(&ctx, f),
                 };
             }
-            listing(&st, &ctx, vol, rel, perms, &q, &principal, raw_path).await
+            let frame = volume_frame(
+                &st,
+                &ctx,
+                &vol,
+                &rel,
+                perms,
+                &principal,
+                guest.as_ref(),
+                raw_path,
+            )
+            .await;
+            let mut ctx = ctx;
+            if frame.upload.is_some() {
+                ctx.scripts.push("upload.js");
+                ctx.scripts.dedup();
+            }
+            // Public pages follow the system theme and get a language switch.
+            if principal.is_anonymous() {
+                ctx.theme = None;
+                ctx.lang_switch = Some(uri.to_string());
+            }
+            listing(&st, &ctx, vol, rel, perms, &q, raw_path, frame).await
         }
         Kind::File => {
             if raw_path.ends_with('/') {
@@ -305,7 +339,7 @@ pub async fn handle(
 }
 
 /// Anonymous visitors get a limited number of parallel downloads per IP.
-fn anon_guard(
+pub fn anon_guard(
     st: &AppState,
     principal: &Principal,
     client: &ClientInfo,
@@ -326,32 +360,131 @@ enum SortBy {
     Modified,
 }
 
+/// What surrounds a listing: a volume's folder browser or a share's.
+pub struct Frame {
+    /// First breadcrumb (label, link); the components of `sub` follow it.
+    pub root: (String, String),
+    pub sub: RelPath,
+    pub title: String,
+    pub note: Option<String>,
+    pub show_space: bool,
+    /// The admin: hidden-files switch.
+    pub admin: bool,
+    pub form_csrf: Option<String>,
+    pub can_mkdir: bool,
+    pub can_delete: bool,
+    pub upload: Option<UploadUi>,
+    pub share: Option<ShareHead>,
+    /// A signed-in user who may share here: links to create shares in this volume.
+    pub share_volume: Option<String>,
+    pub share_blocked: Option<String>,
+    pub public_upload_href: Option<String>,
+    pub trash_days: u32,
+}
+
+/// The frame of a volume folder for the visitor behind the request.
 #[allow(clippy::too_many_arguments)]
-async fn listing(
+async fn volume_frame(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    vol: &VolumeRoot,
+    rel: &RelPath,
+    perms: Perms,
+    principal: &Principal,
+    guest: Option<&PublicGuest>,
+    raw_path: &str,
+) -> Frame {
+    let form_csrf = ctx
+        .csrf
+        .map(str::to_string)
+        .or_else(|| guest.map(|g| g.csrf.clone()));
+    let may_write = form_csrf.is_some() && perms.contains(Perms::WRITE);
+    let upload = may_write.then(|| UploadUi {
+        volume: vol.name().to_string(),
+        dir: rel.as_str().to_string(),
+        parallel: st.cfg.uploads.parallel,
+        csrf: form_csrf.clone().unwrap_or_default(),
+        api: "/.cc".into(),
+        limit: guest
+            .and_then(|g| g.max_file)
+            .map(|m| ctx.tf("upload.limit", &[("size", &ctx.size(m))])),
+    });
+    let can_share = ctx.signed_in && perms.contains(Perms::SHARE);
+    let public_upload_href = if principal.is_anonymous() && guest.is_none() && vol.cfg.public {
+        let (st2, name) = (st.clone(), vol.name().to_string());
+        let open = tokio::task::spawn_blocking(move || {
+            st2.db
+                .public_write(&name)
+                .ok()
+                .flatten()
+                .is_some_and(|pw| crate::shares::public_open(&st2.cfg, &pw, now()))
+        })
+        .await
+        .unwrap_or(false);
+        open.then(|| {
+            format!(
+                "/.cc/public-write?vol={}&next={}",
+                enc(vol.name()),
+                enc(raw_path)
+            )
+        })
+    } else {
+        None
+    };
+    Frame {
+        root: (vol.name().to_string(), format!("/{}/", enc(vol.name()))),
+        sub: rel.clone(),
+        title: rel.name().unwrap_or(vol.name()).to_string(),
+        note: note_for(&vol.cfg.note, ctx.code()),
+        show_space: true,
+        admin: principal.is_admin(),
+        can_mkdir: may_write,
+        can_delete: ctx.csrf.is_some() && perms.contains(Perms::DELETE),
+        form_csrf,
+        upload,
+        share: None,
+        share_volume: (can_share && vol.cfg.remote).then(|| vol.name().to_string()),
+        share_blocked: (can_share && !vol.cfg.remote)
+            .then(|| ctx.t("browser.share_local_only").to_string()),
+        public_upload_href,
+        trash_days: vol.cfg.trash_days(&st.cfg),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn listing(
     st: &AppState,
     ctx: &Ctx<'_>,
     vol: Arc<VolumeRoot>,
     rel: RelPath,
     perms: Perms,
     q: &Query,
-    principal: &Principal,
     raw_path: &str,
+    frame: Frame,
 ) -> Response {
-    let admin = principal.is_admin();
-    let show_hidden = admin && q.get("hidden") == Some("1");
+    let show_hidden = frame.admin && q.get("hidden") == Some("1");
+    let badges = ctx.signed_in;
     let listed = {
-        let (vol, rel) = (vol.clone(), rel.clone());
-        tokio::task::spawn_blocking(move || -> io::Result<(Vec<Entry>, Option<Space>)> {
-            let entries = vol.list(&rel, show_hidden)?;
-            Ok((entries, vol.space().ok()))
-        })
+        let (vol, rel, db) = (vol.clone(), rel.clone(), st.db.clone());
+        tokio::task::spawn_blocking(
+            move || -> io::Result<(Vec<Entry>, Option<Space>, Vec<crate::db::Share>)> {
+                let entries = vol.list(&rel, show_hidden)?;
+                let shares = if badges {
+                    db.shares().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                Ok((entries, vol.space().ok(), shares))
+            },
+        )
         .await
     };
-    let (mut entries, space) = match listed {
+    let (mut entries, space, shares) = match listed {
         Ok(Ok(x)) => x,
         Ok(Err(e)) if e.kind() == io::ErrorKind::NotFound => return fail(ctx, Fail::NotFound),
         _ => return fail(ctx, Fail::Internal),
     };
+    let shared = crate::shares::shared_names(&shares, vol.name(), &rel, now());
 
     let sort = match q.get("sort") {
         Some("size") => SortBy::Size,
@@ -391,6 +524,14 @@ async fn listing(
         .iter()
         .map(|e| {
             let is_dir = e.meta.kind == Kind::Dir;
+            let share_href = frame.share_volume.as_ref().and_then(|v| {
+                let path = rel.join(&e.name).ok()?;
+                Some(format!(
+                    "/.cc/shares/new?vol={}&path={}",
+                    enc(v),
+                    enc(path.as_str())
+                ))
+            });
             Row {
                 name: e.name.clone(),
                 href: if is_dir {
@@ -405,6 +546,8 @@ async fn listing(
                     ctx.size(e.meta.size)
                 },
                 modified: ctx.datetime(e.meta.mtime),
+                shared: shared.contains(&e.name),
+                share_href,
             }
         })
         .collect();
@@ -434,13 +577,12 @@ async fn listing(
     };
     let sort_link = |s: SortBy| link(1, s, s == sort && !desc, show_hidden);
 
-    let vol_href = format!("/{}/", enc(vol.name()));
     let mut crumbs = vec![Crumb {
-        label: vol.name().to_string(),
-        href: vol_href.clone(),
+        label: frame.root.0.clone(),
+        href: frame.root.1.clone(),
     }];
-    let mut acc = vol_href;
-    for c in rel.components() {
+    let mut acc = frame.root.1.clone();
+    for c in frame.sub.components() {
         acc.push_str(&enc(c));
         acc.push('/');
         crumbs.push(Crumb {
@@ -449,11 +591,17 @@ async fn listing(
         });
     }
 
+    let share_here = frame
+        .share_volume
+        .as_ref()
+        .map(|v| format!("/.cc/shares/new?vol={}&path={}", enc(v), enc(rel.as_str())));
     let view = ListingView {
-        title: rel.name().unwrap_or(vol.name()).to_string(),
+        title: frame.title,
         crumbs,
-        note: note_for(&vol.cfg.note, ctx.code()),
-        free: space.map(|s| ctx.tf("browser.free_space", &[("free", &ctx.size(s.avail))])),
+        note: frame.note,
+        free: space
+            .filter(|_| frame.show_space)
+            .map(|s| ctx.tf("browser.free_space", &[("free", &ctx.size(s.avail))])),
         read_only: !perms.intersects(CHANGES),
         rows,
         total,
@@ -472,15 +620,12 @@ async fn listing(
             format!("{raw_path}?zip")
         },
         post_href: raw_path.to_string(),
-        can_write: ctx.csrf.is_some() && perms.contains(Perms::WRITE),
-        can_delete: ctx.csrf.is_some() && perms.contains(Perms::DELETE),
-        upload: (ctx.csrf.is_some() && perms.contains(Perms::WRITE)).then(|| UploadUi {
-            volume: vol.name().to_string(),
-            dir: rel.as_str().to_string(),
-            parallel: st.cfg.uploads.parallel,
-        }),
-        trash_days: vol.cfg.trash_days(&st.cfg),
-        hidden_toggle: admin.then(|| {
+        form_csrf: frame.form_csrf,
+        can_write: frame.can_mkdir,
+        can_delete: frame.can_delete,
+        upload: frame.upload,
+        trash_days: frame.trash_days,
+        hidden_toggle: frame.admin.then(|| {
             if show_hidden {
                 (
                     ctx.t("browser.hide_hidden").to_string(),
@@ -494,6 +639,10 @@ async fn listing(
             }
         }),
         showing_hidden: show_hidden,
+        share: frame.share,
+        share_here,
+        share_blocked: frame.share_blocked,
+        public_upload_href: frame.public_upload_href,
     };
     views::listing(ctx, &view).into_response()
 }
@@ -573,7 +722,7 @@ pub fn content_disposition(kind: &str, name: &str) -> String {
     )
 }
 
-async fn download(
+pub async fn download(
     fd: OwnedFd,
     meta: &Meta,
     name: &str,
@@ -664,7 +813,7 @@ async fn download(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-fn zip_response(
+pub fn zip_response(
     st: &AppState,
     vol: Arc<VolumeRoot>,
     rel: RelPath,
@@ -740,6 +889,7 @@ async fn folder_post(
     client: &ClientInfo,
     principal: &Principal,
     current: Option<&CurrentUser>,
+    guest: Option<&PublicGuest>,
     headers: &HeaderMap,
     folder: FolderReq,
     body: Body,
@@ -769,13 +919,41 @@ async fn folder_post(
             Err(f) => fail(ctx, f),
         };
     }
-    let Some(cu) = current else {
-        return forbidden(ctx);
+    let token = form.get("csrf").unwrap_or_default();
+    // A signed-in user, or a public uploader (who may only create folders).
+    let public_writer = match (current, guest) {
+        (Some(cu), _) => {
+            if !csrf_ok(headers, st, cu, token) {
+                return forbidden(ctx);
+            }
+            false
+        }
+        (None, Some(g)) if op == "mkdir" => {
+            let token = headers
+                .get("x-csrf-token")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or(token);
+            if !super::auth::same_origin(headers, &st.cfg.server.public_url)
+                || !super::auth::token_eq(token, &g.csrf)
+            {
+                return forbidden(ctx);
+            }
+            true
+        }
+        _ => return forbidden(ctx),
     };
-    if !csrf_ok(headers, st, cu, form.get("csrf").unwrap_or_default()) {
-        return forbidden(ctx);
-    }
-    let actor = format!("user:{}", cu.key);
+    let actor = match (current, guest) {
+        (Some(cu), _) => format!("user:{}", cu.key),
+        (None, Some(g)) => format!("public:{}", g.volume),
+        (None, None) => return forbidden(ctx),
+    };
+    let perms_at = |r: &RelPath| {
+        if public_writer {
+            public_writer_perms(&st.cfg, client.origin, folder.vol.name(), r)
+        } else {
+            path_perms(&st.cfg, principal, client.origin, folder.vol.name(), r)
+        }
+    };
     match op {
         "mkdir" => {
             let name = form.get("name").unwrap_or_default().trim().to_string();
@@ -791,13 +969,7 @@ async fn folder_post(
                     );
                 }
             };
-            let perms = path_perms(
-                &st.cfg,
-                principal,
-                client.origin,
-                folder.vol.name(),
-                &target,
-            );
+            let perms = perms_at(&target);
             if !perms.contains(Perms::WRITE) {
                 return problems(
                     ctx,
@@ -843,13 +1015,7 @@ async fn folder_post(
                         continue;
                     }
                 };
-                let perms = path_perms(
-                    &st.cfg,
-                    principal,
-                    client.origin,
-                    folder.vol.name(),
-                    &target,
-                );
+                let perms = perms_at(&target);
                 if !perms.contains(Perms::READ) {
                     failures.push(ctx.tf("ops.not_found", &[("name", name)]));
                     continue;

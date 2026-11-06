@@ -112,7 +112,7 @@ fn trash_dir_of(vol: &VolumeRoot, item: &TrashItem) -> Result<OwnedFd, OpError> 
 }
 
 /// Move an item back to where it was, recreating missing folders. If the name is taken,
-/// it comes back as "name (restored)". Returns the path it got.
+/// it comes back as "name (restored)", and shares of it follow. Returns the path it got.
 pub fn restore(db: &Db, vol: &VolumeRoot, item: &TrashItem) -> Result<RelPath, OpError> {
     let rel = RelPath::parse(&item.path)?;
     let (Some(parent), Some(name)) = (rel.parent(), rel.name()) else {
@@ -125,7 +125,13 @@ pub fn restore(db: &Db, vol: &VolumeRoot, item: &TrashItem) -> Result<RelPath, O
         .map_err(|e| gone(e.into()))?;
     let _ = unlinkat(&tdir, item.id.as_str(), AtFlags::REMOVEDIR);
     db.delete_trash(&item.id)?;
-    Ok(parent.join(&used)?)
+    let restored = parent.join(&used)?;
+    if restored != rel
+        && let Err(e) = crate::shares::follow_move(db, vol.name(), &rel, vol.name(), &restored)
+    {
+        tracing::error!(volume = %vol.name(), path = %rel, "shares didn't follow a restore: {e}");
+    }
+    Ok(restored)
 }
 
 fn gone(e: OpError) -> OpError {
