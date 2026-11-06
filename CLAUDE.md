@@ -104,7 +104,18 @@ Plan steps 1–2 done. Step 3 (backend slices):
   replace this). Visitors without an account get the share skin + share background. Pictures
   load for their owner, or for everyone once the appearance settings use them. Skins =
   embedded `assets/skins/*.css` (none yet → `default`).
-- Next: slice 10, `import-copyparty`. The account page still lacks app passwords and "sign
+- Slice 10 done: `chestcraft import-copyparty <conf> [--role NAME=ROLE]… [--skip NAME]…
+  [--dry-run]` (`src/import/`). Reads the copyparty file (never writes it) the way copyparty
+  1.20 does: `  #` comments, `% ` includes (files, folders), `[x]:`, `[accounts]`, `a:` in
+  `[global]`, `[groups]`, volume `accs:` with `*`, `@group`, `@acct`; what copyparty refuses
+  is refused, v1 format too. Every importable account needs a role or `--skip` (else nothing
+  happens); the report puts each account's copyparty access per volume next to its role's
+  (matched by name, other case, or folder) and marks differences. Passwords never appear in
+  output, `Debug` or errors. Imported accounts keep their copyparty password (argon2id) with
+  a forced change; `ah-alg` hashes get a one-time password; empty password, invalid name,
+  case duplicate or existing account → skipped (`Db::insert_user` never overwrites); audited
+  as `user_imported` (actor `cli`). `/dev/stdin` works (`ssh host cat … | chestcraft …`).
+- Next: slice 11, `/healthz` + status API. The account page still lacks app passwords and "sign
   out everywhere", and rename/move/copy in the UI come with the UI integration; the
   primitives exist. A thumbnail that fails to load needs a JS fallback to the type icon (UI
   integration). The dashboard/alerts markup is provisional until the design session
