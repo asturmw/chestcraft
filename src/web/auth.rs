@@ -38,8 +38,14 @@ pub fn now() -> i64 {
 fn allowed_before_password_change(path: &str) -> bool {
     matches!(
         path,
-        "/.cc/password" | "/.cc/logout" | "/healthz" | "/robots.txt" | "/favicon.ico"
+        "/.cc/password"
+            | "/.cc/logout"
+            | "/.cc/backdrop.css"
+            | "/healthz"
+            | "/robots.txt"
+            | "/favicon.ico"
     ) || path.starts_with("/.cc/assets/")
+        || path.starts_with("/.cc/bg/")
 }
 
 /// Resolve the session cookie into a principal and the current account.

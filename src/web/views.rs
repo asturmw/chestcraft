@@ -6,14 +6,17 @@ use crate::i18n::{I18n, Lang};
 use maud::{DOCTYPE, Markup, html};
 
 /// Per-request rendering context.
+#[derive(Clone)]
 pub struct Ctx<'a> {
     pub i18n: &'a I18n,
     pub lang: Lang,
     /// `light`, `dark`, or None to follow the system.
     pub theme: Option<&'static str>,
-    pub skin: &'a str,
+    pub skin: String,
     /// `vim`, `standard` or `off`.
     pub keys: &'static str,
+    /// What shows behind the panels.
+    pub backdrop: Backdrop,
     pub signed_in: bool,
     /// Signed in with the admin role (dashboard link).
     pub admin: bool,
@@ -25,6 +28,21 @@ pub struct Ctx<'a> {
     pub scripts: Vec<&'static str>,
     /// This page's path: pages for visitors without an account get a language switch.
     pub lang_switch: Option<String>,
+}
+
+/// The `backdrop` block: nothing, a color (from a generated stylesheet) or a picture
+/// chosen by the screen's aspect ratio.
+#[derive(Debug, Clone, Default)]
+pub struct Backdrop {
+    /// `none`, `color` or `image`.
+    pub state: &'static str,
+    /// Steps 0–4.
+    pub dim: u8,
+    pub blur: u8,
+    /// Picture URLs for wide, near-square and tall screens.
+    pub pictures: Option<[String; 3]>,
+    /// Stylesheet that sets the color.
+    pub stylesheet: Option<String>,
 }
 
 impl<'a> Ctx<'a> {
@@ -72,7 +90,10 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                 title { (title) " – chestcraft" }
                 link rel="stylesheet" href=(assets::url("tokens.css"));
                 link rel="stylesheet" href=(assets::url("app.css"));
-                @if let Some(href) = assets::skin_css(ctx.skin) {
+                @if let Some(href) = assets::skin_css(&ctx.skin) {
+                    link rel="stylesheet" href=(href);
+                }
+                @if let Some(href) = &ctx.backdrop.stylesheet {
                     link rel="stylesheet" href=(href);
                 }
                 @for js in &ctx.scripts {
@@ -81,6 +102,7 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
             }
             body {
                 a class="skip-link" href="#main" { (ctx.t("common.skip_to_content")) }
+                (backdrop(&ctx.backdrop))
                 header class="app-header" {
                     a class="app-header__brand" href="/" { "chestcraft" }
                     @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
@@ -88,6 +110,7 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                             a class="app-header__dashboard" href="/.cc/admin/dashboard" { (ctx.t("common.dashboard")) }
                         }
                         a class="app-header__trash" href="/.cc/trash" { (ctx.t("common.trash")) }
+                        a class="app-header__account" href="/.cc/account" { (ctx.t("common.account")) }
                         span class="app-header__user" { (ctx.tf("common.signed_in_as", &[("name", name)])) }
                         form class="app-header__sign-out" method="post" action="/.cc/logout" {
                             input type="hidden" name="csrf" value=(csrf);
@@ -110,6 +133,21 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                     }
                 }
                 main id="main" class="app-main" { (main) }
+            }
+        }
+    }
+}
+
+pub fn backdrop(b: &Backdrop) -> Markup {
+    let state = if b.state.is_empty() { "none" } else { b.state };
+    html! {
+        div class="backdrop" data-state=(state) data-dim=(b.dim) data-blur=(b.blur) aria-hidden="true" {
+            @if let Some([wide, square, tall]) = &b.pictures {
+                picture class="backdrop__picture" {
+                    source media="(max-aspect-ratio: 2/3)" srcset=(tall);
+                    source media="(max-aspect-ratio: 5/4)" srcset=(square);
+                    img class="backdrop__img" src=(wide) alt="" decoding="async" fetchpriority="low";
+                }
             }
         }
     }

@@ -86,11 +86,30 @@ Plan steps 1–2 done. Step 3 (backend slices):
   Fixtures: anonymized zpool/zfs output from the NAS, smartctl NVMe from another host,
   ATA hand-written (no SATA disk had smartctl yet). Not yet run as root against real
   disks: `collect` needs smartmontools on the NAS (setup step 4).
-- Next: slice 9, user preferences + appearance (skins, backgrounds, rotation). The account
-  page (app passwords in the UI) and rename/move/copy in the UI come with the UI
-  integration; the primitives exist. A thumbnail that fails to load needs a JS fallback to
-  the type icon (UI integration). The dashboard/alerts markup is provisional until the
-  design session delivers those screens.
+- Slice 9 done: preferences + appearance (`src/appearance/`, `web/account.rs`).
+  `/.cc/account`: language, theme, skin, shortcuts, rotation (POST fields optional + `next`,
+  for quick switches). Background editor `/.cc/account/backgrounds?skin=`: per skin default
+  / none / color or 2–3-color gradient / picture sets (several rotate: never, load, session,
+  day; default day), dim + blur 0–4. Uploads (multipart, 1–3 shapes wide 16:9 / square 3:4 /
+  tall 10:16, ≤ 30 MiB each) are decoded in process (EXIF orientation), stored as JPEG ≤
+  3840 px without metadata + 480 px preview in `<state_dir>/backgrounds/<id>/`, one
+  conversion at a time; `[appearance] max_backgrounds_per_user` / `deny_upload_roles`,
+  admins unlimited; new set is selected at once; half-written sets swept at startup. Admin
+  `/.cc/admin/appearance`: default skin, share skin, default rotation, default background
+  per skin and share background (`?edit=default:<skin>|share`, same editor), audited. Every
+  page gets `.backdrop` (`data-state` none/color/image, `data-dim`, `data-blur`, `<picture>`
+  with 2/3 and 5/4 aspect breakpoints; missing shapes fall back to the closest). Colors: the
+  page links `/.cc/backdrop.css?c=1a2b3c-445566&a=135`, which sets `--backdrop-color` on
+  `.backdrop[data-state="color"]` (no inline styles; the design session must adopt or
+  replace this). Visitors without an account get the share skin + share background. Pictures
+  load for their owner, or for everyone once the appearance settings use them. Skins =
+  embedded `assets/skins/*.css` (none yet → `default`).
+- Next: slice 10, `import-copyparty`. The account page still lacks app passwords and "sign
+  out everywhere", and rename/move/copy in the UI come with the UI integration; the
+  primitives exist. A thumbnail that fails to load needs a JS fallback to the type icon (UI
+  integration). The dashboard/alerts markup is provisional until the design session
+  delivers those screens. The nightly state backup (not built yet) must include
+  `<state_dir>/backgrounds`.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in
@@ -120,9 +139,9 @@ LAN/Tailscale only, agent accounts with a role + bearer tokens) as the last back
 
 ## Layout (planned)
 
-- `src/`: `config/`, `db/` (redb), `auth/`, `fs/` (paths, trash, upload, zip, thumbs),
-  `web/` (axum routes, maud views), `dav/`, `mcp/`, `shares/`, `health/` (zpool, zfs, smart, mdstat,
-  host, history, alerts), `notify/`, `i18n.rs`
+- `src/`: `config/`, `db/` (redb), `appearance/` (skins, backgrounds), `auth/`, `fs/` (paths,
+  trash, upload, zip, thumbs), `web/` (axum routes, maud views), `dav/`, `mcp/`, `shares/`,
+  `health/` (zpool, zfs, smart, mdstat, host, history, alerts), `notify/`, `i18n.rs`
 - `assets/`: CSS, JS, fonts, icons (integrated from `design/`)
 - `i18n/`: `de.toml`, `en.toml` (a missing key fails the tests)
 - `deploy/`: `release.sh`, `install.sh`, `units/`, `site/` (gitignored)

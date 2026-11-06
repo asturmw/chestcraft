@@ -75,15 +75,20 @@ pub async fn run(st: Shared) {
 }
 
 /// At startup: no request is running yet, so every temporary entry of a WebDAV upload, copy
-/// or move is left over from a crash.
+/// or move is left over from a crash, and so is a background set without its record.
 pub async fn sweep_leftovers(st: Shared) {
     let swept = tokio::task::spawn_blocking(move || {
-        transfer::sweep_temps(&st.db, &st.volumes, None, Timestamp::now().as_second())
+        let temps = transfer::sweep_temps(&st.db, &st.volumes, None, Timestamp::now().as_second());
+        (temps, st.looks.sweep(&st.db))
     })
     .await;
     match swept {
-        Ok(0) => {}
-        Ok(n) => tracing::info!(removed = n, "removed temporary entries left by a crash"),
+        Ok((0, 0)) => {}
+        Ok((temps, backgrounds)) => tracing::info!(
+            temps,
+            backgrounds,
+            "removed temporary entries left by a crash"
+        ),
         Err(_) => tracing::error!("sweeping temporary entries crashed"),
     }
 }

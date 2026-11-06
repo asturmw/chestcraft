@@ -14,7 +14,7 @@
 mod cache;
 mod gcode;
 mod mesh;
-mod raster;
+pub(crate) mod raster;
 mod svg;
 mod threemf;
 mod video;

@@ -1,5 +1,7 @@
 //! HTTP server: shared state, routes and middleware.
 
+mod account;
+mod account_views;
 mod api;
 mod assets;
 mod auth;
@@ -63,6 +65,10 @@ pub struct AppState {
     pub health: monitor::Monitor,
     /// Telegram / ntfy.
     pub notifier: Arc<crate::notify::Notifier>,
+    /// Appearance settings and background sets.
+    pub looks: Arc<crate::appearance::Store>,
+    /// Skins this build embeds (`skins/<name>.css`), sorted.
+    pub skins: Vec<String>,
     /// Lets tests act as a principal without signing in.
     #[cfg(test)]
     pub test_principal: std::sync::Mutex<Option<Principal>>,
@@ -84,7 +90,10 @@ impl AppState {
         for w in warnings {
             tracing::warn!("{w}");
         }
+        let looks = Arc::new(crate::appearance::Store::open(&db, &cfg.paths.state_dir));
         AppState {
+            looks,
+            skins: assets::skins().into_iter().map(String::from).collect(),
             thumbs: crate::fs::thumbs::Thumbs::new(&cfg),
             thumb_limiter: preview::anon_limiter(),
             health: monitor::Monitor::default(),
@@ -116,7 +125,8 @@ impl AppState {
     }
 }
 
-/// Rendering context: the account's settings first, then cookies and the browser.
+/// Rendering context: the account's settings first, then cookies and the browser. Pages
+/// for visitors without an account use the admin's skin and background for those pages.
 pub fn page_ctx<'a>(
     st: &'a AppState,
     headers: &HeaderMap,
@@ -136,21 +146,19 @@ pub fn page_ctx<'a>(
         Some("dark") => Some("dark"),
         _ => None,
     };
-    let skin = settings
-        .and_then(|s| s.skin.as_deref())
-        .filter(|s| assets::skin_css(s).is_some())
-        .unwrap_or(assets::default_skin());
     let keys = match settings.and_then(|s| s.keys.as_deref()) {
         Some("vim") => "vim",
         Some("off") => "off",
         _ => "standard",
     };
+    let (skin, backdrop) = account::look(st, current);
     views::Ctx {
         i18n: &st.i18n,
         lang,
         theme,
         skin,
         keys,
+        backdrop,
         signed_in: !principal.is_anonymous(),
         admin: principal.is_admin(),
         user_name: current.map(|c| c.name.as_str()),
@@ -216,6 +224,23 @@ pub fn router(state: Shared) -> Router {
         .route("/.cc/trash/restore", post(trash::restore))
         .route("/.cc/trash/empty", post(trash::empty))
         .route("/.cc/lang", get(lang))
+        .route("/.cc/account", get(account::page).post(account::save_prefs))
+        .route(
+            "/.cc/account/backgrounds",
+            get(account::backgrounds_page).post(account::backgrounds_submit),
+        )
+        .route(
+            "/.cc/account/backgrounds/upload",
+            post(account::upload).layer(axum::extract::DefaultBodyLimit::max(
+                3 * crate::appearance::MAX_UPLOAD_BYTES + (1 << 20),
+            )),
+        )
+        .route(
+            "/.cc/admin/appearance",
+            get(account::appearance_page).post(account::appearance_submit),
+        )
+        .route("/.cc/bg/{id}/{file}", get(account::picture))
+        .route("/.cc/backdrop.css", get(account::backdrop_css))
         .route("/.cc/shares", get(shares::list))
         .route(
             "/.cc/shares/new",

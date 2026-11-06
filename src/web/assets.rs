@@ -61,10 +61,6 @@ pub fn skins() -> Vec<&'static str> {
     v
 }
 
-pub fn default_skin() -> &'static str {
-    skins().first().copied().unwrap_or("default")
-}
-
 fn content_type(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("css") => "text/css; charset=utf-8",

@@ -59,6 +59,16 @@ pub struct Config {
     pub disks: BTreeMap<String, String>,
     pub alerts: AlertsConfig,
     pub shares: SharesConfig,
+    pub appearance: AppearanceConfig,
+}
+
+/// Limits for background images (the rest of the appearance is set in the admin UI).
+#[derive(Debug, Clone)]
+pub struct AppearanceConfig {
+    /// Image sets one account may upload; admins have no limit.
+    pub max_backgrounds_per_user: u32,
+    /// Roles that may not upload background images.
+    pub deny_upload_roles: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -266,6 +276,24 @@ struct RawConfig {
     alerts: RawAlerts,
     #[serde(default)]
     shares: RawShares,
+    #[serde(default)]
+    appearance: RawAppearance,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct RawAppearance {
+    max_backgrounds_per_user: u32,
+    deny_upload_roles: Vec<String>,
+}
+
+impl Default for RawAppearance {
+    fn default() -> Self {
+        RawAppearance {
+            max_backgrounds_per_user: 10,
+            deny_upload_roles: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -722,6 +750,29 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         }
     }
 
+    let mut deny_upload_roles = BTreeSet::new();
+    for role in raw.appearance.deny_upload_roles {
+        if role == crate::auth::perm::ADMIN_ROLE {
+            errs.push("appearance.deny_upload_roles: admins can always upload backgrounds".into());
+        } else if !roles.contains_key(&role) {
+            errs.push(format!(
+                "appearance.deny_upload_roles: unknown role \"{role}\""
+            ));
+        } else {
+            deny_upload_roles.insert(role);
+        }
+    }
+    let appearance = AppearanceConfig {
+        max_backgrounds_per_user: in_range(
+            raw.appearance.max_backgrounds_per_user,
+            0,
+            1000,
+            "appearance.max_backgrounds_per_user",
+            errs,
+        ),
+        deny_upload_roles,
+    };
+
     Some(Config {
         server: server?,
         paths: paths?,
@@ -735,6 +786,7 @@ fn validate(raw: RawConfig, config_dir: Option<&Path>, errs: &mut Vec<String>) -
         disks,
         alerts,
         shares: SharesConfig { wordlists },
+        appearance,
     })
 }
 
