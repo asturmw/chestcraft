@@ -49,7 +49,9 @@ AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes
-RestrictSUIDSGID=yes
+# No RestrictSUIDSGID=: its seccomp filter can't see openat2()'s flags and blocks the
+# call entirely (ENOSYS), and every file access goes through openat2(RESOLVE_BENEATH).
+# The server never sets SUID/SGID bits; NoNewPrivileges= keeps them inert anyway.
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 ProtectKernelTunables=yes

@@ -397,4 +397,21 @@ mod tests {
             io::ErrorKind::NotFound
         );
     }
+
+    /// systemd's RestrictSUIDSGID= blocks openat2() outright (ENOSYS), which would break
+    /// every file access of the server units (found on staging, 2026-11-07).
+    #[test]
+    fn server_units_allow_openat2() {
+        for unit in [
+            include_str!("../../deploy/units/chestcraft.service"),
+            include_str!("../../deploy/units/chestcraft-staging.service"),
+        ] {
+            assert!(
+                !unit
+                    .lines()
+                    .any(|l| l.trim_start().starts_with("RestrictSUIDSGID=")),
+                "RestrictSUIDSGID= in a server unit"
+            );
+        }
+    }
 }
