@@ -7,8 +7,8 @@ dashboard with ZFS/SMART health and Telegram alerts. Replaces copyparty.
 
 ## Status
 
-Plan steps 1–3 done (step 3 = the backend slices below; `deploy/release.sh` and
-`install.sh` don't exist yet). Next: NAS setup (step 4), UI integration (7), staging (8).
+Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
+13). Next: NAS setup (step 4), UI integration (7), staging (8).
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -146,14 +146,37 @@ Plan steps 1–3 done (step 3 = the backend slices below; `deploy/release.sh` an
   add|list|role|disable|enable|token|revoke` (service stopped). Dashboard app section +
   status API: `agent_calls_24h`, last call per agent. Verified with the Python MCP SDK 2.3
   against a local `serve`; Claude Code + Hermes against staging :3926 still to do.
+- Slice 13 done: deploy (`docs/install.md`). `deploy/release.sh`: fmt, clippy `-D
+  warnings`, tests, C-free static musl build (`CHESTCRAFT_VERSION` = `<pkg>+<git rev>`),
+  tarball in `target/dist/` (binary, install.sh, units, example config, smartd.conf,
+  SHA256SUMS). `deploy/install.sh` (root, on the server): checksums → config check as the
+  service user with the new binary (failure = nothing changed) → units (old file →
+  `.bak-<date>`), `--user NAME` drop-in `20-user.conf`, `10-paths.conf` from `chestcraft
+  check --systemd` (ReadWritePaths state/cache/backup/writable volumes, ReadOnlyPaths for
+  `read_only_paths`) → `.prev` → rename → restart if running → `/healthz` (`collector`
+  counts as up) → else rollback, new one kept as `.failed`. Tested in a user+mount
+  namespace with stubbed systemctl/curl (all five paths), not yet on a real host. Units:
+  `chestcraft.service` (Type=exec, sandboxed: ProtectSystem=strict, DevicePolicy=closed +
+  `/dev/zfs`, @system-service, MemoryDenyWriteExecute; exposure 1.7),
+  `chestcraft-staging.service` (staging.toml, Conflicts=chestcraft.service, same state).
+  Reload: `ExecReload` = `check` then SIGHUP; the server re-validates, drains (10 s cap,
+  also on SIGTERM) and re-execs `/proc/self/exe` (same pid); invalid → logged, keeps
+  running. Startup warns when a writable volume is EROFS (missing in ReadWritePaths).
+  Nightly state backup (`src/backup.rs`, after the 04:00 cleanup): `Db::copy_to` (one read
+  txn → new redb file, all tables; a test compares table lists) → `state.redb`, plus
+  `config/` and mirrored `backgrounds/`, temp + fsync + rename, 600/700; `backup_dir` is
+  never created and must be on another file system than `state_dir` (an unmounted
+  dataset's folder sits on the system disk), else the backup fails and `check` warns. Outcome in `settings.backup` → dashboard app line,
+  status API `app.backup`, alert `backup:failed`. `deploy/smartd.conf`: self-tests only.
+  Not verified under the real sandbox yet: ffmpeg/curl/zpool with MemoryDenyWriteExecute +
+  the syscall filter (staging).
 - Open: `admin.sock` (plan: CLI state commands through it while the server runs) is not
   built for any command; all CLI state commands need the service stopped. The account page
   still lacks app passwords and "sign out everywhere", and rename/move/copy in the UI come
   with the UI integration; the primitives exist. A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token and
   agent-activity markup is provisional until the design session delivers those screens;
-  the agents screen (Addendum 2 "UI") needs a note in its handoff. The nightly state backup
-  (not built yet) must include `<state_dir>/backgrounds`.
+  the agents screen (Addendum 2 "UI") needs a note in its handoff.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in
@@ -188,7 +211,7 @@ LAN/Tailscale only, agent accounts with a role + bearer tokens) as the last back
   `health/` (zpool, zfs, smart, mdstat, host, history, alerts), `notify/`, `i18n.rs`
 - `assets/`: CSS, JS, fonts, icons (integrated from `design/`)
 - `i18n/`: `de.toml`, `en.toml` (a missing key fails the tests)
-- `deploy/`: `release.sh`, `install.sh`, `units/`, `site/` (gitignored)
+- `deploy/`: `release.sh`, `install.sh`, `units/`, `smartd.conf`, `site/` (gitignored)
 - `tests/`, `fixtures/`: integration tests; zpool/zfs/smartctl JSON samples
 - `config.example.toml`: config schema (draft)
 

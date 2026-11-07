@@ -24,6 +24,13 @@ enum Cmd {
         /// Only validate the file; skip the checks against this machine
         #[arg(long)]
         offline: bool,
+        /// Print a systemd drop-in with the folders the service may write to (for
+        /// chestcraft.service.d/; deploy/install.sh writes it)
+        #[arg(long, conflicts_with = "healthz_url")]
+        systemd: bool,
+        /// Print the local /healthz URL (for deploy scripts)
+        #[arg(long)]
+        healthz_url: bool,
     },
     /// Read SMART data for the dashboard (runs as root from chestcraft-collect.timer)
     Collect,
@@ -155,7 +162,11 @@ enum ApiTokenCmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Check { offline } => check(&cli.config, offline),
+        Cmd::Check {
+            offline,
+            systemd,
+            healthz_url,
+        } => check(&cli.config, offline, systemd, healthz_url),
         Cmd::Serve => serve(&cli.config),
         Cmd::User(cmd) => user(&cli.config, cmd),
         Cmd::ApiToken(cmd) => api_token(&cli.config, cmd),
@@ -320,8 +331,12 @@ fn serve(path: &Path) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(chestcraft::web::serve(cfg, path.parent())) {
-        Ok(()) => ExitCode::SUCCESS,
+    let exit = runtime.block_on(chestcraft::web::serve(cfg, path));
+    // Tasks still running (a long download, a thumbnail) end with the runtime.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    match exit {
+        Ok(chestcraft::web::Exit::Stop) => ExitCode::SUCCESS,
+        Ok(chestcraft::web::Exit::Restart) => restart(),
         Err(e) => {
             tracing::error!("{e:#}");
             ExitCode::FAILURE
@@ -329,7 +344,22 @@ fn serve(path: &Path) -> ExitCode {
     }
 }
 
-fn check(path: &Path, offline: bool) -> ExitCode {
+/// Start this same binary again in this process (same pid for systemd, same arguments and
+/// environment): `systemctl reload` lands here once the new configuration passed its
+/// checks. The database and the listeners close with the old image (close-on-exec).
+fn restart() -> ExitCode {
+    use std::os::unix::process::CommandExt;
+    let mut args = std::env::args_os();
+    let argv0 = args.next().unwrap_or_else(|| "chestcraft".into());
+    let err = std::process::Command::new("/proc/self/exe")
+        .arg0(argv0)
+        .args(args)
+        .exec();
+    tracing::error!("can't restart: {err}");
+    ExitCode::FAILURE
+}
+
+fn check(path: &Path, offline: bool, systemd: bool, healthz_url: bool) -> ExitCode {
     let cfg = match Config::load(path) {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -337,6 +367,14 @@ fn check(path: &Path, offline: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if systemd {
+        print!("{}", config::systemd_dropin(&cfg, path));
+        return ExitCode::SUCCESS;
+    }
+    if healthz_url {
+        println!("{}", config::healthz_url(&cfg));
+        return ExitCode::SUCCESS;
+    }
     if !offline {
         let report = config::check_environment(&cfg);
         for w in &report.warnings {

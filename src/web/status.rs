@@ -307,6 +307,19 @@ pub struct AppOut {
     pub failed_logins_24h: usize,
     /// MCP tool calls by agents in the last 24 hours.
     pub agent_calls_24h: usize,
+    /// The nightly state backup; null until the first one ran.
+    pub backup: Option<BackupOut>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BackupOut {
+    /// When the last attempt ended.
+    pub attempt: i64,
+    /// When the last good copy was made.
+    pub last_ok: Option<i64>,
+    /// Why the last attempt failed; null when it worked.
+    pub error: Option<String>,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -587,6 +600,12 @@ pub fn build(
         shares_active: s.app.shares_active,
         failed_logins_24h: s.app.failed_logins_24h,
         agent_calls_24h: s.app.agent_calls_24h,
+        backup: s.app.backup.as_ref().map(|b| BackupOut {
+            attempt: b.attempt,
+            last_ok: b.last_ok,
+            error: b.error.clone(),
+            bytes: b.bytes,
+        }),
     });
     out
 }

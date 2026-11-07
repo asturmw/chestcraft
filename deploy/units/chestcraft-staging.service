@@ -1,0 +1,66 @@
+# chestcraft staging: a second instance for trying a new build against the real data
+# before it replaces the live one. Same binary, state and sandbox as chestcraft.service;
+# its own config /etc/chestcraft/staging.toml (another port, the real volumes with
+# read_only = true, one writable sandbox volume). ProtectSystem=strict makes every folder
+# read-only that chestcraft-staging.service.d/10-paths.conf doesn't list, and that file is
+# written from staging.toml: a real volume without read_only = true would land in it, so
+# check the file after install.sh writes it.
+#
+# The two never run at once: they share the state database, which one process may open.
+[Unit]
+Description=chestcraft file sharing (staging)
+Conflicts=chestcraft.service
+After=network-online.target local-fs.target zfs-mount.service
+Wants=network-online.target
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=chestcraft
+ExecStart=/usr/local/bin/chestcraft --config /etc/chestcraft/staging.toml serve
+ExecReload=/usr/local/bin/chestcraft --config /etc/chestcraft/staging.toml check
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+# Telegram / ntfy tokens (root-owned file, mode 600; may be empty).
+LoadCredential=secrets:/etc/chestcraft/secrets.toml
+# Defaults of [paths] state_dir and cache_dir; the CLI socket lives in /run/chestcraft.
+StateDirectory=chestcraft
+StateDirectoryMode=0700
+CacheDirectory=chestcraft
+CacheDirectoryMode=0700
+RuntimeDirectory=chestcraft
+RuntimeDirectoryMode=0700
+UMask=0022
+LimitNOFILE=65536
+
+# Sandbox. zpool/zfs talk to /dev/zfs; SMART data comes from chestcraft-collect (root).
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/zfs rw
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

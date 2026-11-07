@@ -330,6 +330,12 @@ fn failing_disk_md_rootfs_snapshots_and_app() {
         volume: "Docs".into(),
         path: "Reports".into(),
     }];
+    s.app.backup = Some(crate::db::BackupStatus {
+        attempt: NOW,
+        last_ok: None,
+        error: Some("/srv/backup doesn't exist".into()),
+        bytes: 0,
+    });
     let c = kinds(&e.check(&s, NOW));
     for want in [
         "fired disk:WD-WMEXAMPLE0004:smart",
@@ -338,6 +344,7 @@ fn failing_disk_md_rootfs_snapshots_and_app() {
         "fired host:rootfs",
         "fired user:kim:role",
         "fired share:AbCdEfGhJkLm:missing",
+        "fired backup:failed",
         // Newest snapshot of tank/docs is 2h 20m old (limit 2h); tank/media/video's is 3
         // days old and tank's 30 (limit 2 days, from the rule for tank); datasets under
         // tank without any snapshot alert; tank/archive is switched off.

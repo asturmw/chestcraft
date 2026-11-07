@@ -1349,6 +1349,12 @@ fn validate_roles(
     out
 }
 
+impl std::fmt::Display for TimeOfDay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:02}:{:02}", self.hour, self.minute)
+    }
+}
+
 impl TimeOfDay {
     pub fn parse(s: &str) -> Result<TimeOfDay, String> {
         let bad = || format!("\"{s}\" is not a time like 04:00");
@@ -1392,6 +1398,62 @@ pub struct EnvReport {
     pub warnings: Vec<String>,
 }
 
+/// A systemd drop-in for the service: the folders chestcraft writes to (state, cache,
+/// backup, every volume that isn't read-only) as `ReadWritePaths=`, and the read-only areas
+/// inside writable volumes as `ReadOnlyPaths=`. With `ProtectSystem=strict` everything
+/// else is read-only. A `-` prefix keeps a missing folder from blocking the start.
+pub fn systemd_dropin(cfg: &Config, source: &Path) -> String {
+    fn quote(p: &Path) -> String {
+        let s = p.to_string_lossy().replace('%', "%%");
+        if s.bytes()
+            .any(|b| b.is_ascii_whitespace() || b == b'"' || b == b'\\' || b == b'\'')
+        {
+            format!("\"-{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        } else {
+            format!("-{s}")
+        }
+    }
+    let mut out = format!(
+        "# Written by `chestcraft check --systemd` from {}.\n\
+         # Run it again after changing [paths] or [volumes] (deploy/install.sh does).\n\
+         [Service]\n",
+        source.display()
+    );
+    let mut rw = vec![
+        cfg.paths.state_dir.clone(),
+        cfg.paths.cache_dir.clone(),
+        cfg.paths.backup_dir.clone(),
+    ];
+    let mut ro = Vec::new();
+    for v in cfg.volumes.values() {
+        if v.read_only {
+            continue;
+        }
+        rw.push(v.path.clone());
+        ro.extend(v.read_only_paths.iter().map(|p| v.path.join(p.as_str())));
+    }
+    rw.dedup();
+    for p in rw {
+        out.push_str(&format!("ReadWritePaths={}\n", quote(&p)));
+    }
+    for p in ro {
+        out.push_str(&format!("ReadOnlyPaths={}\n", quote(&p)));
+    }
+    out
+}
+
+/// Where `/healthz` answers on this machine (for deploy scripts).
+pub fn healthz_url(cfg: &Config) -> String {
+    let addr = cfg.server.listen;
+    let ip = match addr.ip() {
+        IpAddr::V4(v4) if v4.is_unspecified() => "127.0.0.1".to_string(),
+        IpAddr::V6(v6) if v6.is_unspecified() => "[::1]".to_string(),
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => format!("[{v6}]"),
+    };
+    format!("http://{ip}:{}/healthz", addr.port())
+}
+
 /// Checks against the machine the config will run on.
 pub fn check_environment(cfg: &Config) -> EnvReport {
     let mut r = EnvReport::default();
@@ -1403,6 +1465,17 @@ pub fn check_environment(cfg: &Config) -> EnvReport {
                 v.path.display()
             ));
             continue;
+        }
+        if !v.read_only
+            && rustix::fs::access(&v.path, rustix::fs::Access::WRITE_OK)
+                == Err(rustix::io::Errno::ROFS)
+        {
+            r.warnings.push(format!(
+                "volumes.{}: {} is read-only for chestcraft (a read-only mount, or missing in \
+                 ReadWritePaths= of the service: see `chestcraft check --systemd`)",
+                v.name,
+                v.path.display()
+            ));
         }
         if !v.read_only {
             for dir in [crate::fs::ops::TRASH_DIR, crate::fs::ops::UPLOADS_DIR] {
@@ -1436,6 +1509,16 @@ pub fn check_environment(cfg: &Config) -> EnvReport {
             r.warnings
                 .push(format!("paths.{what}: {} doesn't exist yet", dir.display()));
         }
+    }
+    if cfg.paths.backup_dir.is_dir()
+        && cfg.paths.state_dir.is_dir()
+        && crate::backup::same_filesystem(&cfg.paths.state_dir, &cfg.paths.backup_dir)
+    {
+        r.warnings.push(format!(
+            "paths.backup_dir: {} is on the same file system as paths.state_dir; the nightly \
+             backup refuses to run there (put it on another disk or mount its dataset)",
+            cfg.paths.backup_dir.display()
+        ));
     }
     for (lang, path) in &cfg.shares.wordlists {
         match std::fs::read_to_string(path) {
@@ -1491,6 +1574,39 @@ mod tests {
         assert!(cfg.volumes["Austausch"].public);
         assert!(!cfg.volumes["Backups"].remote);
         assert_eq!(cfg.server.public_url, "https://files.example.org");
+    }
+
+    #[test]
+    fn systemd_dropin_lists_writable_folders() {
+        let cfg = Config::from_toml_str(
+            r#"
+            [server]
+            public_url = "https://files.example.org/"
+            listen = "0.0.0.0:3924"
+            [volumes.Docs]
+            path = "/srv/docs"
+            read_only_paths = ["managed", "50% done"]
+            [volumes.Media]
+            path = "/srv/media"
+            read_only = true
+            "#,
+        )
+        .unwrap();
+        let d = systemd_dropin(&cfg, Path::new("/etc/chestcraft/config.toml"));
+        let lines: Vec<&str> = d.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(
+            lines,
+            [
+                "[Service]",
+                "ReadWritePaths=-/var/lib/chestcraft",
+                "ReadWritePaths=-/var/cache/chestcraft",
+                "ReadWritePaths=-/srv/chestcraft",
+                "ReadWritePaths=-/srv/docs",
+                "ReadOnlyPaths=-/srv/docs/managed",
+                "ReadOnlyPaths=\"-/srv/docs/50%% done\"",
+            ]
+        );
+        assert_eq!(healthz_url(&cfg), "http://127.0.0.1:3924/healthz");
     }
 
     #[test]

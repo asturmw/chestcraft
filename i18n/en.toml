@@ -543,6 +543,10 @@ failed_logins = "Failed sign-ins (24 h)"
 agent_calls = "Agent calls (24 h)"
 agent_last = "Agent {agent} ({role}): last call {time}"
 agent_never = "Agent {agent} ({role}): no call yet"
+backup = "State backup"
+backup_ok = "{time} ({size})"
+backup_never = "Not yet (runs daily at {time})"
+backup_failed = "Failed {time}: {error}"
 role_missing = "{user} has the role {role}, which the configuration doesn't define, so they can't open anything."
 
 [alerts]
@@ -622,6 +626,8 @@ public_locked = "Wrong passwords for public uploads to {target} from {ip}: slowe
 public_upload = "Public upload in {volume}: {path} from {ip} (more in the next 10 minutes only go to the audit log)"
 agent_share = "Agent {agent} shared {path} on the internet ({mode}, until {until}): {link}"
 agent_share_forever = "Agent {agent} shared {path} on the internet ({mode}, no expiry): {link}"
+backup_failed = "The nightly backup of chestcraft's database failed: {error}"
+backup_failed_ok = "The nightly backup of chestcraft's database works again"
 
 [digest]
 title = "chestcraft weekly report"

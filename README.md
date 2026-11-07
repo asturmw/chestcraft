@@ -10,7 +10,8 @@ A self-hosted file manager and sharing app for a home NAS, written in Rust.
 - `/healthz` and a read-only JSON status API for watchdogs ([docs/api.md](docs/api.md))
 - One static binary with pure-Rust dependencies and no JavaScript build step
 
-Status: early development, not usable yet.
+Status: early development, not usable yet. Building, installing, updates and restoring
+from the nightly backup: [docs/install.md](docs/install.md).
 
 ## License
 

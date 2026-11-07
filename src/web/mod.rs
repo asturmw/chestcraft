@@ -71,6 +71,8 @@ pub struct AppState {
     pub looks: Arc<crate::appearance::Store>,
     /// Skins this build embeds (`skins/<name>.css`), sorted.
     pub skins: Vec<String>,
+    /// The config file the server was started with (copied by the nightly backup).
+    pub config_file: Option<std::path::PathBuf>,
     /// Lets tests act as a principal without signing in.
     #[cfg(test)]
     pub test_principal: std::sync::Mutex<Option<Principal>>,
@@ -96,6 +98,7 @@ impl AppState {
         AppState {
             looks,
             skins: assets::skins().into_iter().map(String::from).collect(),
+            config_file: None,
             thumbs: crate::fs::thumbs::Thumbs::new(&cfg),
             thumb_limiter: preview::anon_limiter(),
             health: monitor::Monitor::default(),
@@ -332,8 +335,23 @@ pub fn open_db(cfg: &Config) -> anyhow::Result<Db> {
     Ok(Db::open(&dir.join(crate::db::FILE_NAME))?)
 }
 
-/// Run the server until SIGTERM or Ctrl-C.
-pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()> {
+/// How the server ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exit {
+    /// SIGTERM or Ctrl-C.
+    Stop,
+    /// SIGHUP with a valid configuration: start again with it.
+    Restart,
+}
+
+/// Open connections get this long to finish when the server stops or restarts.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run the server until SIGTERM or Ctrl-C, or until SIGHUP brings a valid new
+/// configuration (an invalid one is logged and the running one stays).
+pub async fn serve(cfg: Config, config_file: &Path) -> anyhow::Result<Exit> {
+    use std::future::IntoFuture;
+    let config_dir = config_file.parent();
     let i18n = I18n::load(config_dir.map(|d| d.join("i18n")).as_deref());
     let secrets = match crate::config::secrets::Secrets::location(config_dir) {
         Some(path) => crate::config::secrets::Secrets::load(&path).unwrap_or_else(|e| {
@@ -343,7 +361,9 @@ pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()>
         None => Default::default(),
     };
     let db = open_db(&cfg)?;
-    let state = Arc::new(AppState::new(cfg, i18n, db, &secrets));
+    let mut state = AppState::new(cfg, i18n, db, &secrets);
+    state.config_file = Some(config_file.to_path_buf());
+    let state = Arc::new(state);
     drop(secrets);
     for c in state.notifier.channels() {
         match &c.problem {
@@ -359,12 +379,13 @@ pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()>
     state.thumbs.start();
     let addr = state.cfg.server.listen;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(%addr, volumes = state.volumes.iter().count(), "chestcraft listening");
+    tracing::info!(%addr, volumes = state.volumes.iter().count(), version = crate::VERSION, "chestcraft listening");
     let shutdown = tokio_util::sync::CancellationToken::new();
+    let exit = Arc::new(std::sync::Mutex::new(Exit::Stop));
     tokio::spawn({
-        let shutdown = shutdown.clone();
+        let (shutdown, exit, file) = (shutdown.clone(), exit.clone(), config_file.to_path_buf());
         async move {
-            shutdown_signal().await;
+            *exit.lock().unwrap() = signals(file).await;
             shutdown.cancel();
         }
     });
@@ -383,25 +404,68 @@ pub async fn serve(cfg: Config, config_dir: Option<&Path>) -> anyhow::Result<()>
         None => None,
     };
     let done = shutdown.clone();
-    axum::serve(
+    let server = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move { done.cancelled().await })
-    .await?;
+    .into_future();
+    let grace = shutdown.clone();
+    tokio::select! {
+        r = server => r?,
+        _ = async { grace.cancelled().await; tokio::time::sleep(SHUTDOWN_GRACE).await } => {
+            tracing::warn!("connections still open after {} s are cut", SHUTDOWN_GRACE.as_secs());
+        }
+    }
     shutdown.cancel();
     if let Some(task) = mcp {
-        task.await??;
+        match tokio::time::timeout(SHUTDOWN_GRACE, task).await {
+            Ok(r) => r??,
+            Err(_) => tracing::warn!("MCP connections still open are cut"),
+        }
     }
-    Ok(())
+    let exit = *exit.lock().unwrap();
+    Ok(exit)
 }
 
-async fn shutdown_signal() {
+/// Wait for SIGTERM / Ctrl-C (stop) or a SIGHUP whose configuration passes the same checks
+/// as `chestcraft check` (restart).
+async fn signals(config_file: std::path::PathBuf) -> Exit {
     use tokio::signal::unix::{SignalKind, signal};
     let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = term.recv() => {}
+    let mut hup = signal(SignalKind::hangup()).expect("install SIGHUP handler");
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            _ = term.recv() => break,
+            _ = hup.recv() => {
+                let file = config_file.clone();
+                let verdict = tokio::task::spawn_blocking(move || validate(&file)).await;
+                match verdict {
+                    Ok(Ok(())) => {
+                        tracing::info!("configuration accepted; restarting with it");
+                        return Exit::Restart;
+                    }
+                    Ok(Err(e)) => tracing::error!(
+                        "{}: configuration rejected, the running one stays:\n{e}",
+                        config_file.display()
+                    ),
+                    Err(_) => tracing::error!("checking the configuration crashed"),
+                }
+            }
+        }
     }
     tracing::info!("shutting down");
+    Exit::Stop
+}
+
+/// The checks of `chestcraft check`: the file, then the machine it points to.
+pub fn validate(config_file: &Path) -> Result<(), String> {
+    let cfg = Config::load(config_file).map_err(|e| e.to_string())?;
+    let report = crate::config::check_environment(&cfg);
+    if report.errors.is_empty() {
+        Ok(())
+    } else {
+        Err(report.errors.join("\n"))
+    }
 }
