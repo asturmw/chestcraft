@@ -185,7 +185,7 @@ stale_minutes = 120    # SMART data older than this
 # or from outside server.local_networks are refused. Agents are accounts with a role from
 # [roles] (never admin) and bearer tokens instead of a password:
 #   chestcraft agent add hermes --role agenten
-#   chestcraft agent token hermes "aipc" --expires 90d
+#   chestcraft agent token hermes "desktop" --expires 90d
 # Assume an agent can be steered by what it reads, and that a cloud model sends what it
 # reads to its provider: give each agent the smallest role it needs.
 [mcp]
