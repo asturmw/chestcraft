@@ -3,6 +3,10 @@
 Rust file-sharing app for a home NAS: browse, upload, share links, WebDAV, and an admin
 dashboard with ZFS/SMART health and Telegram alerts. Replaces copyparty.
 
+Project map, build/run, rules and common changes (for every agent):
+
+@AGENTS.md
+
 @deploy/site/CLAUDE.site.md
 
 ## Status
@@ -194,40 +198,15 @@ LAN/Tailscale only, agent accounts with a role + bearer tokens) as the last back
 
 ## Rules
 
-- **Pure Rust:** pure-Rust crates only. The release build must pass with
-  `CC=/bin/false CXX=/bin/false` (any crate that compiles C fails it). External programs
-  run only as subprocesses, by absolute path: `/usr/sbin/zpool`, `/usr/sbin/zfs`,
-  `/usr/sbin/smartctl`, `/usr/bin/ffmpeg`, `/usr/bin/curl` (Telegram; token on stdin, never
-  in argv).
+The code rules (pure Rust, deletion, paths, i18n, public repo, install) are in `AGENTS.md`.
+On top of those, for this repo's own sessions:
+
 - **UI:** `design/` belongs to the design session (branch `design`, worktree
   `../chestcraft-design`). Don't edit it on `main`; integrate from it. Contract:
   `docs/ui-handoff.md` section 5 and `design/NOTES.md`.
-- **Public-ready repo:** no secrets; no real hostnames, IPs, users or paths outside
-  `deploy/site/` (gitignored). Tests and fixtures use fictional data; anonymize disk serials.
-- **Deletion:** user files are deleted only by the trash purge (`trash_days`) and by the
-  cleanup of abandoned `.part` uploads. No other code path deletes or overwrites user files;
-  replacing a file moves the old one to the trash first (WebDAV PUT/MOVE are the exception).
-- **Install:** the binary on the server is root-owned because the root SMART collector runs
-  it. It must never be writable by the service user.
 - **Commits:** one per green slice (tests, clippy, C-free build) on `main`, staged by explicit
   path. Never commit the design session's files (`design/`, its edits to `docs/`).
 - **Push:** Claude may push `main` to `origin` (GitHub, public) without asking when it is a
   good moment, e.g. after a green slice commit. Before each push, check the new commits for
-  secrets and lab specifics (see "Public-ready repo"). Never force-push, never rewrite
+  secrets and lab specifics (see "Public repo" in `AGENTS.md`). Never force-push, never rewrite
   pushed history, never push `design` (the design session's branch) (Tibor, 2026-11-07).
-
-## Layout (planned)
-
-- `src/`: `config/`, `db/` (redb), `appearance/` (skins, backgrounds), `auth/`, `fs/` (paths,
-  trash, upload, zip, thumbs), `web/` (axum routes, maud views), `dav/`, `mcp/`, `shares/`,
-  `health/` (zpool, zfs, smart, mdstat, host, history, alerts), `notify/`, `i18n.rs`
-- `assets/`: CSS, JS, fonts, icons (integrated from `design/`)
-- `i18n/`: `de.toml`, `en.toml` (a missing key fails the tests)
-- `deploy/`: `release.sh`, `install.sh`, `units/`, `smartd.conf`, `site/` (gitignored)
-- `tests/`, `fixtures/`: integration tests; zpool/zfs/smartctl JSON samples
-- `config.example.toml`: config schema (draft)
-
-## Build and test (once the toolchain is installed)
-
-- `cargo test`
-- `deploy/release.sh`: fmt, clippy, tests, C-free static musl release build
