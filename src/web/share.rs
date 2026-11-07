@@ -3,7 +3,8 @@
 //! `view_upload`), the shared file, or the upload page of mode `upload`. The upload API for
 //! visitors lives below the share, so the share's cookie reaches it: `/s/<id>/.cc/upload…`
 //! and `/s/<id>/.cc/batch…`, with `dir` relative to the share. The password form posts to
-//! `/s/<id>/.cc/unlock`.
+//! `/s/<id>/.cc/unlock`. Downloads that save file by file use `?tree` / `op=tree` and
+//! `/s/<id>/.cc/dl-slots` (see `web::files`).
 //!
 //! Share pages follow the system theme and the browser's language, with a language switch.
 
@@ -226,6 +227,7 @@ async fn internal(
             api::create_in(st, ctx, client, &up, &share.volume, dir, req).await
         }
         ("GET", ["upload", id]) => api::status_in(st, ctx, &up, id.to_string()).await,
+        ("GET", ["dl-slots"]) => files::slots_response(st, true, client),
         ("DELETE", ["upload", id]) => api::cancel_in(st, ctx, &up, id.to_string()).await,
         ("PUT", ["upload", id, "chunk", n]) => match n.parse::<u32>() {
             Ok(n) => api::chunk_in(st, ctx, &up, headers, id.to_string(), n, body).await,
@@ -402,19 +404,32 @@ async fn content(
                 let suffix = uri.query().map(|qs| format!("?{qs}")).unwrap_or_default();
                 return Redirect::permanent(&format!("{raw_path}/{suffix}")).into_response();
             }
-            let (zip, only) = if *method == Method::POST {
+            let (op, only) = if *method == Method::POST {
                 let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM).await else {
                     return fail(&ctx, Fail::BadRequest);
                 };
                 let form = Query::parse(std::str::from_utf8(&bytes).ok());
-                if form.get("op") != Some("zip") {
-                    return fail(&ctx, Fail::BadRequest);
-                }
-                (true, form.all("n").map(String::from).collect::<Vec<_>>())
+                let op = match form.get("op") {
+                    Some("zip") => "zip",
+                    Some("tree") => "tree",
+                    _ => return fail(&ctx, Fail::BadRequest),
+                };
+                (op, form.all("n").map(String::from).collect::<Vec<_>>())
+            } else if q.has("zip") {
+                ("zip", q.all("n").map(String::from).collect())
+            } else if q.has("tree") {
+                ("tree", q.all("n").map(String::from).collect())
             } else {
-                (q.has("zip"), q.all("n").map(String::from).collect())
+                ("", Vec::new())
             };
-            if zip {
+            if op == "tree" {
+                let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
+                    return fail(&ctx, Fail::TooMany);
+                };
+                return files::tree_response(vol, abs, only, false, head_req, guard)
+                    .unwrap_or_else(|f| fail(&ctx, f));
+            }
+            if op == "zip" {
                 let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
                     return fail(&ctx, Fail::TooMany);
                 };

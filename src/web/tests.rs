@@ -3668,3 +3668,151 @@ async fn visitor_pages_take_the_language_from_cookie_or_browser() {
     assert_eq!(r.header("location"), "/.cc/login?next=%2FMedien%2F");
     assert!(r.header("set-cookie").starts_with("cc_lang=de;"));
 }
+
+fn tree_paths(body: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(body)
+        .lines()
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v["path"].as_str().unwrap().to_string()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn tree_of_a_folder_and_of_a_selection() {
+    let e = env();
+    e.act_as(Some(admin()));
+    let r = e.get("/Medien/?tree").await;
+    assert_eq!(
+        (
+            r.status,
+            r.header("content-type"),
+            r.header("cache-control")
+        ),
+        (
+            StatusCode::OK,
+            "application/x-ndjson; charset=utf-8",
+            "no-store"
+        )
+    );
+    // Like the zip: no internal names, no symlinks, no dot-names unless asked.
+    assert_eq!(
+        tree_paths(&r.body),
+        [
+            "a.txt",
+            "page.html",
+            "Urlaub Gardasee",
+            "Urlaub Gardasee/IMG_2041.jpg"
+        ]
+    );
+    let first: serde_json::Value = serde_json::from_str(r.text().lines().next().unwrap()).unwrap();
+    assert_eq!(
+        (first["dir"].as_bool(), first["size"].as_u64()),
+        (Some(false), Some(10))
+    );
+    assert!(first["mtime"].as_str().unwrap().ends_with('Z'), "{first}");
+    let hidden = tree_paths(&e.get("/Medien/?tree&hidden=1").await.body);
+    assert_eq!(hidden[0], ".git", "{hidden:?}");
+
+    let r = e
+        .send_body(
+            "POST",
+            "/Medien/",
+            "127.0.0.1",
+            &[FORM],
+            form(&[("op", "tree"), ("n", "Urlaub Gardasee"), ("n", "a.txt")]),
+        )
+        .await;
+    assert_eq!(
+        tree_paths(&r.body),
+        ["a.txt", "Urlaub Gardasee", "Urlaub Gardasee/IMG_2041.jpg"]
+    );
+    for bad in ["/Medien/?tree&n=..%2Fx", "/Medien/?tree&n=.git"] {
+        assert_eq!(e.get(bad).await.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+
+    // Others: hidden=1 does nothing; without read rights, nothing at all.
+    e.act_as(Some(Principal::User {
+        name: "jana".into(),
+        role: "familie".into(),
+    }));
+    let names = tree_paths(&e.get("/Medien/?tree&hidden=1").await.body);
+    assert!(!names.iter().any(|n| n.starts_with('.')), "{names:?}");
+    e.act_as(None);
+    let r = e.get("/Medien/?tree").await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    // A public volume: anonymous visitors use a download slot for it.
+    assert_eq!(tree_paths(&e.get("/Share/?tree").await.body), ["hello.txt"]);
+    let ip = "127.0.0.1".parse().unwrap();
+    let held: Vec<_> = (0..4)
+        .map(|_| e.state.limiter.try_acquire(ip, 4).unwrap())
+        .collect();
+    assert_eq!(
+        e.get("/Share/?tree").await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    drop(held);
+}
+
+#[tokio::test]
+async fn download_slots_for_visitors() {
+    let e = env();
+    let json = |r: Res| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+    let r = e.get("/.cc/dl-slots").await;
+    assert_eq!(r.header("cache-control"), "no-store");
+    assert_eq!(json(r), serde_json::json!({"max": 4, "free": 4}));
+    let ip = "127.0.0.1".parse().unwrap();
+    let held = e.state.limiter.try_acquire(ip, 4).unwrap();
+    assert_eq!(
+        json(e.get("/.cc/dl-slots").await),
+        serde_json::json!({"max": 4, "free": 3})
+    );
+    let s = e.session("jana", "familie").await;
+    let r = e.get_h("/.cc/dl-slots", &[("cookie", &s.cookie)]).await;
+    assert_eq!(json(r), serde_json::json!({"max": null}));
+
+    // Shares: below the share, after the password; visitors always count.
+    let admin = e.session("Admin", "admin").await;
+    let (id, pw) = e
+        .create_share(&admin, "Medien", "Urlaub Gardasee", &[])
+        .await;
+    let slots = format!("/s/{id}/.cc/dl-slots");
+    assert_eq!(e.get(&slots).await.status, StatusCode::UNAUTHORIZED);
+    let cookie = cookie_of(&e.unlock(&id, &pw, "127.0.0.1", &[]).await);
+    let c = [("cookie", cookie.as_str())];
+    assert_eq!(
+        json(e.get_h(&slots, &c).await),
+        serde_json::json!({"max": 4, "free": 3})
+    );
+    drop(held);
+    let r = e.get_h(&format!("/s/{id}/?tree"), &c).await;
+    assert_eq!(tree_paths(&r.body), ["IMG_2041.jpg"]);
+    let r = e
+        .send_body(
+            "POST",
+            &format!("/s/{id}/"),
+            "127.0.0.1",
+            &[FORM, ("cookie", &cookie)],
+            form(&[("op", "tree"), ("n", "IMG_2041.jpg")]),
+        )
+        .await;
+    assert_eq!(tree_paths(&r.body), ["IMG_2041.jpg"]);
+    let r = e
+        .send_body(
+            "POST",
+            &format!("/s/{id}/"),
+            "127.0.0.1",
+            &[FORM, ("cookie", &cookie)],
+            form(&[("op", "bogus")]),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    // Without the password: the password page, nothing about the content.
+    let r = e.get(&format!("/s/{id}/?tree")).await;
+    assert!(
+        r.header("content-type").starts_with("text/html") && !r.text().contains("IMG_2041"),
+        "{}",
+        r.text()
+    );
+}

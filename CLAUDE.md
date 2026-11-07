@@ -12,9 +12,8 @@ Project map, build/run, rules and common changes (for every agent):
 ## Status
 
 Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
-13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A and
-B done, C (tree listing, download slots) next. Then: NAS setup
-(step 4), UI integration (7), staging (8).
+13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A, B and
+C done (slices 17–19). Next: NAS setup (step 4), UI integration (7), staging (8).
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -224,6 +223,13 @@ B done, C (tree listing, download slots) next. Then: NAS setup
   `Ctx::gate()`: no brand, no language switch; language from the cookie, else
   `Accept-Language`. The sign-in page keeps the brand and now has the language switch
   (`/.cc/lang` serves it, public volumes and share contents).
+- Slice 19 done (brief slice C; requests 7, 8): `GET <folder>/?tree` and `POST <folder>/`
+  `op=tree` + `n` → streamed JSON lines `{path, dir, size, mtime}` (`fs/tree.rs`, same walk
+  rules as the zip through `zipstream::listed_names`; same rights, `hidden=1` for admins,
+  selection check and anonymous download slot as `?zip`); shares `/s/<id>/…?tree` / `op=tree`.
+  `GET /.cc/dl-slots` → `{"max":N,"free":n}` for anonymous visitors (per-IP limiter),
+  `{"max":null}` signed in; `/s/<id>/.cc/dl-slots` after the password (always limited).
+  Documented in the `web/files.rs` module docs, like uploads (`web/api.rs`) and ops.
 - Open: A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token,
   accounts/agents, audit and account-access markup is provisional until the design session

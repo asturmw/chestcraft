@@ -6,6 +6,7 @@ pub mod sort;
 pub mod thumbs;
 pub mod transfer;
 pub mod trash;
+pub mod tree;
 pub mod upload;
 pub mod volume;
 pub mod zipstream;

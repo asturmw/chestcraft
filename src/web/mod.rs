@@ -273,6 +273,7 @@ pub fn router(state: Shared) -> Router {
         .route("/.cc/bg/{id}/{file}", get(account::picture))
         .route("/.cc/backdrop.css", get(account::backdrop_css))
         .route("/.cc/presets.css", get(account::presets_css))
+        .route("/.cc/dl-slots", get(files::dl_slots))
         .route("/.cc/shares", get(shares::list))
         .route(
             "/.cc/shares/new",
