@@ -108,6 +108,7 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                     @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
                         @if ctx.admin {
                             a class="app-header__dashboard" href="/.cc/admin/dashboard" { (ctx.t("common.dashboard")) }
+                            a class="app-header__users" href="/.cc/admin/users" { (ctx.t("common.users")) }
                         }
                         a class="app-header__trash" href="/.cc/trash" { (ctx.t("common.trash")) }
                         a class="app-header__account" href="/.cc/account" { (ctx.t("common.account")) }

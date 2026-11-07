@@ -26,6 +26,7 @@ mod stream;
 #[cfg(test)]
 mod tests;
 mod trash;
+mod users;
 mod views;
 
 use crate::auth::backoff::Backoff;
@@ -244,6 +245,16 @@ pub fn router(state: Shared) -> Router {
             "/.cc/admin/appearance",
             get(account::appearance_page).post(account::appearance_submit),
         )
+        .route(
+            "/.cc/account/app-passwords",
+            post(users::app_passwords_submit),
+        )
+        .route("/.cc/account/sessions", post(users::sessions_submit))
+        .route(
+            "/.cc/admin/users",
+            get(users::users_page).post(users::users_submit),
+        )
+        .route("/.cc/admin/audit", get(users::audit_page))
         .route("/.cc/bg/{id}/{file}", get(account::picture))
         .route("/.cc/backdrop.css", get(account::backdrop_css))
         .route("/.cc/shares", get(shares::list))

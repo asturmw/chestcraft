@@ -3612,3 +3612,4 @@ async fn public_uploads_notify_once_per_burst() {
 
 mod appearance;
 mod status;
+mod users;

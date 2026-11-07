@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod agent;
 pub mod apitoken;
 pub mod apppass;

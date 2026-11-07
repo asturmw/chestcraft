@@ -46,6 +46,8 @@ pub struct AccountView {
     pub keys: Vec<Opt>,
     pub rotations: Vec<Opt>,
     pub admin: bool,
+    /// App passwords and sessions (filled by the page handler).
+    pub access: Markup,
 }
 
 pub fn account(ctx: &Ctx, v: &AccountView) -> Markup {
@@ -82,6 +84,7 @@ pub fn account(ctx: &Ctx, v: &AccountView) -> Markup {
                     p { a href="/.cc/admin/appearance" { (ctx.t("account.appearance_link")) } }
                 }
             }
+            (v.access)
         },
     )
 }
