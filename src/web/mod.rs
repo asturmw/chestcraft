@@ -188,6 +188,7 @@ pub fn page_ctx<'a>(
         },
         styles: Vec::new(),
         lang_switch: None,
+        brand: true,
     }
 }
 
@@ -319,7 +320,8 @@ struct LangQuery {
     next: String,
 }
 
-/// `/.cc/lang?set=de&next=/s/…`: the language switch of pages without an account.
+/// `/.cc/lang?set=de&next=/.cc/login…`: the language switch of pages without an account
+/// (sign-in, public volumes, share contents).
 async fn lang(
     State(st): State<Shared>,
     Extension(client): Extension<ClientInfo>,

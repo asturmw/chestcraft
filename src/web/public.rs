@@ -68,11 +68,6 @@ pub async fn unlock_page(
 ) -> Response {
     let mut ctx = page_ctx(&st, &headers, &Principal::Anonymous, None);
     ctx.theme = None;
-    ctx.lang_switch = Some(format!(
-        "/.cc/public-write?vol={}&next={}",
-        enc(&q.vol),
-        enc(&q.next)
-    ));
     if !is_public(&st, &q.vol) {
         return fail(&ctx, Fail::NotFound);
     }

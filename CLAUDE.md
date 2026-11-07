@@ -12,8 +12,8 @@ Project map, build/run, rules and common changes (for every agent):
 ## Status
 
 Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
-13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slice A done,
-B (volume note, visitor pages) and C (tree listing, download slots) next. Then: NAS setup
+13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A and
+B done, C (tree listing, download slots) next. Then: NAS setup
 (step 4), UI integration (7), staging (8).
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
@@ -218,6 +218,12 @@ B (volume note, visitor pages) and C (tree listing, download slots) next. Then: 
   delivers them); explicit theme → that file, system → `<source media="(prefers-color-
   scheme: light)">` + dark `<img>`, no light file → dark. `pick_skin` falls back to
   `modern` before the first skin. i18n `[skin]` names, `[presets]`.
+- Slice 18 done (brief slice B; requests 2, 3): the volume note is gone (config schema, so
+  an old `note.*` fails `check` through `deny_unknown_fields`; landing, listing banner, MCP
+  `volumes`). Visitor password pages (share password, public-upload unlock) render through
+  `Ctx::gate()`: no brand, no language switch; language from the cookie, else
+  `Accept-Language`. The sign-in page keeps the brand and now has the language switch
+  (`/.cc/lang` serves it, public volumes and share contents).
 - Open: A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token,
   accounts/agents, audit and account-access markup is provisional until the design session

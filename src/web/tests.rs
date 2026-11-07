@@ -59,7 +59,6 @@ fn env() -> Env {
         backup_dir = "{0}/backup"
         [volumes.Medien]
         path = "{0}/medien"
-        note.en = "Media files"
         [volumes.Share]
         path = "{0}/share"
         public = true
@@ -187,10 +186,7 @@ async fn admin_listing_hides_dotfiles_until_asked_and_never_shows_internals() {
     let e = env();
     e.act_as(Some(admin()));
     let t = e.get("/Medien/").await.text();
-    assert!(
-        t.contains("Urlaub Gardasee") && t.contains("a.txt") && t.contains("Media files"),
-        "{t}"
-    );
+    assert!(t.contains("Urlaub Gardasee") && t.contains("a.txt"), "{t}");
     assert!(
         !t.contains(".git") && !t.contains(".chestcraft-trash") && !t.contains(">escape<"),
         "{t}"
@@ -2254,12 +2250,17 @@ async fn folder_share_round_trip() {
             && !t.contains("Fotos vom See"),
         "{t}"
     );
-    assert!(t.contains("lang-switch"), "{t}");
+    // A visitor's password page: no brand, no language switch.
+    assert!(
+        !t.contains("lang-switch") && !t.contains("app-header__brand"),
+        "{t}"
+    );
     let r = e.get(&format!("/s/{id}/IMG_2041.jpg")).await;
     assert!(!r.text().contains("jpegdata"));
 
     let r = e.unlock(&id, "falsch-falsch", "127.0.0.1", &[]).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(!r.text().contains("lang-switch"), "{}", r.text());
     // Case and separators don't matter for passphrases (phones capitalize).
     let typed = pw.replace('-', " ").to_uppercase();
     let r = e
@@ -2280,6 +2281,7 @@ async fn folder_share_round_trip() {
         t.contains("IMG_2041.jpg") && t.contains("Fotos vom See") && t.contains("Admin"),
         "{t}"
     );
+    assert!(t.contains("lang-switch"), "{t}");
     assert!(!t.contains("data-js=\"upload\""), "view only: {t}");
     let r = e.get_h(&format!("/s/{id}/IMG_2041.jpg"), &c).await;
     assert_eq!(
@@ -2834,6 +2836,16 @@ async fn public_uploads_open_with_a_password_and_never_overwrite() {
 
     let t = e.get("/Share/").await.text();
     assert!(t.contains("/.cc/public-write?vol=Share"), "{t}");
+    let t = e
+        .get("/.cc/public-write?vol=Share&next=%2FShare%2F")
+        .await
+        .text();
+    assert!(
+        t.contains("name=\"password\"")
+            && !t.contains("lang-switch")
+            && !t.contains("app-header__brand"),
+        "{t}"
+    );
     let unlock = |pw: &str| form(&[("vol", "Share"), ("password", pw), ("next", "/Share/")]);
     let r = e
         .send_body(
@@ -3614,3 +3626,45 @@ mod appearance;
 mod ops;
 mod status;
 mod users;
+
+#[tokio::test]
+async fn visitor_pages_take_the_language_from_cookie_or_browser() {
+    let e = env();
+    let admin = e.session("Admin", "admin").await;
+    let (id, _) = e
+        .create_share(&admin, "Medien", "Urlaub Gardasee", &[])
+        .await;
+    let page = format!("/s/{id}");
+    let t = e
+        .get_h(&page, &[("accept-language", "de-AT,de;q=0.9")])
+        .await
+        .text();
+    assert!(
+        t.contains("lang=\"de\"") && t.contains("Geschützte Freigabe"),
+        "{t}"
+    );
+    let t = e
+        .get_h(
+            &page,
+            &[("accept-language", "de"), ("cookie", "cc_lang=en")],
+        )
+        .await
+        .text();
+    assert!(
+        t.contains("lang=\"en\"") && t.contains("Protected share"),
+        "{t}"
+    );
+
+    // The sign-in page keeps the brand and the language switch, back to itself.
+    let t = e.get("/.cc/login?next=%2FMedien%2F").await.text();
+    assert!(
+        t.contains("app-header__brand")
+            && t.contains("/.cc/lang?set=de&amp;next=%2F.cc%2Flogin%3Fnext%3D%252FMedien%252F"),
+        "{t}"
+    );
+    let r = e
+        .get("/.cc/lang?set=de&next=%2F.cc%2Flogin%3Fnext%3D%252FMedien%252F")
+        .await;
+    assert_eq!(r.header("location"), "/.cc/login?next=%2FMedien%2F");
+    assert!(r.header("set-cookie").starts_with("cc_lang=de;"));
+}

@@ -10,7 +10,6 @@ use super::query::Query;
 use super::views::{self, Crumb, Ctx, ListingView, Row, ShareHead, UploadUi, VolumeCard};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, api, page_ctx, stream};
 use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, public_writer_perms, volume_perms};
-use crate::config::Note;
 use crate::fs::filetype;
 use crate::fs::ops;
 use crate::fs::path::{RelPath, is_internal_name, validate_existing_name, validate_new_name};
@@ -116,15 +115,6 @@ pub fn fail(ctx: &Ctx, f: Fail) -> Response {
     res
 }
 
-pub fn note_for(note: &Option<Note>, lang_code: &str) -> Option<String> {
-    let n = note.as_ref()?;
-    if lang_code == "de" {
-        n.de.clone().or_else(|| n.en.clone())
-    } else {
-        n.en.clone().or_else(|| n.de.clone())
-    }
-}
-
 pub fn enc(s: &str) -> String {
     utf8_percent_encode(s, SEGMENT).to_string()
 }
@@ -159,7 +149,6 @@ pub async fn landing(
         .map(|(v, space)| VolumeCard {
             name: v.name().to_string(),
             href: format!("/{}/", enc(v.name())),
-            note: note_for(&v.cfg.note, ctx.code()),
             used: space.map(|s| s.total.saturating_sub(s.avail)),
             total: space.map(|s| s.total),
             free_text: space.map(|s| {
@@ -420,7 +409,6 @@ pub struct Frame {
     pub root: (String, String),
     pub sub: RelPath,
     pub title: String,
-    pub note: Option<String>,
     pub show_space: bool,
     /// The admin: hidden-files switch.
     pub admin: bool,
@@ -489,7 +477,6 @@ async fn volume_frame(
         root: (vol.name().to_string(), format!("/{}/", enc(vol.name()))),
         sub: rel.clone(),
         title: rel.name().unwrap_or(vol.name()).to_string(),
-        note: note_for(&vol.cfg.note, ctx.code()),
         show_space: true,
         admin: principal.is_admin(),
         can_mkdir: may_write,
@@ -675,7 +662,6 @@ pub async fn listing(
     let view = ListingView {
         title: frame.title,
         crumbs,
-        note: frame.note,
         free: space
             .filter(|_| frame.show_space)
             .map(|s| ctx.tf("browser.free_space", &[("free", &ctx.size(s.avail))])),

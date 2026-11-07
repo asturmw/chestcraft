@@ -34,6 +34,8 @@ pub struct Ctx<'a> {
     pub styles: Vec<String>,
     /// This page's path: pages for visitors without an account get a language switch.
     pub lang_switch: Option<String>,
+    /// Show the app's name in the header (not on a visitor's password page).
+    pub brand: bool,
 }
 
 /// The `backdrop` block: nothing, a color (from a generated stylesheet) or a picture
@@ -92,6 +94,16 @@ impl<'a> Ctx<'a> {
     pub fn code(&self) -> &str {
         self.i18n.code(self.lang)
     }
+
+    /// A visitor's password page (share password, public-upload unlock): no brand and no
+    /// language switch; the language comes from the cookie or the browser.
+    pub fn gate(&self) -> Ctx<'a> {
+        Ctx {
+            brand: false,
+            lang_switch: None,
+            ..self.clone()
+        }
+    }
 }
 
 pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
@@ -123,7 +135,9 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                 a class="skip-link" href="#main" { (ctx.t("common.skip_to_content")) }
                 (backdrop(&ctx.backdrop, ctx.theme))
                 header class="app-header" {
-                    a class="app-header__brand" href="/" { "chestcraft" }
+                    @if ctx.brand {
+                        a class="app-header__brand" href="/" { "chestcraft" }
+                    }
                     @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
                         @if ctx.admin {
                             a class="app-header__dashboard" href="/.cc/admin/dashboard" { (ctx.t("common.dashboard")) }
@@ -194,7 +208,6 @@ pub fn backdrop(b: &Backdrop, theme: Option<&str>) -> Markup {
 pub struct VolumeCard {
     pub name: String,
     pub href: String,
-    pub note: Option<String>,
     pub used: Option<u64>,
     pub total: Option<u64>,
     pub free_text: Option<String>,
@@ -246,9 +259,6 @@ pub fn landing(ctx: &Ctx, cards: &[VolumeCard], health: Option<HealthLine>) -> M
                     @for c in cards {
                         li class="volume-list__item" {
                             a class="volume-list__link" href=(c.href) { (c.name) }
-                            @if let Some(note) = &c.note {
-                                p class="volume-list__note" { (note) }
-                            }
                             @if let (Some(used), Some(total), Some(free)) = (c.used, c.total, &c.free_text) {
                                 meter class="volume-list__meter" min="0" max=(total) value=(used) {}
                                 p class="volume-list__free" { (free) }
@@ -310,7 +320,6 @@ pub fn share_head(ctx: &Ctx, h: &ShareHead) -> Markup {
 pub struct ListingView {
     pub title: String,
     pub crumbs: Vec<Crumb>,
-    pub note: Option<String>,
     pub free: Option<String>,
     pub read_only: bool,
     pub rows: Vec<Row>,
@@ -448,9 +457,6 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                 (share_head(ctx, h))
             }
             (breadcrumb(ctx, &v.crumbs, true))
-            @if let Some(note) = &v.note {
-                p class="banner" data-state="note" { (note) }
-            }
             @if v.read_only {
                 p class="banner" data-state="read-only" { (ctx.t("browser.read_only")) }
             }
@@ -738,6 +744,11 @@ pub struct LoginView {
 }
 
 pub fn login(ctx: &Ctx, v: &LoginView) -> Markup {
+    // The sign-in page keeps the brand and gets the language switch.
+    let ctx = &Ctx {
+        lang_switch: Some(format!("/.cc/login?next={}", super::files::enc(&v.next))),
+        ..ctx.clone()
+    };
     let title = ctx.t("login.title");
     layout(
         ctx,

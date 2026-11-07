@@ -195,13 +195,6 @@ pub struct VolumeConfig {
     pub read_only_paths: Vec<RelPath>,
     pub trash_days: Option<u32>,
     pub stage_folder_uploads: bool,
-    pub note: Option<Note>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Note {
-    pub de: Option<String>,
-    pub en: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -532,18 +525,10 @@ struct RawVolume {
     trash_days: Option<u32>,
     #[serde(default)]
     stage_folder_uploads: bool,
-    note: Option<RawNote>,
 }
 
 fn yes() -> bool {
     true
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawNote {
-    de: Option<String>,
-    en: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1285,13 +1270,6 @@ fn validate_volumes(
                 Err(e) => errs.push(format!("{key}.read_only_paths: \"{ro}\": {e}")),
             }
         }
-        let note = v.note.map(|n| Note {
-            de: n.de.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            en: n.en.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-        });
-        if let Some(Note { de: None, en: None }) = note {
-            errs.push(format!("{key}.note: set note.de and/or note.en"));
-        }
         if let Some(d) = v.trash_days {
             in_range(d, 0, 3650, &format!("{key}.trash_days"), errs);
         }
@@ -1306,7 +1284,6 @@ fn validate_volumes(
                 read_only_paths,
                 trash_days: v.trash_days,
                 stage_folder_uploads: v.stage_folder_uploads,
-                note,
             },
         );
     }
@@ -1724,20 +1701,27 @@ mod tests {
     }
 
     #[test]
-    fn read_only_paths_and_notes() {
+    fn read_only_paths() {
         let e = errors_of(&with_volumes(
-            "[volumes.A]\npath = \"/srv/a\"\nread_only_paths = [\"\", \"../x\", \"ok/sub\"]\nnote = {}\n",
+            "[volumes.A]\npath = \"/srv/a\"\nread_only_paths = [\"\", \"../x\", \"ok/sub\"]\n",
         ));
-        assert_eq!(e.len(), 3, "{e:?}");
+        assert_eq!(e.len(), 2, "{e:?}");
         let cfg = Config::from_toml_str(&with_volumes(
-            "[volumes.A]\npath = \"/srv/a\"\nread_only_paths = [\"/immich/\"]\nnote.en = \" Hi \"\n",
+            "[volumes.A]\npath = \"/srv/a\"\nread_only_paths = [\"/immich/\"]\n",
         ))
         .unwrap();
         assert_eq!(cfg.volumes["A"].read_only_paths[0].as_str(), "immich");
-        assert_eq!(
-            cfg.volumes["A"].note.as_ref().unwrap().en.as_deref(),
-            Some("Hi")
-        );
+    }
+
+    #[test]
+    fn volume_notes_are_gone() {
+        // Dropped without compatibility: an old config fails the check.
+        let e = Config::from_toml_str(&with_volumes(
+            "[volumes.A]\npath = \"/srv/a\"\nnote.en = \"Hi\"\n",
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("unknown field `note`"), "{e}");
     }
 
     #[test]
