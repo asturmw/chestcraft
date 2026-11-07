@@ -213,8 +213,8 @@ C done (slices 17–19). Next: NAS setup (step 4), UI integration (7), staging (
   `assets/backgrounds/<name>-<slot>.jpg` + `.small.jpg` previews (copied from the `design`
   branch), served as assets, never in the store's records (remove/sweep can't touch them),
   usable by everyone, mixable, not deletable. Skin pictures: `AppState.skin_pictures` from
-  embedded `backgrounds/default-<skin>-{dark,light}.svg` (none yet: the design's light round
-  delivers them); explicit theme → that file, system → `<source media="(prefers-color-
+  embedded `backgrounds/default-<skin>-{dark,light}.svg` (sleek, gaming, anime from the design's
+  round 5; they show once `skins/<name>.css` is embedded); explicit theme → that file, system → `<source media="(prefers-color-
   scheme: light)">` + dark `<img>`, no light file → dark. `pick_skin` falls back to
   `modern` before the first skin. i18n `[skin]` names, `[presets]`.
 - Slice 18 done (brief slice B; requests 2, 3): the volume note is gone (config schema, so

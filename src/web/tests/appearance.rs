@@ -1143,9 +1143,10 @@ async fn skin_pictures_follow_the_theme() {
         .into();
     }
     let jana = e.session("jana", "familie").await;
+    let asset = |path: &str| crate::web::assets::url(path);
     let (dark, light) = (
-        "/.cc/assets/backgrounds/default-sleek-dark.svg",
-        "/.cc/assets/backgrounds/default-sleek-light.svg",
+        &asset("backgrounds/default-sleek-dark.svg"),
+        &asset("backgrounds/default-sleek-light.svg"),
     );
     // modern: its backdrop color from the skin's tokens.
     assert!(
@@ -1187,8 +1188,10 @@ async fn skin_pictures_follow_the_theme() {
     .await;
     let page = e.page_of(&jana, "/").await;
     assert!(
-        page.contains("src=\"/.cc/assets/backgrounds/default-gaming-dark.svg\"")
-            && !page.contains("prefers-color-scheme"),
+        page.contains(&format!(
+            "src=\"{}\"",
+            asset("backgrounds/default-gaming-dark.svg")
+        )) && !page.contains("prefers-color-scheme"),
         "{page}"
     );
     // "The skin's own" with clear glass: the picture, dimmed more.

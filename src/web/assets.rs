@@ -117,3 +117,30 @@ pub async fn serve(Path(path): Path<String>, uri: Uri, headers: HeaderMap) -> Re
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The skin default backgrounds from the design branch are embedded, a light twin for
+    /// every dark one; they take effect once the skin stylesheets are embedded too.
+    #[test]
+    fn skin_pictures_are_embedded_in_both_themes() {
+        let skins: Vec<String> = ["anime", "classic", "gaming", "modern", "sleek"]
+            .map(String::from)
+            .into();
+        let p = crate::appearance::skin_pictures(&skins, has);
+        assert_eq!(
+            p.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["anime", "gaming", "sleek"]
+        );
+        for (skin, pic) in &p {
+            assert_eq!(pic.dark, format!("backgrounds/default-{skin}-dark.svg"));
+            assert_eq!(
+                pic.light.as_deref(),
+                Some(format!("backgrounds/default-{skin}-light.svg").as_str())
+            );
+            assert_eq!(content_type(&pic.dark), "image/svg+xml");
+        }
+    }
+}

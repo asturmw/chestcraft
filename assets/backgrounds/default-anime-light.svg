@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<defs>
+<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#86bff6"/><stop offset=".35" stop-color="#b3d8fb"/><stop offset=".6" stop-color="#ffd9e8"/><stop offset=".72" stop-color="#fff1de"/></linearGradient>
+<radialGradient id="sun" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fffdf0"/><stop offset=".4" stop-color="#fff0c4" stop-opacity=".85"/><stop offset="1" stop-color="#ffd8b0" stop-opacity="0"/></radialGradient>
+<filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="18"/></filter>
+<filter id="paint" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="3"/></filter>
+<linearGradient id="h1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d4ecc4"/><stop offset="1" stop-color="#b9dca8"/></linearGradient>
+<linearGradient id="h2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b1d9a2"/><stop offset="1" stop-color="#95c98d"/></linearGradient>
+<linearGradient id="h3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fc58b"/><stop offset="1" stop-color="#74b07e"/></linearGradient>
+<symbol id="p" viewBox="0 0 24 24"><path d="M12 21c-5.5-3.6-7.6-8.6-4.9-14.6.9-1.9 2.4-3.1 3.6-3.4L12 5.3l1.3-2.3c1.2.3 2.7 1.5 3.6 3.4 2.7 6 .6 11-4.9 14.6z"/></symbol>
+</defs>
+<rect width="1600" height="900" fill="url(#sky)"/>
+<circle cx="1120" cy="560" r="260" fill="url(#sun)"/>
+<g filter="url(#soft)" fill="#ffffff" opacity=".8">
+<ellipse cx="300" cy="230" rx="220" ry="40"/><ellipse cx="420" cy="260" rx="160" ry="34"/><ellipse cx="1240" cy="180" rx="260" ry="46"/><ellipse cx="1050" cy="320" rx="180" ry="30"/><ellipse cx="700" cy="120" rx="140" ry="24"/>
+</g>
+<g filter="url(#paint)">
+<path d="M0 600 C200 520 380 560 520 590 C700 520 900 540 1080 600 C1260 560 1440 540 1600 580 V900 H0Z" fill="url(#h1)"/>
+<path d="M0 680 C180 620 360 640 560 690 C760 640 980 650 1200 700 C1360 670 1500 660 1600 680 V900 H0Z" fill="url(#h2)"/>
+<path d="M0 770 C260 720 520 740 800 780 C1080 740 1340 730 1600 770 V900 H0Z" fill="url(#h3)"/>
+</g>
+<g filter="url(#paint)">
+<path d="M150 900 C160 760 150 700 175 640" stroke="#7a5a6a" stroke-width="16" fill="none"/>
+<g fill="#f7a8c7"><circle cx="120" cy="560" r="80"/><circle cx="210" cy="520" r="90"/><circle cx="60" cy="620" r="70"/><circle cx="260" cy="600" r="70"/><circle cx="170" cy="460" r="60"/></g>
+<g fill="#ffd3e3" opacity=".85"><circle cx="190" cy="500" r="40"/><circle cx="110" cy="545" r="35"/><circle cx="250" cy="575" r="30"/></g>
+</g>
+<g fill="#ff9fc6" opacity=".9">
+<use href="#p" x="420" y="420" width="18" height="18" transform="rotate(25 429 429)"/>
+<use href="#p" x="560" y="510" width="14" height="14" transform="rotate(-40 567 517)"/>
+<use href="#p" x="700" y="380" width="12" height="12" transform="rotate(70 706 386)"/>
+<use href="#p" x="360" y="700" width="20" height="20" transform="rotate(-15 370 710)"/>
+<use href="#p" x="880" y="460" width="12" height="12" transform="rotate(110 886 466)"/>
+<use href="#p" x="300" y="380" width="14" height="14" transform="rotate(200 307 387)"/>
+</g>
+</svg>
