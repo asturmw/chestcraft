@@ -1,5 +1,23 @@
 //! Volume paths: the landing page, folder listings, file downloads (with Range), zip
 //! downloads, and the folder forms (download selection, new folder, move to trash).
+//!
+//! JSON for downloads that save file by file (the download menu's "save to folder" and
+//! "separately"):
+//!
+//! ```text
+//! GET  <folder>/?tree[&hidden=1]        the whole folder, recursively
+//! POST <folder>/  op=tree, n=<name>…     only the selected names (form, no CSRF: read only)
+//!   200 application/x-ndjson, one line per entry, folders before their contents:
+//!       {"path":"sub/a.jpg","dir":false,"size":123,"mtime":"2026-11-04T21:14:00Z"}
+//!   (folders: "dir":true, "size":0; paths relative to <folder>)
+//! GET  /.cc/dl-slots
+//!   200 {"max":4,"free":2}   anonymous: the per-IP download limit and its free slots
+//!   200 {"max":null}         signed in: no limit
+//! ```
+//!
+//! The tree has the zip's rights, hidden-file rule (`hidden=1` for admins), internal-name
+//! rule and download slot. Shares have both below the share: `/s/<id>/…?tree`, `POST
+//! /s/<id>/…/ op=tree`, `/s/<id>/.cc/dl-slots` (share visitors always count as anonymous).
 
 use super::auth::{audit, csrf_ok, forbidden, now};
 use super::guest::{self, PublicGuest};
@@ -16,6 +34,7 @@ use crate::fs::path::{RelPath, is_internal_name, validate_existing_name, validat
 use crate::fs::sort::natural_cmp;
 use crate::fs::thumbs::Size;
 use crate::fs::trash;
+use crate::fs::tree::{self, TreeSpec};
 use crate::fs::volume::{Entry, Kind, Meta, Space, VolumeRoot};
 use crate::fs::zipstream::{self, ZipSpec};
 use axum::body::Body;
@@ -288,6 +307,18 @@ pub async fn handle(
                 let include_hidden = principal.is_admin() && q.get("hidden") == Some("1");
                 let only = q.all("n").map(String::from).collect();
                 return match zip_response(&st, vol, rel, only, include_hidden, head, guard) {
+                    Ok(r) => r,
+                    Err(f) => fail(&ctx, f),
+                };
+            }
+            if q.has("tree") {
+                let guard = match anon_guard(&st, &principal, &client) {
+                    Ok(g) => g,
+                    Err(()) => return fail(&ctx, Fail::TooMany),
+                };
+                let include_hidden = principal.is_admin() && q.get("hidden") == Some("1");
+                let only = q.all("n").map(String::from).collect();
+                return match tree_response(vol, rel, only, include_hidden, head, guard) {
                     Ok(r) => r,
                     Err(f) => fail(&ctx, f),
                 };
@@ -881,6 +912,79 @@ pub async fn download(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// `GET /.cc/dl-slots`: free download slots of this visitor (see the module docs).
+pub async fn dl_slots(
+    State(st): State<Shared>,
+    Extension(client): Extension<ClientInfo>,
+    Extension(principal): Extension<Principal>,
+) -> Response {
+    slots_response(&st, principal == Principal::Anonymous, &client)
+}
+
+/// The slots answer: limited (anonymous visitors, share visitors) or not.
+pub fn slots_response(st: &AppState, limited: bool, client: &ClientInfo) -> Response {
+    let body = if limited {
+        let max = st.cfg.limits.anon_downloads_per_ip;
+        serde_json::json!({"max": max, "free": max.saturating_sub(st.limiter.active(client.ip))})
+    } else {
+        serde_json::json!({"max": null})
+    };
+    (
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        axum::Json(body),
+    )
+        .into_response()
+}
+
+/// A download selection: existing, visible names (dot-names only with `include_hidden`).
+fn check_selection(only: &[String], include_hidden: bool) -> Result<(), Fail> {
+    for n in only {
+        if validate_existing_name(n).is_err()
+            || is_internal_name(n)
+            || (!include_hidden && n.starts_with('.'))
+        {
+            return Err(Fail::BadRequest);
+        }
+    }
+    Ok(())
+}
+
+/// The recursive listing of a folder (or of the selected `only` names in it) as JSON
+/// lines, streamed; `guard` holds the visitor's download slot until it ends.
+pub fn tree_response(
+    vol: Arc<VolumeRoot>,
+    rel: RelPath,
+    only: Vec<String>,
+    include_hidden: bool,
+    head: bool,
+    guard: Option<DownloadGuard>,
+) -> Result<Response, Fail> {
+    check_selection(&only, include_hidden)?;
+    let builder = Response::builder()
+        .header(header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store");
+    if head {
+        return builder.body(Body::empty()).map_err(|_| Fail::Internal);
+    }
+    let spec = TreeSpec {
+        include_hidden,
+        only: (!only.is_empty()).then_some(only),
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    tokio::task::spawn_blocking(move || {
+        let writer = stream::ChannelWriter::new(tx.clone());
+        if let Err(e) = tree::write_tree(&vol, &rel, &spec, writer)
+            && e.kind() != io::ErrorKind::BrokenPipe
+        {
+            tracing::warn!(volume = %vol.name(), path = %rel, "tree listing failed: {e}");
+            let _ = tx.blocking_send(Err(e));
+        }
+    });
+    builder
+        .body(stream::body_from_channel(rx, guard))
+        .map_err(|_| Fail::Internal)
+}
+
 pub fn zip_response(
     st: &AppState,
     vol: Arc<VolumeRoot>,
@@ -890,14 +994,7 @@ pub fn zip_response(
     head: bool,
     guard: Option<DownloadGuard>,
 ) -> Result<Response, Fail> {
-    for n in &only {
-        if validate_existing_name(n).is_err()
-            || is_internal_name(n)
-            || (!include_hidden && n.starts_with('.'))
-        {
-            return Err(Fail::BadRequest);
-        }
-    }
+    check_selection(&only, include_hidden)?;
     let file_name = format!("{}.zip", rel.name().unwrap_or(vol.name()));
     let builder = Response::builder()
         .header(header::CONTENT_TYPE, "application/zip")
@@ -948,8 +1045,8 @@ fn problems(ctx: &Ctx, status: StatusCode, intro: &str, items: &[String], back: 
         .into_response()
 }
 
-/// `POST /<Volume>/<folder>/` with `op` = `zip` (download the selected `n`), `mkdir`
-/// (`name`) or `delete` (move the selected `n` to the trash).
+/// `POST /<Volume>/<folder>/` with `op` = `zip` (download the selected `n`), `tree` (their
+/// recursive listing), `mkdir` (`name`) or `delete` (move the selected `n` to the trash).
 #[allow(clippy::too_many_arguments)]
 async fn folder_post(
     st: &Shared,
@@ -967,25 +1064,20 @@ async fn folder_post(
     };
     let form = Query::parse(std::str::from_utf8(&bytes).ok());
     let op = form.get("op").unwrap_or_default();
-    if op == "zip" {
+    if op == "zip" || op == "tree" {
         let guard = match anon_guard(st, principal, client) {
             Ok(g) => g,
             Err(()) => return fail(ctx, Fail::TooMany),
         };
         let include_hidden = principal.is_admin() && form.get("hidden") == Some("1");
         let only = form.all("n").map(String::from).collect();
-        return match zip_response(
-            st,
-            folder.vol,
-            folder.rel,
-            only,
-            include_hidden,
-            false,
-            guard,
-        ) {
-            Ok(r) => r,
-            Err(f) => fail(ctx, f),
+        let (vol, rel) = (folder.vol, folder.rel);
+        let res = if op == "zip" {
+            zip_response(st, vol, rel, only, include_hidden, false, guard)
+        } else {
+            tree_response(vol, rel, only, include_hidden, false, guard)
         };
+        return res.unwrap_or_else(|f| fail(ctx, f));
     }
     let token = form.get("csrf").unwrap_or_default();
     // A signed-in user, or a public uploader (who may only create folders).

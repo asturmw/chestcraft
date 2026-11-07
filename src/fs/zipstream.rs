@@ -70,14 +70,14 @@ pub fn write_zip<W: Write>(
     Ok(count)
 }
 
-fn walk<W: Write>(
-    zip: &mut ZipWriter<StreamWriter<W>>,
+/// The names a download of `dirfd` covers, in natural order: never internal names,
+/// dot-names only with `include_hidden`, and only the `only` names when given (a selection
+/// at the top). Shared by the zip and the tree listing (`fs::tree`).
+pub fn listed_names(
     dirfd: &OwnedFd,
-    prefix: &str,
-    spec: &ZipSpec,
-    top: bool,
-    count: &mut u64,
-) -> io::Result<()> {
+    include_hidden: bool,
+    only: Option<&[String]>,
+) -> io::Result<Vec<String>> {
     let mut names = Vec::new();
     let mut dir = Dir::read_from(dirfd)?;
     while let Some(ent) = dir.read() {
@@ -89,20 +89,28 @@ fn walk<W: Write>(
         let Ok(name) = std::str::from_utf8(bytes) else {
             continue;
         };
-        if is_internal_name(name) || (!spec.include_hidden && name.starts_with('.')) {
+        if is_internal_name(name) || (!include_hidden && name.starts_with('.')) {
             continue;
         }
-        if top
-            && spec
-                .only
-                .as_ref()
-                .is_some_and(|only| !only.iter().any(|n| n == name))
-        {
+        if only.is_some_and(|only| !only.iter().any(|n| n == name)) {
             continue;
         }
         names.push(name.to_string());
     }
     names.sort_by(|a, b| natural_cmp(a, b));
+    Ok(names)
+}
+
+fn walk<W: Write>(
+    zip: &mut ZipWriter<StreamWriter<W>>,
+    dirfd: &OwnedFd,
+    prefix: &str,
+    spec: &ZipSpec,
+    top: bool,
+    count: &mut u64,
+) -> io::Result<()> {
+    let only = spec.only.as_deref().filter(|_| top);
+    let names = listed_names(dirfd, spec.include_hidden, only)?;
 
     for name in names {
         let Ok(st) = statat(dirfd, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) else {

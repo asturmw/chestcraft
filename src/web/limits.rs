@@ -29,7 +29,7 @@ impl DownloadLimiter {
         })
     }
 
-    #[cfg(test)]
+    /// Downloads this address runs now.
     pub fn active(&self, ip: IpAddr) -> u32 {
         self.inner.lock().unwrap().get(&ip).copied().unwrap_or(0)
     }
