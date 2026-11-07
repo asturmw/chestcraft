@@ -33,7 +33,8 @@ On the server, as root:
 4. **Install:** `tar xzf chestcraft-<version>.tar.gz && ./chestcraft-<version>/install.sh`.
    It checks the config as the service user, installs the units, writes
    `chestcraft.service.d/10-paths.conf` (the folders the service may write to), creates an
-   empty `/etc/chestcraft/secrets.toml`, puts the binary in place and enables
+   empty `/etc/chestcraft/secrets.toml` and the state and cache folders, puts the binary
+   in place and enables
    `chestcraft-collect.timer` (SMART readings as root every 30 minutes).
 5. **Start:** `systemctl enable --now chestcraft`, then
    `curl http://127.0.0.1:3923/healthz` (`ok`, or `collector` until the first SMART
