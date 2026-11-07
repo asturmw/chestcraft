@@ -759,6 +759,21 @@ impl Db {
         self.delete_key(SESSIONS, id_hash)
     }
 
+    /// Sessions of `user_key` as (id hash, session).
+    pub fn sessions_of(&self, user_key: &str) -> Result<Vec<(String, Session)>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(SESSIONS)?;
+        let mut out = Vec::new();
+        for row in t.iter()? {
+            let (k, v) = row?;
+            let s: Session = serde_json::from_slice(v.value())?;
+            if s.user == user_key {
+                out.push((k.value().to_string(), s));
+            }
+        }
+        Ok(out)
+    }
+
     /// Remove sessions of `user_key` except `keep` (an id hash); returns how many.
     pub fn delete_user_sessions(&self, user_key: &str, keep: Option<&str>) -> Result<usize> {
         self.retain_sessions(|id, s| s.user != user_key || Some(id) == keep)

@@ -184,12 +184,19 @@ Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy toolin
   removed at shutdown; folder missing → off (logged). CLI user commands are now audited
   (`user_created`, `user_role`, …, actor `cli`); `user add` uses the no-overwrite insert.
   `import-copyparty` still needs the service stopped (reads includes relative to its file).
-- Open: The account page
-  still lacks app passwords and "sign out everywhere", and rename/move/copy in the UI come
-  with the UI integration; the primitives exist. A thumbnail that fails to load needs a JS
-  fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token and
-  agent-activity markup is provisional until the design session delivers those screens;
-  the agents screen (Addendum 2 "UI") needs a note in its handoff.
+- Slice 15 done: access management on the web (`web/users.rs`, `auth/accounts.rs`).
+  `accounts::{create_person, reset_password, set_role, set_disabled}` shared by the CLI and
+  `/.cc/admin/users` (people: add → one-time password shown once, new one-time password,
+  role, block/unblock, never on oneself; agents: add, role (never admin), block, tokens with
+  30/90/365 days or never → shown once, revoke). `/.cc/admin/audit` (newest 200 of 5000,
+  filter by actor/action substring). Account page: WebDAV app passwords (create → shown
+  once, revoke) and "sign out on the other devices" (`Db::sessions_of`); account page now
+  `no-store`. Secret pages `no-store`, never in URLs; everything audited (actor
+  `user:<key>`). Header links "Accounts" for admins. Markup provisional.
+- Open: rename/move/copy in the UI come with the UI integration; the primitives exist. A thumbnail that fails to load needs a JS
+  fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token,
+  accounts/agents, audit and account-access markup is provisional until the design session
+  delivers those screens; the agents part (Addendum 2 "UI") needs a note in its handoff.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in

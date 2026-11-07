@@ -297,6 +297,7 @@ fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> Acco
         keys,
         rotations,
         admin: cu.role == ADMIN_ROLE,
+        access: maud::html! {},
     }
 }
 
@@ -311,8 +312,17 @@ pub async fn page(
         return Redirect::to(LOGIN_FOR_ACCOUNT).into_response();
     };
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let saved = Query::parse(uri.query()).has("saved");
-    av::account(&ctx, &account_view(&st, &ctx, &cu, saved)).into_response()
+    let q = Query::parse(uri.query());
+    let mut v = account_view(&st, &ctx, &cu, q.has("saved"));
+    let access = super::users::access_view(&st, &cu).await;
+    v.access = super::users::access_sections(&ctx, &cu.csrf, &access, &q);
+    let mut res = av::account(&ctx, &v).into_response();
+    // The session list shows addresses; keep it out of caches.
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    res
 }
 
 /// A preference field: absent = keep, `Some(None)` = back to the default.

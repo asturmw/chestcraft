@@ -93,7 +93,10 @@ as the user that owns `state_dir`.
 |---|---|
 | Config schema + validation | `config/mod.rs` (`deny_unknown_fields`), secrets `config/secrets.rs` |
 | State DB (all tables, one file) | `db/mod.rs` |
-| Accounts, sessions, passwords, backoff, tokens | `auth/` |
+| Accounts, sessions, passwords, backoff, tokens | `auth/` (shared account changes: `auth/accounts.rs`) |
+| Admin accounts page, audit log, app passwords + sessions on the account page | `web/users.rs` |
+| CLI state commands, admin socket | `cli.rs`, `web/adminsock.rs` |
+| Nightly state backup | `backup.rs` (run from `web/jobs.rs`) |
 | Folder listing, downloads, zip | `web/files.rs`, `fs/zipstream.rs`, `fs/sort.rs` |
 | Uploads (chunked, resumable) | `fs/upload.rs`, `web/api.rs`, `assets/upload.js` |
 | Move/copy/new file, no-overwrite renames | `fs/transfer.rs`, `fs/ops.rs`, `fs/names.rs` |

@@ -40,7 +40,8 @@ On the server, as root:
    `curl http://127.0.0.1:3923/healthz` (`ok`, or `collector` until the first SMART
    reading).
 6. **First admin account:** `chestcraft user add NAME --role admin` (as root or the service
-   user). It prints a one-time password to change at the first sign-in. While the server
+   user). It prints a one-time password to change at the first sign-in. Further accounts
+   and agents: the admin's Accounts page (`/.cc/admin/users`) or the CLI. While the server
    runs, `user`, `agent`, `api-token` and `backup` commands go through its admin socket
    (`/run/chestcraft/admin.sock`); otherwise they open the database themselves, as the
    service user. Accounts from copyparty: `chestcraft import-copyparty` (see `--help`;

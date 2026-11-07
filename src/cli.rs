@@ -6,6 +6,7 @@
 //! caller's uid) and prints what comes back. Otherwise the CLI opens the database itself
 //! and runs the same [`run`]. Output is collected in [`Out`] either way.
 
+use crate::auth::accounts;
 use crate::config::{self, Config};
 use crate::db::{AuditEvent, Db, DbError, User};
 use clap::Subcommand;
@@ -300,83 +301,45 @@ fn backup(env: &Env, out: &mut Out) {
 
 fn user(cmd: UserCmd, env: &Env, now: i64, out: &mut Out) -> Result<(), DbError> {
     let (cfg, db) = (env.cfg, env.db);
-    let role_ok =
-        |role: &str| role == crate::auth::perm::ADMIN_ROLE || cfg.roles.contains_key(role);
+    let role_ok = |role: &str| accounts::role_exists(cfg, role);
     match cmd {
-        UserCmd::Add { name, role } => {
-            if !crate::auth::valid_username(&name) {
-                out.fail(format!("\"{name}\": use 1–32 of a–z, A–Z, 0–9, . _ -"));
-            } else if !role_ok(&role) {
-                out.fail(format!(
-                    "unknown role \"{role}\" (admin or one from [roles])"
+        UserCmd::Add { name, role } => match accounts::create_person(db, cfg, &name, &role, now) {
+            Ok((u, pw)) => {
+                audit(db, now, "user_created", &User::key(&u.name), &u.role)?;
+                out.say(format!(
+                    "Created {}. One-time password (changed at first sign-in): {pw}",
+                    u.name
                 ));
-            } else {
-                let pw = crate::auth::password::generate();
-                let created = db.insert_user(&User {
-                    name: name.clone(),
-                    role,
-                    password_hash: crate::auth::password::hash(&pw),
-                    must_change_password: true,
-                    disabled: false,
-                    created: now,
-                    last_login: None,
-                    settings: Default::default(),
-                    known_remote_ips: vec![],
-                    kind: Default::default(),
-                })?;
-                if created {
-                    audit(db, now, "user_created", &User::key(&name), "")?;
-                    out.say(format!(
-                        "Created {name}. One-time password (changed at first sign-in): {pw}"
-                    ));
-                } else {
-                    out.fail(format!("an account named \"{name}\" exists already"));
-                }
             }
-        }
-        UserCmd::Passwd { name } => match db.user(&name)? {
-            Some(u) if u.is_agent() => out.fail(format!(
-                "{} is an agent: it has no password; give it a token with `chestcraft agent token`",
-                u.name
-            )),
-            Some(mut u) => {
-                let pw = crate::auth::password::generate();
-                u.password_hash = crate::auth::password::hash(&pw);
-                u.must_change_password = true;
-                db.put_user(&u)?;
-                db.delete_user_sessions(&User::key(&u.name), None)?;
+            Err(e) => return account_error(e, out),
+        },
+        UserCmd::Passwd { name } => match accounts::reset_password(db, &name) {
+            Ok((u, pw)) => {
                 audit(db, now, "user_password_reset", &User::key(&u.name), "")?;
                 out.say(format!("New one-time password for {}: {pw}", u.name));
             }
-            None => out.fail(format!("no account named \"{name}\"")),
+            Err(e) => return account_error(e, out),
         },
-        UserCmd::Role { name, role } => match db.user(&name)? {
-            Some(_) if !role_ok(&role) => out.fail(format!("unknown role \"{role}\"")),
-            Some(u) if u.is_agent() && role == crate::auth::perm::ADMIN_ROLE => out.fail(format!(
-                "{} is an agent; agents can't have the admin role",
-                u.name
-            )),
-            Some(u) => {
-                db.update_user(&u.name, |u| u.role = role.clone())?;
-                audit(db, now, "user_role", &User::key(&u.name), &role)?;
-                out.say(format!("{} now has role {role}", u.name));
+        UserCmd::Role { name, role } => match accounts::set_role(db, cfg, &name, &role) {
+            Ok(u) => {
+                audit(db, now, "user_role", &User::key(&u.name), &u.role)?;
+                out.say(format!("{} now has role {}", u.name, u.role));
             }
-            None => out.fail(format!("no account named \"{name}\"")),
+            Err(e) => return account_error(e, out),
         },
-        UserCmd::Disable { name } => match db.update_user(&name, |u| u.disabled = true)? {
-            Some(u) => {
-                let ended = db.delete_user_sessions(&User::key(&u.name), None)?;
+        UserCmd::Disable { name } => match accounts::set_disabled(db, &name, true) {
+            Ok((u, ended)) => {
                 audit(db, now, "user_disabled", &User::key(&u.name), "")?;
                 out.say(format!("{} is disabled; {ended} session(s) ended", u.name));
             }
-            None => out.fail(format!("no account named \"{name}\"")),
+            Err(e) => return account_error(e, out),
         },
-        UserCmd::Enable { name } => match db.update_user(&name, |u| u.disabled = false)? {
-            Some(u) => {
+        UserCmd::Enable { name } => match accounts::set_disabled(db, &name, false) {
+            Ok((u, _)) => {
                 audit(db, now, "user_enabled", &User::key(&u.name), "")?;
                 out.say(format!("{} is enabled", u.name));
             }
-            None => out.fail(format!("no account named \"{name}\"")),
+            Err(e) => return account_error(e, out),
         },
         UserCmd::List => {
             let mut users = db.users()?;
@@ -406,6 +369,17 @@ fn user(cmd: UserCmd, env: &Env, now: i64, out: &mut Out) -> Result<(), DbError>
         UserCmd::AppPassword(cmd) => app_password(cmd, env, now, out)?,
     }
     Ok(())
+}
+
+/// Database errors go up; the rest is the user's mistake.
+fn account_error(e: accounts::AccountError, out: &mut Out) -> Result<(), DbError> {
+    match e {
+        accounts::AccountError::Db(e) => Err(e),
+        other => {
+            out.fail(other.to_string());
+            Ok(())
+        }
+    }
 }
 
 fn app_password(cmd: AppPasswordCmd, env: &Env, now: i64, out: &mut Out) -> Result<(), DbError> {
