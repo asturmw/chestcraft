@@ -99,7 +99,7 @@ as the user that owns `state_dir`.
 | Nightly state backup | `backup.rs` (run from `web/jobs.rs`) |
 | Folder listing, downloads, zip | `web/files.rs`, `fs/zipstream.rs`, `fs/sort.rs` |
 | Uploads (chunked, resumable) | `fs/upload.rs`, `web/api.rs`, `assets/upload.js` |
-| Move/copy/new file, no-overwrite renames | `fs/transfer.rs`, `fs/ops.rs`, `fs/names.rs` |
+| Move/copy/new file, no-overwrite renames | `fs/transfer.rs`, `fs/ops.rs`, `fs/names.rs`; JSON API for the UI `web/ops.rs` |
 | Trash | `fs/trash.rs`, `web/trash.rs` |
 | Thumbnails + viewer | `fs/thumbs/`, `fs/filetype.rs`, `web/preview.rs` |
 | Shares, public uploads | `shares/`, `web/share.rs` (visitors), `web/shares.rs` (owners), `web/public.rs`, `web/guest.rs` |

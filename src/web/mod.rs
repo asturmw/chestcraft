@@ -15,6 +15,7 @@ mod headers;
 pub mod jobs;
 mod limits;
 pub mod monitor;
+mod ops;
 mod preview;
 mod public;
 mod query;
@@ -226,6 +227,9 @@ pub fn router(state: Shared) -> Router {
         .route("/.cc/upload/{id}/done", post(api::done))
         .route("/.cc/batch", post(api::batch_new))
         .route("/.cc/batch/{id}/done", post(api::batch_done))
+        .route("/.cc/rename", post(ops::rename))
+        .route("/.cc/move", post(ops::move_to))
+        .route("/.cc/copy", post(ops::copy_to))
         .route("/.cc/trash", get(trash::page))
         .route("/.cc/trash/restore", post(trash::restore))
         .route("/.cc/trash/empty", post(trash::empty))
