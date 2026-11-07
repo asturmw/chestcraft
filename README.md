@@ -11,7 +11,9 @@ A self-hosted file manager and sharing app for a home NAS, written in Rust.
 - One static binary with pure-Rust dependencies and no JavaScript build step
 
 Status: early development, not usable yet. Building, installing, updates and restoring
-from the nightly backup: [docs/install.md](docs/install.md).
+from the nightly backup: [docs/install.md](docs/install.md). Working on the code (by hand
+or with a coding agent): [AGENTS.md](AGENTS.md) has the project map, a local dev setup and
+the rules a change must keep.
 
 ## License
 
