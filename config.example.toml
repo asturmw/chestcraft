@@ -34,6 +34,11 @@ backup_dir = "/srv/chestcraft"
 # SMART data, written by `chestcraft collect` (root, chestcraft-collect.timer); the folder
 # must belong to root. Keep it in line with RuntimeDirectory in chestcraft-collect.service.
 smart_file = "/run/chestcraft-smart/smart.json"
+# The running server takes CLI commands (`chestcraft user …`, `agent …`, `api-token …`,
+# `backup`) on this socket, mode 600: only the service user and root get through. Its
+# folder is RuntimeDirectory= of the service; without the folder the socket stays off and
+# those commands need the service stopped.
+admin_socket = "/run/chestcraft/admin.sock"
 
 [trash]
 days = 30            # default for all volumes; 0 = never purge

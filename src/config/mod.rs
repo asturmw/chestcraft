@@ -138,6 +138,8 @@ pub struct PathsConfig {
     pub backup_dir: PathBuf,
     /// SMART data written by `chestcraft collect` (root) and read by the server.
     pub smart_file: PathBuf,
+    /// Unix socket of the running server for CLI commands (`chestcraft user …`).
+    pub admin_socket: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -420,6 +422,7 @@ struct RawPaths {
     cache_dir: String,
     backup_dir: String,
     smart_file: String,
+    admin_socket: String,
 }
 
 impl Default for RawPaths {
@@ -429,6 +432,7 @@ impl Default for RawPaths {
             cache_dir: "/var/cache/chestcraft".into(),
             backup_dir: "/srv/chestcraft".into(),
             smart_file: "/run/chestcraft-smart/smart.json".into(),
+            admin_socket: "/run/chestcraft/admin.sock".into(),
         }
     }
 }
@@ -1170,11 +1174,20 @@ fn validate_paths(raw: &RawPaths, errs: &mut Vec<String>) -> Option<PathsConfig>
     let cache_dir = get("cache_dir", &raw.cache_dir);
     let backup_dir = get("backup_dir", &raw.backup_dir);
     let smart_file = get("smart_file", &raw.smart_file);
+    let admin_socket = get("admin_socket", &raw.admin_socket).filter(|p| {
+        // sun_path holds 108 bytes including the final NUL.
+        let ok = p.as_os_str().len() < 108;
+        if !ok {
+            errs.push("paths.admin_socket: socket paths can have at most 107 bytes".into());
+        }
+        ok
+    });
     Some(PathsConfig {
         state_dir: state_dir?,
         cache_dir: cache_dir?,
         backup_dir: backup_dir?,
         smart_file: smart_file?,
+        admin_socket: admin_socket?,
     })
 }
 

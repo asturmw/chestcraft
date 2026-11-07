@@ -2,6 +2,7 @@
 
 mod account;
 mod account_views;
+mod adminsock;
 mod api;
 mod assets;
 mod auth;
@@ -389,6 +390,23 @@ pub async fn serve(cfg: Config, config_file: &Path) -> anyhow::Result<Exit> {
             shutdown.cancel();
         }
     });
+    let sock = state.cfg.paths.admin_socket.clone();
+    match adminsock::bind(&sock) {
+        Ok(Some(listener)) => {
+            tracing::info!(path = %sock.display(), "CLI commands accepted on the admin socket");
+            tokio::spawn(adminsock::serve(
+                state.clone(),
+                listener,
+                sock,
+                shutdown.clone(),
+            ));
+        }
+        Ok(None) => tracing::info!(
+            "admin socket off ({} has no folder): CLI state commands need the server stopped",
+            sock.display()
+        ),
+        Err(e) => tracing::warn!("admin socket off: {e}"),
+    }
     let mcp = match state.cfg.mcp.listen {
         Some(mcp_addr) => {
             let (st, token) = (state.clone(), shutdown.clone());
