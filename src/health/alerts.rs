@@ -646,6 +646,13 @@ fn app_rules(c: &mut Ctx, snap: &Snapshot) {
                 .text("role", role),
         );
     }
+    if let Some(e) = snap.app.backup.as_ref().and_then(|b| b.error.as_ref()) {
+        c.cond(
+            "backup:failed".to_string(),
+            Severity::Warning,
+            Msg::new("backup_failed").text("error", e),
+        );
+    }
     for s in &snap.app.missing_shares {
         c.cond(
             format!("share:{}:missing", s.id),

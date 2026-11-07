@@ -3,7 +3,10 @@
 #
 # Install as /etc/chestcraft/config.toml (owned by root, readable by the service user).
 # Validate with `chestcraft check`, apply with `systemctl reload chestcraft`.
-# An invalid file is rejected and the running config stays in place.
+# An invalid file is rejected and the running config stays in place; a valid one restarts
+# the server in place. After adding a volume or changing [paths], the service also needs
+# the new folders as writable: run deploy/install.sh again (or `chestcraft check
+# --systemd` into chestcraft.service.d/10-paths.conf) and restart.
 # Secrets (the Telegram bot token, an ntfy access token) are not in this file. They live
 # in /etc/chestcraft/secrets.toml (owner root, mode 600), which systemd hands to the
 # service with LoadCredential=secrets:/etc/chestcraft/secrets.toml:
@@ -24,14 +27,17 @@ timezone = "Europe/Berlin"
 [paths]
 state_dir = "/var/lib/chestcraft"     # database; keep it off the pool being monitored
 cache_dir = "/var/cache/chestcraft"   # thumbnails
-backup_dir = "/srv/chestcraft"        # nightly copy of the database + this file
+# Nightly copy (at trash.purge_at) of the database, this file and the background pictures.
+# Must exist, lie outside every volume and on another file system than state_dir; best a
+# dataset on the pool, whose snapshots keep its history. Restore: docs/install.md.
+backup_dir = "/srv/chestcraft"
 # SMART data, written by `chestcraft collect` (root, chestcraft-collect.timer); the folder
 # must belong to root. Keep it in line with RuntimeDirectory in chestcraft-collect.service.
 smart_file = "/run/chestcraft-smart/smart.json"
 
 [trash]
 days = 30            # default for all volumes; 0 = never purge
-purge_at = "04:00"
+purge_at = "04:00"   # also when the state backup runs
 
 [uploads]
 chunk_mib = 32

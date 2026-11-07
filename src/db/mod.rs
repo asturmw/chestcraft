@@ -462,6 +462,20 @@ pub struct PublicWrite {
     pub by: String,
 }
 
+/// The nightly copy of the state to `paths.backup_dir`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct BackupStatus {
+    /// When the last attempt ended.
+    pub attempt: i64,
+    /// When the last good copy was finished.
+    pub last_ok: Option<i64>,
+    /// Why the last attempt failed; None when it worked.
+    pub error: Option<String>,
+    /// Size of the database copy in bytes (last good copy).
+    #[serde(default)]
+    pub bytes: u64,
+}
+
 fn json_map<T: Serialize>(m: &BTreeMap<String, T>) -> Result<BTreeMap<String, Vec<u8>>> {
     m.iter()
         .map(|(k, v)| Ok((k.clone(), serde_json::to_vec(v)?)))
@@ -658,6 +672,71 @@ impl Db {
 
     pub fn delete_background_set(&self, id: &str) -> Result<()> {
         self.delete_key(BACKGROUNDS, id)
+    }
+
+    // --- backup ----------------------------------------------------------------------
+
+    /// Write a consistent copy of the whole database to `dest` (a new file, which must not
+    /// exist): every table is read in one read transaction and written in one transaction.
+    /// Returns the number of rows copied. Writers keep working meanwhile.
+    pub fn copy_to(&self, dest: &Path) -> Result<u64> {
+        fn copy<K: redb::Key + 'static, V: redb::Value + 'static>(
+            from: &redb::ReadTransaction,
+            to: &redb::WriteTransaction,
+            def: TableDefinition<K, V>,
+        ) -> Result<u64> {
+            let src = from.open_table(def)?;
+            let mut dst = to.open_table(def)?;
+            let mut n = 0;
+            for row in src.iter()? {
+                let (k, v) = row?;
+                dst.insert(k.value(), v.value())?;
+                n += 1;
+            }
+            Ok(n)
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(dest)
+            .map_err(|e| DbError::Redb(format!("{}: {e}", dest.display())))?;
+        let out = Database::builder().create_file(file)?;
+        let from = self.db.begin_read()?;
+        let to = out.begin_write()?;
+        let mut rows = copy(&from, &to, META)?;
+        rows += copy(&from, &to, USERS)?;
+        rows += copy(&from, &to, SESSIONS)?;
+        rows += copy(&from, &to, AUDIT)?;
+        rows += copy(&from, &to, TRASH)?;
+        rows += copy(&from, &to, UPLOADS)?;
+        rows += copy(&from, &to, BATCHES)?;
+        rows += copy(&from, &to, APP_PASSWORDS)?;
+        rows += copy(&from, &to, TEMPS)?;
+        rows += copy(&from, &to, SHARES)?;
+        rows += copy(&from, &to, SHARE_LOG)?;
+        rows += copy(&from, &to, GUESTS)?;
+        rows += copy(&from, &to, PUBLIC_WRITE)?;
+        rows += copy(&from, &to, ALERTS)?;
+        rows += copy(&from, &to, BASELINES)?;
+        rows += copy(&from, &to, ALERT_LOG)?;
+        rows += copy(&from, &to, HISTORY)?;
+        rows += copy(&from, &to, CHANNELS)?;
+        rows += copy(&from, &to, SETTINGS)?;
+        rows += copy(&from, &to, BACKGROUNDS)?;
+        rows += copy(&from, &to, API_TOKENS)?;
+        rows += copy(&from, &to, AGENT_TOKENS)?;
+        to.commit()?;
+        Ok(rows)
+    }
+
+    /// Outcome of the last nightly backup, if one ran.
+    pub fn backup_status(&self) -> Result<Option<BackupStatus>> {
+        self.get_json(SETTINGS, "backup")
+    }
+
+    pub fn put_backup_status(&self, s: &BackupStatus) -> Result<()> {
+        self.put_json(SETTINGS, "backup", s, true)
     }
 
     // --- sessions --------------------------------------------------------------------

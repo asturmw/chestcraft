@@ -88,6 +88,8 @@ pub struct App {
     /// (account, role) for accounts whose role isn't in the config.
     pub missing_roles: Vec<(String, String)>,
     pub missing_shares: Vec<MissingShare>,
+    /// The nightly state backup; None until the first one ran.
+    pub backup: Option<crate::db::BackupStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -431,6 +433,7 @@ pub fn app_stats(cfg: &Config, db: &Db, vols: &crate::fs::volume::Volumes, now: 
         }
         app.agents.sort_by_key(|a| a.name.to_lowercase());
     }
+    app.backup = db.backup_status().ok().flatten();
     app.sessions = db.session_count().unwrap_or(0) as usize;
     app.transfers = db
         .uploads()

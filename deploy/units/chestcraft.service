@@ -1,0 +1,67 @@
+# chestcraft: web UI, WebDAV, share links, dashboard and alerts (and MCP, if configured).
+#
+# Runs as an unprivileged user (User= below, or a drop-in from `install.sh --user NAME`).
+# Everything is read-only for it except the folders in chestcraft.service.d/10-paths.conf,
+# which `deploy/install.sh` writes from the config with `chestcraft check --systemd`
+# (state, cache, backup and every volume that isn't read-only). After adding a volume, run
+# install.sh again or write that file by hand, then restart.
+#
+# `systemctl reload chestcraft` checks the config first; a config that fails the check
+# keeps the running one (the error is in the reload's output and the journal). A good one
+# restarts the server in place: downloads in progress break off, uploads resume.
+[Unit]
+Description=chestcraft file sharing
+After=network-online.target local-fs.target zfs-mount.service
+Wants=network-online.target
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=chestcraft
+ExecStart=/usr/local/bin/chestcraft --config /etc/chestcraft/config.toml serve
+ExecReload=/usr/local/bin/chestcraft --config /etc/chestcraft/config.toml check
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+# Telegram / ntfy tokens (root-owned file, mode 600; may be empty).
+LoadCredential=secrets:/etc/chestcraft/secrets.toml
+# Defaults of [paths] state_dir and cache_dir; the CLI socket lives in /run/chestcraft.
+StateDirectory=chestcraft
+StateDirectoryMode=0700
+CacheDirectory=chestcraft
+CacheDirectoryMode=0700
+RuntimeDirectory=chestcraft
+RuntimeDirectoryMode=0700
+UMask=0022
+LimitNOFILE=65536
+
+# Sandbox. zpool/zfs talk to /dev/zfs; SMART data comes from chestcraft-collect (root).
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/zfs rw
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

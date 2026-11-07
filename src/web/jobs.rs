@@ -1,7 +1,7 @@
 //! Daily maintenance at `trash.purge_at` (server time zone): purge trash items older than
 //! their volume's `trash_days`, clean up uploads (and temporary WebDAV entries) abandoned
 //! for `uploads.abandoned_days`, and drop guest sessions (share visitors, public uploaders)
-//! that ran out.
+//! that ran out. Then the state is copied to `paths.backup_dir` ([`crate::backup`]).
 
 use super::Shared;
 use crate::config::TimeOfDay;
@@ -67,10 +67,53 @@ pub async fn run(st: Shared) {
             expired_guest_sessions = guests,
             "daily cleanup done"
         );
+        backup(&st);
     })
     .await;
     if done.is_err() {
         tracing::error!("daily cleanup crashed");
+    }
+}
+
+/// Copy the state to `paths.backup_dir` and record the outcome (a failure turns into an
+/// alert on the next health check). Blocking.
+pub fn backup(st: &super::AppState) {
+    let started = std::time::Instant::now();
+    let paths = &st.cfg.paths;
+    let result = match crate::backup::refuse(&paths.state_dir, &paths.backup_dir) {
+        Some(why) => Err(why),
+        None => crate::backup::run(
+            &st.db,
+            &paths.state_dir,
+            &paths.backup_dir,
+            st.config_file.as_deref(),
+        ),
+    };
+    let mut status = st.db.backup_status().ok().flatten().unwrap_or_default();
+    status.attempt = Timestamp::now().as_second();
+    match result {
+        Ok(r) => {
+            tracing::info!(
+                rows = r.rows,
+                bytes = r.bytes,
+                config_files = r.config_files,
+                pictures_copied = r.pictures_copied,
+                pictures_dropped = r.pictures_dropped,
+                ms = started.elapsed().as_millis() as u64,
+                dir = %st.cfg.paths.backup_dir.display(),
+                "state backup done"
+            );
+            status.last_ok = Some(status.attempt);
+            status.error = None;
+            status.bytes = r.bytes;
+        }
+        Err(e) => {
+            tracing::error!("state backup failed: {e}");
+            status.error = Some(e);
+        }
+    }
+    if let Err(e) = st.db.put_backup_status(&status) {
+        tracing::error!("can't record the backup outcome: {e}");
     }
 }
 

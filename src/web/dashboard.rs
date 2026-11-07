@@ -72,6 +72,8 @@ pub struct DashData {
     pub recent: Vec<LogEntry>,
     pub history: std::sync::Arc<Vec<(i64, Sample)>>,
     pub thresholds: crate::config::Thresholds,
+    /// When the daily cleanup and the state backup run, "04:00".
+    pub daily_at: String,
 }
 
 pub async fn page(
@@ -103,6 +105,7 @@ pub async fn page(
         recent,
         history: st.health.history(),
         thresholds: st.cfg.alerts.thresholds,
+        daily_at: st.cfg.trash.purge_at.to_string(),
     };
     dashboard_view(&ctx, &data).into_response()
 }
@@ -151,7 +154,7 @@ pub fn dashboard_view(ctx: &Ctx, d: &DashData) -> Markup {
                     (disks_section(ctx, s, d))
                     (md_section(ctx, s))
                     (host_section(ctx, s, d.now))
-                    (app_section(ctx, s))
+                    (app_section(ctx, s, d))
                 }
             }
         },
@@ -637,10 +640,22 @@ fn host_section(ctx: &Ctx, s: &Snapshot, _now: i64) -> Markup {
     section("host", ctx.t("dashboard.host"), body)
 }
 
-fn app_section(ctx: &Ctx, s: &Snapshot) -> Markup {
+fn app_section(ctx: &Ctx, s: &Snapshot, d: &DashData) -> Markup {
     let a = &s.app;
     let body = html! {
         dl class="stats" {
+            dt { (ctx.t("dashboard.backup")) }
+            @match &a.backup {
+                None => dd { (ctx.tf("dashboard.backup_never", &[("time", &d.daily_at)])) },
+                Some(b) => @match &b.error {
+                    Some(e) => dd data-state="error" {
+                        (ctx.tf("dashboard.backup_failed", &[("time", &ctx.datetime(b.attempt)), ("error", e)]))
+                    },
+                    None => dd {
+                        (ctx.tf("dashboard.backup_ok", &[("time", &ctx.datetime(b.last_ok.unwrap_or(b.attempt))), ("size", &ctx.size(b.bytes))]))
+                    },
+                },
+            }
             dt { (ctx.t("dashboard.sessions")) } dd { (a.sessions) }
             dt { (ctx.t("dashboard.transfers")) } dd { (a.transfers) }
             dt { (ctx.t("dashboard.shares")) } dd { a href="/.cc/shares?all=1" { (a.shares_active) } }

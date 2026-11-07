@@ -8,6 +8,7 @@ pub const VERSION: &str = match option_env!("CHESTCRAFT_VERSION") {
 
 pub mod appearance;
 pub mod auth;
+pub mod backup;
 pub mod config;
 pub mod dav;
 pub mod db;
