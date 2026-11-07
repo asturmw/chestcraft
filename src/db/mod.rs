@@ -142,6 +142,52 @@ pub struct UserSettings {
     /// "never" | "load" | "session" | "day"; None takes the admin's default.
     #[serde(default)]
     pub rotation: Option<String>,
+    /// Glass mode and panel opacity per skin name; unset values take the admin's default.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub panels: BTreeMap<String, Panels>,
+}
+
+/// How the panels sit over the backdrop. Each value falls back on its own: an account's
+/// value, else the admin's default for the skin, else frosted and the skin's own opacity.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Panels {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass: Option<Glass>,
+    /// Panel fill step 1–5 (10–90 %), frosted glass only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u8>,
+}
+
+impl Panels {
+    pub fn is_empty(&self) -> bool {
+        self.glass.is_none() && self.opacity.is_none()
+    }
+}
+
+/// Frosted panels have a translucent fill and blur the backdrop; clear ones are outlines.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Glass {
+    #[default]
+    Frosted,
+    Clear,
+}
+
+impl Glass {
+    pub fn code(self) -> &'static str {
+        match self {
+            Glass::Frosted => "frosted",
+            Glass::Clear => "clear",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Glass> {
+        match s {
+            "frosted" => Some(Glass::Frosted),
+            "clear" => Some(Glass::Clear),
+            _ => None,
+        }
+    }
 }
 
 /// What a page shows behind its panels.
@@ -149,9 +195,9 @@ pub struct UserSettings {
 pub struct Background {
     #[serde(flatten)]
     pub fill: Fill,
-    /// Dim step 0–4 (a dark layer over the picture).
+    /// Dim step 0–4 (a veil over the backdrop). None: chosen by the glass mode.
     #[serde(default)]
-    pub dim: u8,
+    pub dim: Option<u8>,
     /// Blur step 0–4.
     #[serde(default)]
     pub blur: u8,
@@ -168,8 +214,9 @@ pub enum Fill {
     Images { sets: Vec<String> },
 }
 
-/// The admin's appearance settings (Appearance page). Unset values fall back to the first
-/// skin, no background and daily rotation.
+/// The admin's appearance settings (Appearance page). Unset values fall back to the
+/// `modern` skin (else the first one), the skin's own background, frosted glass and daily
+/// rotation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Appearance {
     /// Skin for accounts that didn't pick one.
@@ -186,6 +233,12 @@ pub struct Appearance {
     /// Default rotation mode: "never" | "load" | "session" | "day".
     #[serde(default)]
     pub rotation: Option<String>,
+    /// Default glass mode and panel opacity per skin name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub panels: BTreeMap<String, Panels>,
+    /// Glass mode and panel opacity of pages for visitors without an account.
+    #[serde(default, skip_serializing_if = "Panels::is_empty")]
+    pub share_panels: Panels,
 }
 
 /// A set of up to three background pictures (landscape, near-square, tall), stored as

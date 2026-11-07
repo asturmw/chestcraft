@@ -12,7 +12,9 @@ Project map, build/run, rules and common changes (for every agent):
 ## Status
 
 Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
-13). Next: NAS setup (step 4), UI integration (7), staging (8).
+13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slice A done,
+B (volume note, visitor pages) and C (tree listing, download slots) next. Then: NAS setup
+(step 4), UI integration (7), staging (8).
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -200,6 +202,22 @@ Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy toolin
   item, `m` at the target in the same volume, `w` in another; copy `r` + `w`); signed-in
   only, `X-CSRF-Token`; audited (`rename`/`move`/`copy`, target → detail); shares follow.
   The UI dialogs and the clipboard (`yy`/`dd`/`p`) still need the JS (UI integration).
+- Slice 17 done (backend brief 2026-11-07, slice A; design requests 1, 1a, 9, 11, 12, 13):
+  appearance. Per skin `Panels {glass: frosted|clear, opacity: 1–5}` in
+  `UserSettings.panels`, `Appearance.panels` + `share_panels`; each value falls back on its
+  own (account → admin default for the skin → frosted / the skin's own); `<html
+  data-glass data-opacity>` (opacity only when set). `Background.dim` is `Option` (None =
+  auto: frosted 1, clear 2 for colors, pictures and skin pictures; 0 for the skin color).
+  Four gradient presets (`appearance::PRESETS`, per-skin order) as swatch buttons in their
+  own form (keep dim/blur/panels), stored as a color; swatch colors from
+  `/.cc/presets.css`. Built-in sets `builtin:<name>` (`mountains`, `sakura`, `garden`) from
+  `assets/backgrounds/<name>-<slot>.jpg` + `.small.jpg` previews (copied from the `design`
+  branch), served as assets, never in the store's records (remove/sweep can't touch them),
+  usable by everyone, mixable, not deletable. Skin pictures: `AppState.skin_pictures` from
+  embedded `backgrounds/default-<skin>-{dark,light}.svg` (none yet: the design's light round
+  delivers them); explicit theme → that file, system → `<source media="(prefers-color-
+  scheme: light)">` + dark `<img>`, no light file → dark. `pick_skin` falls back to
+  `modern` before the first skin. i18n `[skin]` names, `[presets]`.
 - Open: A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token,
   accounts/agents, audit and account-access markup is provisional until the design session

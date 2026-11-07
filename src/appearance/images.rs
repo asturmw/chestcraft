@@ -18,7 +18,7 @@ pub const SMALL_EDGE: u32 = 480;
 pub const MAX_UPLOAD_BYTES: usize = 30 << 20;
 const QUALITY: u8 = 85;
 const SMALL_QUALITY: u8 = 80;
-const ID_ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+pub(crate) const ID_ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const ID_LEN: usize = 16;
 
 #[derive(Debug, thiserror::Error)]

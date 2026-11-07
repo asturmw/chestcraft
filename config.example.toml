@@ -130,8 +130,9 @@ Austausch = "r"
 # fr = "/etc/chestcraft/words-fr.txt"
 
 # ---- Appearance ---------------------------------------------------------------
-# Skins, default backgrounds and the rotation default are set by the admin on the
-# Appearance page; each account may pick its own. Background images are re-encoded
+# Skins, default backgrounds, glass (frosted or clear), panel opacity and the rotation
+# default are set by the admin on the Appearance page; each account may pick its own.
+# Three picture sets ship in the binary. Uploaded background images are re-encoded
 # (JPEG, at most 3840 px, metadata removed) and kept in <state_dir>/backgrounds.
 [appearance]
 max_backgrounds_per_user = 10   # image sets per account; admins have no limit

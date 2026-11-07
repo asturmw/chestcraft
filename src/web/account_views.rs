@@ -98,6 +98,8 @@ pub struct Tab {
 pub struct SetCard {
     pub id: String,
     pub selected: bool,
+    /// Display name (built-in sets) or number.
+    pub name: String,
     /// Uploaded by this account.
     pub deletable: bool,
     /// Slot label and preview URL.
@@ -125,8 +127,17 @@ pub struct BackgroundsView {
     pub colors: [String; 3],
     pub stops: usize,
     pub angle: u16,
-    pub dim: u8,
+    /// Gradient presets (id, name), those that suit the skin first.
+    pub presets: Vec<(&'static str, String)>,
+    /// Stylesheet with the preset swatches.
+    pub presets_css: String,
+    /// Dim options, "" = automatic.
+    pub dim: Vec<Opt>,
     pub blur: u8,
+    /// Glass options ("" = the default, own backgrounds only).
+    pub glass: Vec<Opt>,
+    /// Panel opacity options ("" = the default or the skin's own).
+    pub opacity: Vec<Opt>,
     pub sets: Vec<SetCard>,
     pub count: String,
     pub upload: UploadState,
@@ -155,6 +166,9 @@ pub fn backgrounds(ctx: &Ctx, v: &BackgroundsView) -> Markup {
         ("color", "backgrounds.fill_color"),
         ("images", "backgrounds.fill_images"),
     ];
+    let mut ctx = ctx.clone();
+    ctx.styles.push(v.presets_css.clone());
+    let ctx = &ctx;
     layout(
         ctx,
         &v.title,
@@ -191,6 +205,15 @@ pub fn backgrounds(ctx: &Ctx, v: &BackgroundsView) -> Markup {
                 }
                 fieldset class="bg-editor__color" {
                     legend { (ctx.t("backgrounds.fill_color")) }
+                    p class="field__hint" id="bg-presets-hint" { (ctx.t("backgrounds.presets_hint")) }
+                    ul class="bg-presets" aria-label=(ctx.t("backgrounds.presets")) {
+                        @for (id, name) in &v.presets {
+                            li {
+                                button class="bg-preset" type="submit" form="bg-preset" name="preset"
+                                    value=(id) data-preset=(id) aria-describedby="bg-presets-hint" { (name) }
+                            }
+                        }
+                    }
                     label class="field" {
                         span class="field__label" { (ctx.t("backgrounds.stops")) }
                         select class="field__input" name="stops" {
@@ -217,11 +240,11 @@ pub fn backgrounds(ctx: &Ctx, v: &BackgroundsView) -> Markup {
                     } @else {
                         p class="field__hint" { (ctx.t("backgrounds.pictures_hint")) }
                         ul class="bg-sets" {
-                            @for (n, s) in v.sets.iter().enumerate() {
+                            @for s in &v.sets {
                                 li class="bg-set" data-state=(if s.selected { "selected" } else { "idle" }) {
                                     label class="choice bg-set__pick" {
                                         input type="checkbox" name="sets" value=(s.id) checked[s.selected];
-                                        " " (ctx.tf("backgrounds.use_n", &[("n", &(n + 1).to_string())]))
+                                        " " (ctx.tf("backgrounds.use", &[("name", &s.name)]))
                                     }
                                     @for (label, url) in &s.pictures {
                                         figure class="bg-set__picture" {
@@ -238,11 +261,25 @@ pub fn backgrounds(ctx: &Ctx, v: &BackgroundsView) -> Markup {
                         }
                     }
                 }
-                (steps(ctx, "dim", "backgrounds.dim", v.dim))
+                (select(ctx, "dim", "backgrounds.dim", &v.dim))
                 (steps(ctx, "blur", "backgrounds.blur", v.blur))
+                (select(ctx, "glass", "backgrounds.glass", &v.glass))
+                label class="field" {
+                    span class="field__label" { (ctx.t("backgrounds.opacity")) }
+                    select class="field__input" name="opacity" aria-describedby="bg-opacity-hint" {
+                        @for o in &v.opacity {
+                            option value=(o.value) selected[o.selected] { (o.label) }
+                        }
+                    }
+                    span class="field__hint" id="bg-opacity-hint" { (ctx.t("backgrounds.opacity_hint")) }
+                }
                 button class="bg-editor__submit" type="submit" { (ctx.t("backgrounds.save")) }
             }
             form id="bg-delete" method="post" action="/.cc/account/backgrounds" {
+                input type="hidden" name="csrf" value=(v.csrf);
+                input type="hidden" name="target" value=(v.target);
+            }
+            form id="bg-preset" method="post" action="/.cc/account/backgrounds" {
                 input type="hidden" name="csrf" value=(v.csrf);
                 input type="hidden" name="target" value=(v.target);
             }

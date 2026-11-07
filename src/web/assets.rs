@@ -45,6 +45,11 @@ pub fn url(path: &str) -> String {
     }
 }
 
+/// Is `path` embedded?
+pub fn has(path: &str) -> bool {
+    INDEX.contains_key(path)
+}
+
 /// Stylesheet URL of a skin, if that skin is embedded.
 pub fn skin_css(skin: &str) -> Option<String> {
     let path = format!("skins/{skin}.css");
@@ -66,6 +71,7 @@ fn content_type(path: &str) -> &'static str {
         Some("css") => "text/css; charset=utf-8",
         Some("js") => "text/javascript; charset=utf-8",
         Some("svg") => "image/svg+xml",
+        Some("jpg") => "image/jpeg",
         Some("woff2") => "font/woff2",
         Some("png") => "image/png",
         Some("ico") => "image/x-icon",
