@@ -101,11 +101,6 @@ pub async fn volumes(c: &Call) -> ToolResult {
                     v.name(),
                 );
                 let space = v.space().ok();
-                let note = v
-                    .cfg
-                    .note
-                    .as_ref()
-                    .and_then(|n| n.en.clone().or(n.de.clone()));
                 json!({
                     "name": v.name(),
                     "path": format!("/{}", v.name()),
@@ -115,7 +110,6 @@ pub async fn volumes(c: &Call) -> ToolResult {
                     "public": v.cfg.public,
                     "free_bytes": space.map(|s| s.avail),
                     "total_bytes": space.map(|s| s.total),
-                    "note": note,
                 })
             })
             .collect();

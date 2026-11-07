@@ -72,7 +72,6 @@ anon_downloads_per_ip = 4
 #   read_only_paths      areas nobody may change, relative to the volume
 #   trash_days           overrides [trash] days
 #   stage_folder_uploads folder uploads appear only once complete
-#   note.de / note.en    shown as a banner in the folder view
 #
 # Deleting moves items to <root>/.chestcraft-trash and uploads collect in
 # <root>/.chestcraft-uploads, where <root> is the highest folder of the volume on the same
@@ -100,8 +99,6 @@ read_only_paths = ["pve"]
 path = "/srv/eingang"
 stage_folder_uploads = true
 trash_days = 14
-note.de = "Dateien hier werden alle 15 Minuten automatisch einsortiert."
-note.en = "Files here are sorted automatically every 15 minutes."
 
 # ---- Roles ------------------------------------------------------------------
 # Per-volume permissions: r = list/download/preview, w = upload/new folder,

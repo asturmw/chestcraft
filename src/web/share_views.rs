@@ -11,6 +11,7 @@ use maud::{Markup, html};
 // Visitors
 
 pub fn share_password(ctx: &Ctx, action: &str, error: Option<&str>) -> Markup {
+    let ctx = &ctx.gate();
     let title = ctx.t("share.password_title");
     layout(
         ctx,
@@ -490,6 +491,7 @@ pub fn share_detail(ctx: &Ctx, v: &DetailView) -> Markup {
 // Public uploads
 
 pub fn public_unlock(ctx: &Ctx, vol: &str, next: &str, open: bool, error: Option<&str>) -> Markup {
+    let ctx = &ctx.gate();
     let title = ctx.tf("public_write.title", &[("volume", vol)]);
     layout(
         ctx,
