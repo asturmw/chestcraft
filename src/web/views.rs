@@ -13,6 +13,10 @@ pub struct Ctx<'a> {
     /// `light`, `dark`, or None to follow the system.
     pub theme: Option<&'static str>,
     pub skin: String,
+    /// `frosted` or `clear`.
+    pub glass: &'static str,
+    /// Panel opacity step 1–5; None keeps the skin's own.
+    pub opacity: Option<u8>,
     /// `vim`, `standard` or `off`.
     pub keys: &'static str,
     /// What shows behind the panels.
@@ -26,6 +30,8 @@ pub struct Ctx<'a> {
     pub tz: &'a jiff::tz::TimeZone,
     /// Scripts the page loads (asset paths).
     pub scripts: Vec<&'static str>,
+    /// Extra stylesheets the page links (URLs).
+    pub styles: Vec<String>,
     /// This page's path: pages for visitors without an account get a language switch.
     pub lang_switch: Option<String>,
 }
@@ -39,10 +45,19 @@ pub struct Backdrop {
     /// Steps 0–4.
     pub dim: u8,
     pub blur: u8,
-    /// Picture URLs for wide, near-square and tall screens.
-    pub pictures: Option<[String; 3]>,
+    pub pictures: Option<Pictures>,
     /// Stylesheet that sets the color.
     pub stylesheet: Option<String>,
+}
+
+/// The picture of an `image` backdrop.
+#[derive(Debug, Clone)]
+pub enum Pictures {
+    /// URLs for wide, near-square and tall screens (a picture set).
+    Shapes([String; 3]),
+    /// One picture for every shape, per theme (a skin's own background). Without a light
+    /// one the dark one serves both.
+    Themed { dark: String, light: Option<String> },
 }
 
 impl<'a> Ctx<'a> {
@@ -82,7 +97,8 @@ impl<'a> Ctx<'a> {
 pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
     html! {
         (DOCTYPE)
-        html lang=(ctx.code()) data-theme=[ctx.theme] data-skin=(ctx.skin) data-keys=(ctx.keys) {
+        html lang=(ctx.code()) data-theme=[ctx.theme] data-skin=(ctx.skin) data-glass=(ctx.glass)
+            data-opacity=[ctx.opacity] data-keys=(ctx.keys) {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
@@ -96,13 +112,16 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
                 @if let Some(href) = &ctx.backdrop.stylesheet {
                     link rel="stylesheet" href=(href);
                 }
+                @for href in &ctx.styles {
+                    link rel="stylesheet" href=(href);
+                }
                 @for js in &ctx.scripts {
                     script src=(assets::url(js)) defer {}
                 }
             }
             body {
                 a class="skip-link" href="#main" { (ctx.t("common.skip_to_content")) }
-                (backdrop(&ctx.backdrop))
+                (backdrop(&ctx.backdrop, ctx.theme))
                 header class="app-header" {
                     a class="app-header__brand" href="/" { "chestcraft" }
                     @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
@@ -139,16 +158,34 @@ pub fn layout(ctx: &Ctx, title: &str, main: Markup) -> Markup {
     }
 }
 
-pub fn backdrop(b: &Backdrop) -> Markup {
+/// The backdrop block. `theme` (`light`, `dark` or None for the system's) picks the file
+/// of a skin's own picture; with None the browser picks.
+pub fn backdrop(b: &Backdrop, theme: Option<&str>) -> Markup {
     let state = if b.state.is_empty() { "none" } else { b.state };
     html! {
         div class="backdrop" data-state=(state) data-dim=(b.dim) data-blur=(b.blur) aria-hidden="true" {
-            @if let Some([wide, square, tall]) = &b.pictures {
-                picture class="backdrop__picture" {
-                    source media="(max-aspect-ratio: 2/3)" srcset=(tall);
-                    source media="(max-aspect-ratio: 5/4)" srcset=(square);
-                    img class="backdrop__img" src=(wide) alt="" decoding="async" fetchpriority="low";
+            @match &b.pictures {
+                Some(Pictures::Shapes([wide, square, tall])) => {
+                    picture class="backdrop__picture" {
+                        source media="(max-aspect-ratio: 2/3)" srcset=(tall);
+                        source media="(max-aspect-ratio: 5/4)" srcset=(square);
+                        img class="backdrop__img" src=(wide) alt="" decoding="async" fetchpriority="low";
+                    }
                 }
+                Some(Pictures::Themed { dark, light }) => {
+                    @let (src, source) = match (theme, light.as_deref()) {
+                        (Some("light"), Some(l)) => (l, None),
+                        (None, Some(l)) => (dark.as_str(), Some(l)),
+                        _ => (dark.as_str(), None),
+                    };
+                    picture class="backdrop__picture" {
+                        @if let Some(l) = source {
+                            source media="(prefers-color-scheme: light)" srcset=(l);
+                        }
+                        img class="backdrop__img" src=(src) alt="" decoding="async" fetchpriority="low";
+                    }
+                }
+                None => {}
             }
         }
     }

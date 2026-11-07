@@ -13,7 +13,7 @@
 
 pub mod images;
 
-use crate::db::{Appearance, Background, BackgroundSet, Db, Fill};
+use crate::db::{Appearance, Background, BackgroundSet, Db, Fill, Glass};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -26,12 +26,192 @@ pub const ROTATIONS: [&str; 4] = ["never", "load", "session", "day"];
 pub const DEFAULT_ROTATION: &str = "day";
 /// Highest dim and blur step.
 pub const MAX_STEP: u8 = 4;
-/// Dim step of a new image background (keeps text readable over busy pictures).
-pub const DEFAULT_DIM: u8 = 2;
+/// Highest panel opacity step (1–5 = 10–90 % fill).
+pub const MAX_OPACITY: u8 = 5;
+/// Skin of accounts and visitor pages when the admin picked none (and this build has it).
+pub const DEFAULT_SKIN: &str = "modern";
 /// Name used for the skin when the build embeds none.
 pub const FALLBACK_SKIN: &str = "default";
 /// Colors in a gradient.
 pub const MAX_COLORS: usize = 3;
+/// Prefix of the ids of the picture sets that ship in the binary. `:` is not in the
+/// alphabet of uploaded set ids, so the two never collide, and built-in sets are never in
+/// the store's records or folder, so removing or sweeping sets never touches them.
+pub const BUILTIN_PREFIX: &str = "builtin:";
+/// Picture sets that ship in the binary (`assets/backgrounds/<name>-<slot>.jpg`), in the
+/// order the editor lists them.
+pub const BUILTIN_SETS: [&str; 3] = ["mountains", "sakura", "garden"];
+
+/// Dim step when none was chosen: pictures and colors get a light veil, more with clear
+/// glass (its panels have no fill of their own). The skin's own color gets none.
+pub fn auto_dim(glass: Glass, picture_or_color: bool) -> u8 {
+    match (picture_or_color, glass) {
+        (false, _) => 0,
+        (true, Glass::Frosted) => 1,
+        (true, Glass::Clear) => 2,
+    }
+}
+
+/// A ready-made gradient for the color background.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Preset {
+    pub id: &'static str,
+    pub angle: u16,
+    pub stops: [&'static str; 3],
+}
+
+/// The gradient presets (names: `presets.<id>` in the language files).
+pub const PRESETS: [Preset; 4] = [
+    Preset {
+        id: "sakura-dusk",
+        angle: 160,
+        stops: ["#3b3a7d", "#ef9bb8", "#ffcba0"],
+    },
+    Preset {
+        id: "mint",
+        angle: 135,
+        stops: ["#0f3b3a", "#1f7a6d", "#8fe3c4"],
+    },
+    Preset {
+        id: "neon",
+        angle: 135,
+        stops: ["#070a14", "#2a0b3d", "#0f5f73"],
+    },
+    Preset {
+        id: "graphite",
+        angle: 180,
+        stops: ["#1a1d23", "#2c3240", "#4b5466"],
+    },
+];
+
+pub fn preset(id: &str) -> Option<&'static Preset> {
+    PRESETS.iter().find(|p| p.id == id)
+}
+
+/// The presets in the order a skin's editor shows them: those that suit it first.
+pub fn presets_for(skin: &str) -> Vec<&'static Preset> {
+    let first: &[&str] = match skin {
+        "classic" | "sleek" => &["graphite", "mint"],
+        "modern" => &["mint", "neon"],
+        "gaming" => &["neon", "graphite"],
+        "anime" => &["sakura-dusk", "mint"],
+        _ => &[],
+    };
+    let mut v: Vec<&'static Preset> = first.iter().filter_map(|id| preset(id)).collect();
+    v.extend(PRESETS.iter().filter(|p| !first.contains(&p.id)));
+    v
+}
+
+/// The fill a preset stands for: an ordinary gradient.
+pub fn preset_fill(p: &Preset) -> Fill {
+    Fill::Color {
+        colors: p.stops.iter().map(|c| c.to_string()).collect(),
+        angle: p.angle,
+    }
+}
+
+/// The stylesheet `/.cc/presets.css` serves: one `--preset` token per preset swatch.
+pub fn presets_css() -> String {
+    PRESETS
+        .iter()
+        .map(|p| {
+            format!(
+                ".bg-preset[data-preset=\"{}\"] {{ --preset: linear-gradient({}deg, {}); }}\n",
+                p.id,
+                p.angle,
+                p.stops.join(", ")
+            )
+        })
+        .collect()
+}
+
+/// Short content hash of [`presets_css`], for its URL.
+pub fn presets_version() -> String {
+    format!(
+        "{:012x}",
+        fnv1a(presets_css().as_bytes()) & 0xffff_ffff_ffff
+    )
+}
+
+/// A built-in picture set: its name and the slots this build has pictures for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Builtin {
+    pub name: &'static str,
+    pub slots: Vec<&'static str>,
+}
+
+impl Builtin {
+    /// The id backgrounds refer to it by.
+    pub fn id(&self) -> String {
+        format!("{BUILTIN_PREFIX}{}", self.name)
+    }
+
+    /// The slot file a screen of `slot`'s shape gets.
+    pub fn slot_for(&self, slot: &str) -> Option<&'static str> {
+        fallback_order(slot)
+            .into_iter()
+            .find(|s| self.slots.contains(s))
+    }
+}
+
+/// The built-in sets whose pictures `has` (an asset lookup by path) finds; sets without
+/// any picture are left out.
+pub fn builtins(has: impl Fn(&str) -> bool) -> Vec<Builtin> {
+    BUILTIN_SETS
+        .iter()
+        .map(|name| Builtin {
+            name,
+            slots: SLOTS
+                .into_iter()
+                .filter(|slot| has(&builtin_path(name, slot, false)))
+                .collect(),
+        })
+        .filter(|b| !b.slots.is_empty())
+        .collect()
+}
+
+/// Asset path of a built-in picture or its preview.
+pub fn builtin_path(name: &str, slot: &str, small: bool) -> String {
+    let ext = if small { "small.jpg" } else { "jpg" };
+    format!("backgrounds/{name}-{slot}.{ext}")
+}
+
+/// A skin's own background picture: one SVG per theme (dark always, light optional).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkinPicture {
+    pub dark: String,
+    pub light: Option<String>,
+}
+
+/// Asset path of a skin's own background picture for a theme.
+pub fn skin_picture_path(skin: &str, theme: &str) -> String {
+    format!("backgrounds/default-{skin}-{theme}.svg")
+}
+
+/// The skins with an own background picture, as found by `has`; a skin without the dark
+/// file has none (it shows its backdrop color), a missing light file falls back to the
+/// dark one.
+pub fn skin_pictures(
+    skins: &[String],
+    has: impl Fn(&str) -> bool,
+) -> BTreeMap<String, SkinPicture> {
+    skins
+        .iter()
+        .filter_map(|skin| {
+            let dark = skin_picture_path(skin, "dark");
+            let light = skin_picture_path(skin, "light");
+            has(&dark).then(|| {
+                (
+                    skin.clone(),
+                    SkinPicture {
+                        light: has(&light).then_some(light),
+                        dark,
+                    },
+                )
+            })
+        })
+        .collect()
+}
 
 /// Slots to try for `slot`, closest aspect ratio first.
 pub fn fallback_order(slot: &str) -> [&'static str; 3] {
@@ -57,9 +237,10 @@ pub fn is_rotation(s: &str) -> bool {
     ROTATIONS.contains(&s)
 }
 
-/// The skin to use: `wanted` if this build has it, else `fallback`, else the first skin.
+/// The skin to use: `wanted` if this build has it, else `fallback`, else `modern`, else
+/// the first skin.
 pub fn pick_skin(skins: &[String], wanted: Option<&str>, fallback: Option<&str>) -> String {
-    [wanted, fallback]
+    [wanted, fallback, Some(DEFAULT_SKIN)]
         .into_iter()
         .flatten()
         .find(|s| skins.iter().any(|k| k == s))
@@ -149,7 +330,7 @@ pub fn day_number(now: jiff::Timestamp, tz: &jiff::tz::TimeZone) -> i64 {
 
 /// A background with every value inside its range.
 pub fn clamp(mut bg: Background) -> Background {
-    bg.dim = bg.dim.min(MAX_STEP);
+    bg.dim = bg.dim.map(|d| d.min(MAX_STEP));
     bg.blur = bg.blur.min(MAX_STEP);
     bg
 }
@@ -404,6 +585,89 @@ mod tests {
         assert_eq!(pick_skin(&skins, Some("gone"), Some("sleek")), "sleek");
         assert_eq!(pick_skin(&skins, None, Some("gone")), "classic");
         assert_eq!(pick_skin(&[], Some("sleek"), None), FALLBACK_SKIN);
+        // Out of the box: modern when this build has it, not the first in sorted order.
+        let all: Vec<String> = ["anime", "classic", "gaming", "modern", "sleek"]
+            .map(String::from)
+            .into();
+        assert_eq!(pick_skin(&all, None, None), "modern");
+        assert_eq!(pick_skin(&all, Some("gone"), None), "modern");
+        assert_eq!(pick_skin(&all, None, Some("gaming")), "gaming");
+    }
+
+    #[test]
+    fn presets_come_in_the_skins_order() {
+        let ids = |skin| presets_for(skin).iter().map(|p| p.id).collect::<Vec<_>>();
+        assert_eq!(ids("modern"), ["mint", "neon", "sakura-dusk", "graphite"]);
+        assert_eq!(ids("classic"), ["graphite", "mint", "sakura-dusk", "neon"]);
+        assert_eq!(ids("sleek"), ["graphite", "mint", "sakura-dusk", "neon"]);
+        assert_eq!(ids("gaming"), ["neon", "graphite", "sakura-dusk", "mint"]);
+        assert_eq!(ids("anime"), ["sakura-dusk", "mint", "neon", "graphite"]);
+        assert_eq!(ids("default"), ["sakura-dusk", "mint", "neon", "graphite"]);
+        // Every preset is a valid gradient and has a swatch rule.
+        let css = presets_css();
+        for p in PRESETS {
+            let Fill::Color { colors, angle } = preset_fill(&p) else {
+                panic!()
+            };
+            let refs: Vec<&str> = colors.iter().map(String::as_str).collect();
+            assert_eq!(color_fill(&refs, angle), Some(preset_fill(&p)), "{}", p.id);
+            assert!(
+                css.contains(&format!("[data-preset=\"{}\"]", p.id)),
+                "{css}"
+            );
+        }
+        assert!(css.contains("linear-gradient(160deg, #3b3a7d, #ef9bb8, #ffcba0)"));
+    }
+
+    #[test]
+    fn auto_dim_follows_the_glass() {
+        assert_eq!(auto_dim(Glass::Frosted, true), 1);
+        assert_eq!(auto_dim(Glass::Clear, true), 2);
+        assert_eq!(auto_dim(Glass::Clear, false), 0);
+    }
+
+    #[test]
+    fn builtins_and_skin_pictures_follow_the_embedded_files() {
+        let files = [
+            "backgrounds/mountains-wide.jpg",
+            "backgrounds/mountains-tall.jpg",
+            "backgrounds/garden-square.jpg",
+            "backgrounds/default-sleek-dark.svg",
+            "backgrounds/default-anime-dark.svg",
+            "backgrounds/default-anime-light.svg",
+            "backgrounds/default-gaming-light.svg",
+        ];
+        let has = |p: &str| files.contains(&p);
+        let b = builtins(has);
+        assert_eq!(
+            b,
+            [
+                Builtin {
+                    name: "mountains",
+                    slots: vec!["wide", "tall"]
+                },
+                Builtin {
+                    name: "garden",
+                    slots: vec!["square"]
+                }
+            ]
+        );
+        assert_eq!(b[0].id(), "builtin:mountains");
+        assert_eq!(b[0].slot_for("square"), Some("tall"));
+        assert_eq!(b[1].slot_for("wide"), Some("square"));
+        // An uploaded set id (16 base58 characters) never starts like a built-in one.
+        assert!(!images::ID_ALPHABET.contains(&b':'));
+
+        let skins: Vec<String> = ["anime", "classic", "gaming", "sleek"]
+            .map(String::from)
+            .into();
+        let p = skin_pictures(&skins, has);
+        assert_eq!(p.keys().collect::<Vec<_>>(), ["anime", "sleek"]);
+        assert_eq!(p["sleek"].light, None);
+        assert_eq!(
+            p["anime"].light.as_deref(),
+            Some("backgrounds/default-anime-light.svg")
+        );
     }
 
     #[test]
@@ -465,14 +729,14 @@ mod tests {
             fill: Fill::Images {
                 sets: sets.iter().map(|s| s.to_string()).collect(),
             },
-            dim: 1,
+            dim: Some(1),
             blur: 0,
         };
         assert_eq!(without_set(&bg(&["a", "b"]), "a"), Some(bg(&["b"])));
         assert_eq!(without_set(&bg(&["a"]), "a"), None);
         let none = Background {
             fill: Fill::None,
-            dim: 0,
+            dim: None,
             blur: 0,
         };
         assert_eq!(without_set(&none, "a"), Some(none.clone()));

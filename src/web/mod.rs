@@ -74,6 +74,10 @@ pub struct AppState {
     pub looks: Arc<crate::appearance::Store>,
     /// Skins this build embeds (`skins/<name>.css`), sorted.
     pub skins: Vec<String>,
+    /// Picture sets this build embeds (`backgrounds/<name>-<slot>.jpg`).
+    pub builtin_sets: Vec<crate::appearance::Builtin>,
+    /// Skins with an own background picture (`backgrounds/default-<skin>-<theme>.svg`).
+    pub skin_pictures: std::collections::BTreeMap<String, crate::appearance::SkinPicture>,
     /// The config file the server was started with (copied by the nightly backup).
     pub config_file: Option<std::path::PathBuf>,
     /// Lets tests act as a principal without signing in.
@@ -98,9 +102,12 @@ impl AppState {
             tracing::warn!("{w}");
         }
         let looks = Arc::new(crate::appearance::Store::open(&db, &cfg.paths.state_dir));
+        let skins: Vec<String> = assets::skins().into_iter().map(String::from).collect();
         AppState {
             looks,
-            skins: assets::skins().into_iter().map(String::from).collect(),
+            builtin_sets: crate::appearance::builtins(assets::has),
+            skin_pictures: crate::appearance::skin_pictures(&skins, assets::has),
+            skins,
             config_file: None,
             thumbs: crate::fs::thumbs::Thumbs::new(&cfg),
             thumb_limiter: preview::anon_limiter(),
@@ -159,14 +166,16 @@ pub fn page_ctx<'a>(
         Some("off") => "off",
         _ => "standard",
     };
-    let (skin, backdrop) = account::look(st, current);
+    let look = account::look(st, current);
     views::Ctx {
         i18n: &st.i18n,
         lang,
         theme,
-        skin,
+        skin: look.skin,
+        glass: look.glass.code(),
+        opacity: look.opacity,
         keys,
-        backdrop,
+        backdrop: look.backdrop,
         signed_in: !principal.is_anonymous(),
         admin: principal.is_admin(),
         user_name: current.map(|c| c.name.as_str()),
@@ -177,6 +186,7 @@ pub fn page_ctx<'a>(
         } else {
             Vec::new()
         },
+        styles: Vec::new(),
         lang_switch: None,
     }
 }
@@ -261,6 +271,7 @@ pub fn router(state: Shared) -> Router {
         .route("/.cc/admin/audit", get(users::audit_page))
         .route("/.cc/bg/{id}/{file}", get(account::picture))
         .route("/.cc/backdrop.css", get(account::backdrop_css))
+        .route("/.cc/presets.css", get(account::presets_css))
         .route("/.cc/shares", get(shares::list))
         .route(
             "/.cc/shares/new",

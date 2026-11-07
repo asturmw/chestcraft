@@ -687,7 +687,7 @@ skins = "Skins"
 saved = "Background saved."
 fill = "Background"
 fill_default = "Use the default"
-fill_none = "None"
+fill_none = "The skin's own"
 fill_color = "Color or gradient"
 fill_images = "Pictures"
 stops = "Number of colors"
@@ -697,8 +697,31 @@ angle = "Gradient direction in degrees (0 = upwards, 90 = to the right)"
 pictures = "Picture sets"
 pictures_hint = "Tick one set, or several to change between them."
 none_uploaded = "No picture sets yet. Add one below."
-# {n} numbers the sets on the page.
-use_n = "Use set {n}"
+# {name} is a set's name, e.g. "Mountains" or "Set 2".
+use = "Use {name}"
+# {n} numbers the uploaded sets on the page.
+set_n = "Set {n}"
+set_mountains = "Mountains"
+set_sakura = "Sakura"
+set_garden = "Garden"
+presets = "Presets"
+presets_hint = "A preset puts its gradient in place of the background; change its colors afterwards if you like."
+dim_auto = "Automatic (frosted: slightly, clear: medium)"
+glass = "Glass"
+glass_frosted = "Frosted"
+glass_clear = "Clear"
+# {glass} is "Frosted" or "Clear".
+glass_default = "Default ({glass})"
+opacity = "Panel opacity"
+opacity_skin = "As the skin has it"
+# {opacity} is "As the skin has it" or a percentage.
+opacity_default = "Default ({opacity})"
+opacity_1 = "10%"
+opacity_2 = "30%"
+opacity_3 = "50%"
+opacity_4 = "70%"
+opacity_5 = "90%"
+opacity_hint = "Frosted glass only. Low steps can make text hard to read over bright pictures."
 delete = "Delete set"
 dim = "Darken"
 blur = "Blur"
@@ -728,6 +751,19 @@ error_not_picture = "{slot}: chestcraft can't read this file as a picture. Use J
 error_empty = "Choose at least one picture."
 error_incomplete = "The upload didn't arrive completely. Try again."
 error_failed = "The picture set couldn't be saved. Try again later."
+
+[presets]
+sakura-dusk = "Sakura dusk"
+mint = "Mint"
+neon = "Neon"
+graphite = "Graphite"
+
+[skin]
+classic = "Classic"
+modern = "Modern"
+sleek = "Sleek"
+gaming = "Gaming"
+anime = "Anime"
 
 [appearance]
 title = "Appearance"

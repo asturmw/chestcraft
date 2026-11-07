@@ -12,11 +12,11 @@ use super::account_views::{
 use super::auth::{audit, csrf_ok, forbidden, same_origin};
 use super::files::{Fail, enc, fail};
 use super::query::Query;
-use super::views::{Backdrop, Ctx};
-use super::{AppState, ClientInfo, Current, CurrentUser, Shared, page_ctx};
-use crate::appearance::{self as look, AddError, DEFAULT_DIM, DEFAULT_ROTATION, MAX_STEP, Seed};
+use super::views::{Backdrop, Ctx, Pictures};
+use super::{AppState, ClientInfo, Current, CurrentUser, Shared, assets, page_ctx};
+use crate::appearance::{self as look, AddError, DEFAULT_ROTATION, MAX_STEP, Seed};
 use crate::auth::perm::{ADMIN_ROLE, Principal};
-use crate::db::{Appearance, Background, Fill};
+use crate::db::{Appearance, Background, BackgroundSet, Fill, Glass, Panels};
 use axum::extract::{Extension, Multipart, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -56,9 +56,18 @@ fn rotation_label(ctx: &Ctx, mode: &str) -> String {
 // ---------------------------------------------------------------------------------------
 // What a page shows
 
-/// Skin and backdrop of a page: the account's choices over the admin's defaults; the
-/// admin's share skin and background for visitors without an account.
-pub fn look(st: &AppState, current: Option<&CurrentUser>) -> (String, Backdrop) {
+/// How a page looks: skin, glass, panel opacity and backdrop.
+pub struct PageLook {
+    pub skin: String,
+    pub glass: Glass,
+    pub opacity: Option<u8>,
+    pub backdrop: Backdrop,
+}
+
+/// The look of a page: the account's choices over the admin's defaults for its skin; the
+/// admin's share skin, panels and background for visitors without an account. Without a
+/// background, the skin's own (its picture, else its backdrop color).
+pub fn look(st: &AppState, current: Option<&CurrentUser>) -> PageLook {
     let a = st.looks.appearance();
     let default_skin = look::pick_skin(&st.skins, a.default_skin.as_deref(), None);
     let day = look::day_number(jiff::Timestamp::now(), &st.cfg.server.timezone);
@@ -67,17 +76,45 @@ pub fn look(st: &AppState, current: Option<&CurrentUser>) -> (String, Backdrop) 
         .as_deref()
         .filter(|m| look::is_rotation(m))
         .unwrap_or(DEFAULT_ROTATION);
+    let opacity_ok = |o: &u8| (1..=look::MAX_OPACITY).contains(o);
     match current {
         None => {
             let skin = look::pick_skin(&st.skins, a.share_skin.as_deref(), Some(&default_skin));
+            let glass = a.share_panels.glass.unwrap_or_default();
             let backdrop = a
                 .share_background
                 .as_ref()
-                .and_then(|bg| backdrop(st, bg, None, default_mode, Seed::Anonymous, day));
-            (skin, backdrop.unwrap_or_default())
+                .and_then(|bg| {
+                    backdrop(
+                        st,
+                        &skin,
+                        glass,
+                        bg,
+                        None,
+                        default_mode,
+                        Seed::Anonymous,
+                        day,
+                    )
+                })
+                .unwrap_or_else(|| skin_backdrop(st, &skin, glass, None, 0));
+            PageLook {
+                glass,
+                opacity: a.share_panels.opacity.filter(opacity_ok),
+                backdrop,
+                skin,
+            }
         }
         Some(c) => {
             let skin = look::pick_skin(&st.skins, c.settings.skin.as_deref(), Some(&default_skin));
+            let (own, admin) = (c.settings.panels.get(&skin), a.panels.get(&skin));
+            let glass = own
+                .and_then(|p| p.glass)
+                .or_else(|| admin.and_then(|p| p.glass))
+                .unwrap_or_default();
+            let opacity = own
+                .and_then(|p| p.opacity)
+                .or_else(|| admin.and_then(|p| p.opacity))
+                .filter(opacity_ok);
             let mode = c
                 .settings
                 .rotation
@@ -89,35 +126,112 @@ pub fn look(st: &AppState, current: Option<&CurrentUser>) -> (String, Backdrop) 
                 .settings
                 .backgrounds
                 .get(&skin)
-                .and_then(|bg| backdrop(st, bg, Some(&c.key), mode, seed, day))
+                .and_then(|bg| backdrop(st, &skin, glass, bg, Some(&c.key), mode, seed, day))
                 .or_else(|| {
                     a.backgrounds
                         .get(&skin)
-                        .and_then(|bg| backdrop(st, bg, None, mode, seed, day))
-                });
-            (skin, backdrop.unwrap_or_default())
+                        .and_then(|bg| backdrop(st, &skin, glass, bg, None, mode, seed, day))
+                })
+                .unwrap_or_else(|| skin_backdrop(st, &skin, glass, None, 0));
+            PageLook {
+                skin,
+                glass,
+                opacity,
+                backdrop,
+            }
         }
     }
 }
 
+/// The skin's own background: its picture (one per theme) if this build has one, else
+/// its backdrop color (state `none`, the color comes from the skin's tokens).
+fn skin_backdrop(st: &AppState, skin: &str, glass: Glass, dim: Option<u8>, blur: u8) -> Backdrop {
+    let picture = st.skin_pictures.get(skin);
+    Backdrop {
+        state: if picture.is_some() { "image" } else { "none" },
+        dim: dim
+            .unwrap_or_else(|| look::auto_dim(glass, picture.is_some()))
+            .min(MAX_STEP),
+        blur: blur.min(MAX_STEP),
+        pictures: picture.map(|p| Pictures::Themed {
+            dark: assets::url(&p.dark),
+            light: p.light.as_deref().map(assets::url),
+        }),
+        stylesheet: None,
+    }
+}
+
+/// A picture set a background can show: uploaded, or built into the binary.
+enum SetRef<'a> {
+    Own(BackgroundSet),
+    Builtin(&'a look::Builtin),
+}
+
+impl SetRef<'_> {
+    /// The slots it has pictures for.
+    fn slots(&self) -> Vec<&str> {
+        match self {
+            SetRef::Own(s) => s.images.iter().map(|i| i.slot.as_str()).collect(),
+            SetRef::Builtin(b) => b.slots.clone(),
+        }
+    }
+
+    /// The slot file a screen of `shape` gets.
+    fn slot_for(&self, shape: &str) -> Option<&'static str> {
+        match self {
+            SetRef::Own(s) => look::slot_for(s, shape),
+            SetRef::Builtin(b) => b.slot_for(shape),
+        }
+    }
+
+    fn url(&self, slot: &str, small: bool) -> String {
+        match self {
+            SetRef::Own(s) if small => format!("/.cc/bg/{}/{slot}.small.jpg", s.id),
+            SetRef::Own(s) => format!("/.cc/bg/{}/{slot}.jpg", s.id),
+            SetRef::Builtin(b) => {
+                let small_path = look::builtin_path(b.name, slot, true);
+                if small && assets::has(&small_path) {
+                    assets::url(&small_path)
+                } else {
+                    assets::url(&look::builtin_path(b.name, slot, false))
+                }
+            }
+        }
+    }
+}
+
+/// The set with this id: a built-in one, or an uploaded one.
+fn find_set<'a>(st: &'a AppState, id: &str) -> Option<SetRef<'a>> {
+    match id.strip_prefix(look::BUILTIN_PREFIX) {
+        Some(name) => st
+            .builtin_sets
+            .iter()
+            .find(|b| b.name == name)
+            .map(SetRef::Builtin),
+        None => st.looks.set(id).map(SetRef::Own),
+    }
+}
+
 /// The backdrop of one background. None when its picture sets are all gone (or, for an
-/// account's own background, not its own), so the default applies.
+/// account's own background, neither built in nor its own), so the default applies.
+#[allow(clippy::too_many_arguments)]
 fn backdrop(
     st: &AppState,
+    skin: &str,
+    glass: Glass,
     bg: &Background,
     owner: Option<&str>,
     mode: &str,
     seed: Seed,
     day: i64,
 ) -> Option<Backdrop> {
-    let (dim, blur) = (bg.dim.min(MAX_STEP), bg.blur.min(MAX_STEP));
+    let dim = bg
+        .dim
+        .unwrap_or_else(|| look::auto_dim(glass, true))
+        .min(MAX_STEP);
+    let blur = bg.blur.min(MAX_STEP);
     match &bg.fill {
-        Fill::None => Some(Backdrop {
-            state: "none",
-            dim,
-            blur,
-            ..Default::default()
-        }),
+        Fill::None => Some(skin_backdrop(st, skin, glass, bg.dim, bg.blur)),
         Fill::Color { colors, angle } => Some(Backdrop {
             state: "color",
             dim,
@@ -129,23 +243,28 @@ fn backdrop(
             )),
         }),
         Fill::Images { sets } => {
-            let usable: Vec<_> = sets
+            let usable: Vec<SetRef> = sets
                 .iter()
-                .filter_map(|id| st.looks.set(id))
-                .filter(|s| owner.is_none_or(|o| s.owner == o) && !s.images.is_empty())
+                .filter_map(|id| find_set(st, id))
+                .filter(|s| match s {
+                    SetRef::Own(s) => owner.is_none_or(|o| s.owner == o) && !s.images.is_empty(),
+                    SetRef::Builtin(_) => true,
+                })
                 .collect();
             if usable.is_empty() {
                 return None;
             }
             let set = &usable[look::pick(usable.len(), mode, seed, day)];
-            let url = |shape: &str| {
-                look::slot_for(set, shape).map(|s| format!("/.cc/bg/{}/{s}.jpg", set.id))
-            };
+            let url = |shape: &str| set.slot_for(shape).map(|s| set.url(s, false));
             Some(Backdrop {
                 state: "image",
                 dim,
                 blur,
-                pictures: Some([url("wide")?, url("square")?, url("tall")?]),
+                pictures: Some(Pictures::Shapes([
+                    url("wide")?,
+                    url("square")?,
+                    url("tall")?,
+                ])),
                 stylesheet: None,
             })
         }
@@ -211,6 +330,25 @@ pub async fn backdrop_css(uri: Uri) -> Response {
             .into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// URL of the preset swatch stylesheet, versioned by its content.
+fn presets_css_url() -> String {
+    static URL: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| format!("/.cc/presets.css?v={}", look::presets_version()));
+    URL.clone()
+}
+
+/// `/.cc/presets.css`: the gradient of every preset swatch (no inline styles allowed).
+pub async fn presets_css() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        look::presets_css(),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -469,14 +607,28 @@ impl Target {
             Target::Share => a.share_background.clone(),
         }
     }
+
+    /// The stored glass and opacity (unset values: the default).
+    fn panels(&self, a: &Appearance, own: &BTreeMap<String, Panels>) -> Panels {
+        match self {
+            Target::Own(s) => own.get(s).cloned().unwrap_or_default(),
+            Target::Default(s) => a.panels.get(s).cloned().unwrap_or_default(),
+            Target::Share => a.share_panels.clone(),
+        }
+    }
 }
 
-/// May `cu` use set `id` in a background of `target`? Own backgrounds take own sets; the
-/// admin's take the admin's own sets and those already shown to everyone.
+/// May `cu` use set `id` in a background of `target`? Built-in sets are for everyone. Own
+/// backgrounds take own sets; the admin's take the admin's own sets and those already
+/// shown to everyone.
 fn may_use(st: &AppState, cu: &CurrentUser, target: &Target, id: &str) -> bool {
-    st.looks
-        .set(id)
-        .is_some_and(|s| s.owner == cu.key || (target.admin_only() && st.looks.is_public(id)))
+    match find_set(st, id) {
+        Some(SetRef::Builtin(_)) => true,
+        Some(SetRef::Own(s)) => {
+            s.owner == cu.key || (target.admin_only() && st.looks.is_public(id))
+        }
+        None => false,
+    }
 }
 
 fn upload_state(st: &AppState, cu: &CurrentUser, count: usize) -> UploadState {
@@ -537,28 +689,37 @@ fn editor_view(
             }
         }
     }
-    let sets = shown
+    let card = |id: String, set: &SetRef, name: String, deletable: bool| SetCard {
+        selected: selected.contains(&id),
+        id,
+        name,
+        deletable,
+        pictures: set
+            .slots()
+            .into_iter()
+            .map(|slot| {
+                (
+                    ctx.tf(&format!("backgrounds.slot_{slot}"), &[]),
+                    set.url(slot, true),
+                )
+            })
+            .collect(),
+    };
+    let mut sets: Vec<SetCard> = st
+        .builtin_sets
         .iter()
-        .map(|s| SetCard {
-            id: s.id.clone(),
-            selected: selected.contains(&s.id),
-            deletable: s.owner == cu.key,
-            pictures: s
-                .images
-                .iter()
-                .map(|i| {
-                    (
-                        ctx.tf(&format!("backgrounds.slot_{}", i.slot), &[]),
-                        format!("/.cc/bg/{}/{}.small.jpg", s.id, i.slot),
-                    )
-                })
-                .collect(),
+        .map(|b| {
+            let name = ctx.tf(&format!("backgrounds.set_{}", b.name), &[]);
+            card(b.id(), &SetRef::Builtin(b), name, false)
         })
         .collect();
-    let (dim, blur) = stored
-        .as_ref()
-        .map(|b| (b.dim, b.blur))
-        .unwrap_or((DEFAULT_DIM, 0));
+    sets.extend(shown.into_iter().enumerate().map(|(n, s)| {
+        let name = ctx.tf("backgrounds.set_n", &[("n", &(n + 1).to_string())]);
+        let deletable = s.owner == cu.key;
+        card(s.id.clone(), &SetRef::Own(s), name, deletable)
+    }));
+    let (dim, blur) = stored.as_ref().map_or((None, 0), |b| (b.dim, b.blur));
+    let panels = target.panels(&a, &cu.settings.panels);
     let skins = skin_names(st);
     let tabs = match target {
         Target::Own(current) => skins
@@ -610,6 +771,18 @@ fn editor_view(
     } else {
         (ctx.t("account.title"), "/.cc/account")
     };
+    let skin = match target {
+        Target::Own(k) | Target::Default(k) => k.clone(),
+        Target::Share => look::pick_skin(
+            &st.skins,
+            a.share_skin.as_deref(),
+            Some(&look::pick_skin(&st.skins, a.default_skin.as_deref(), None)),
+        ),
+    };
+    let presets = look::presets_for(&skin)
+        .into_iter()
+        .map(|p| (p.id, ctx.tf(&format!("presets.{}", p.id), &[])))
+        .collect();
     BackgroundsView {
         csrf: cu.csrf.clone(),
         title,
@@ -620,8 +793,19 @@ fn editor_view(
         colors,
         stops,
         angle,
-        dim,
+        presets,
+        dim: steps_opts(
+            ctx,
+            dim,
+            MAX_STEP,
+            0,
+            "backgrounds.step_",
+            ctx.t("backgrounds.dim_auto"),
+        ),
         blur,
+        glass: glass_opts(st, ctx, target, panels.glass),
+        opacity: opacity_opts(st, ctx, target, panels.opacity),
+        presets_css: presets_css_url(),
         sets,
         count,
         upload: upload_state(st, cu, own_count),
@@ -660,11 +844,107 @@ pub async fn backgrounds_page(
     .into_response()
 }
 
-fn step(v: Option<&str>) -> Result<u8, ()> {
-    match v {
-        None | Some("") => Ok(0),
-        Some(s) => s.parse::<u8>().ok().filter(|n| *n <= MAX_STEP).ok_or(()),
+/// Options of a step select: unset (labelled `unset`), then `from..=max` (labels
+/// `<prefix><n>`).
+fn steps_opts(
+    ctx: &Ctx,
+    current: Option<u8>,
+    max: u8,
+    from: u8,
+    prefix: &str,
+    unset: &str,
+) -> Vec<Opt> {
+    let mut v = vec![opt("", unset, current.is_none())];
+    v.extend((from..=max).map(|n| {
+        opt(
+            &n.to_string(),
+            ctx.tf(&format!("{prefix}{n}"), &[]),
+            current == Some(n),
+        )
+    }));
+    v
+}
+
+fn glass_label(ctx: &Ctx, g: Glass) -> String {
+    ctx.tf(&format!("backgrounds.glass_{}", g.code()), &[])
+}
+
+/// The admin's default panels for an account's skin.
+fn admin_panels(st: &AppState, target: &Target) -> Panels {
+    match target {
+        Target::Own(k) => st
+            .looks
+            .appearance()
+            .panels
+            .get(k)
+            .cloned()
+            .unwrap_or_default(),
+        _ => Panels::default(),
     }
+}
+
+fn glass_opts(st: &AppState, ctx: &Ctx, target: &Target, current: Option<Glass>) -> Vec<Opt> {
+    let mut v = Vec::new();
+    if !target.admin_only() {
+        let fallback = admin_panels(st, target).glass.unwrap_or_default();
+        v.push(opt(
+            "",
+            ctx.tf(
+                "backgrounds.glass_default",
+                &[("glass", &glass_label(ctx, fallback))],
+            ),
+            current.is_none(),
+        ));
+    }
+    for g in [Glass::Frosted, Glass::Clear] {
+        let selected =
+            current == Some(g) || (target.admin_only() && current.is_none() && g == Glass::Frosted);
+        v.push(opt(g.code(), glass_label(ctx, g), selected));
+    }
+    v
+}
+
+fn opacity_opts(st: &AppState, ctx: &Ctx, target: &Target, current: Option<u8>) -> Vec<Opt> {
+    let skin_own = ctx.t("backgrounds.opacity_skin").to_string();
+    let unset = if target.admin_only() {
+        skin_own
+    } else {
+        let fallback = admin_panels(st, target).opacity.map_or(skin_own, |o| {
+            ctx.tf(&format!("backgrounds.opacity_{o}"), &[])
+        });
+        ctx.tf("backgrounds.opacity_default", &[("opacity", &fallback)])
+    };
+    steps_opts(
+        ctx,
+        current,
+        look::MAX_OPACITY,
+        1,
+        "backgrounds.opacity_",
+        &unset,
+    )
+}
+
+/// A step field: "" or absent = unset, else `from..=max`. Err: a value nobody offered.
+fn step(v: Option<&str>, from: u8, max: u8) -> Result<Option<u8>, ()> {
+    match v {
+        None | Some("") => Ok(None),
+        Some(s) => s
+            .parse::<u8>()
+            .ok()
+            .filter(|n| (from..=max).contains(n))
+            .map(Some)
+            .ok_or(()),
+    }
+}
+
+/// The glass and opacity a save form asks for.
+fn parsed_panels(form: &Query) -> Result<Panels, ()> {
+    let glass = match form.get("glass") {
+        None | Some("") => None,
+        Some(g) => Some(Glass::parse(g).ok_or(())?),
+    };
+    let opacity = step(form.get("opacity"), 1, look::MAX_OPACITY)?;
+    Ok(Panels { glass, opacity })
 }
 
 /// The background a save form asks for. Ok(None): the default (own) or none (admin).
@@ -676,8 +956,10 @@ fn parsed_choice(
     target: &Target,
     form: &Query,
 ) -> Result<Option<Background>, Option<String>> {
-    let dim = step(form.get("dim")).map_err(|_| None)?;
-    let blur = step(form.get("blur")).map_err(|_| None)?;
+    let dim = step(form.get("dim"), 0, MAX_STEP).map_err(|_| None)?;
+    let blur = step(form.get("blur"), 0, MAX_STEP)
+        .map_err(|_| None)?
+        .unwrap_or(0);
     let fill = match form.get("fill").unwrap_or("") {
         "default" if !target.admin_only() => return Ok(None),
         "none" if target.admin_only() => return Ok(None),
@@ -714,13 +996,23 @@ fn parsed_choice(
     Ok(Some(Background { fill, dim, blur }))
 }
 
-/// Store `choice` for `target` (blocking). Own backgrounds go to the account, the others
-/// to the appearance settings.
+/// Put `panels` into a per-skin map (an empty entry is removed).
+fn put_panels(map: &mut BTreeMap<String, Panels>, skin: &str, panels: Panels) {
+    if panels.is_empty() {
+        map.remove(skin);
+    } else {
+        map.insert(skin.to_string(), panels);
+    }
+}
+
+/// Store `choice` for `target` (blocking), and `panels` when given. Own backgrounds go to
+/// the account, the others to the appearance settings.
 fn store_choice(
     st: &AppState,
     user: &str,
     target: &Target,
     choice: impl FnOnce(Option<Background>) -> Option<Background>,
+    panels: Option<Panels>,
 ) -> Result<(), ()> {
     match target {
         Target::Own(skin) => {
@@ -728,6 +1020,9 @@ fn store_choice(
                 let old = u.settings.backgrounds.remove(skin);
                 if let Some(bg) = choice(old) {
                     u.settings.backgrounds.insert(skin.clone(), look::clamp(bg));
+                }
+                if let Some(p) = panels {
+                    put_panels(&mut u.settings.panels, skin, p);
                 }
             });
             matches!(updated, Ok(Some(_))).then_some(()).ok_or(())
@@ -738,11 +1033,17 @@ fn store_choice(
             if let Some(bg) = choice(old) {
                 a.backgrounds.insert(skin.clone(), look::clamp(bg));
             }
+            if let Some(p) = panels {
+                put_panels(&mut a.panels, skin, p);
+            }
             st.looks.set_appearance(&st.db, a).map_err(|_| ())
         }
         Target::Share => {
             let mut a = (*st.looks.appearance()).clone();
             a.share_background = choice(a.share_background.take()).map(look::clamp);
+            if let Some(p) = panels {
+                a.share_panels = p;
+            }
             st.looks.set_appearance(&st.db, a).map_err(|_| ())
         }
     }
@@ -802,6 +1103,41 @@ pub async fn backgrounds_submit(
         return Redirect::to(&target.href()).into_response();
     }
 
+    if let Some(id) = form.get("preset") {
+        // A swatch: its gradient becomes the background, stored like any other color; the
+        // veil, blur and panels stay.
+        let Some(p) = look::preset(id) else {
+            return fail(&ctx, Fail::BadRequest);
+        };
+        let (st2, key, t2) = (st.clone(), cu.key.clone(), target.clone());
+        let keep = move |old: Option<Background>| {
+            Some(Background {
+                fill: look::preset_fill(p),
+                dim: old.as_ref().and_then(|b| b.dim),
+                blur: old.map_or(0, |b| b.blur),
+            })
+        };
+        if !matches!(
+            blocking(move || store_choice(&st2, &key, &t2, keep, None)).await,
+            Some(Ok(()))
+        ) {
+            return fail(&ctx, Fail::Internal);
+        }
+        if target.admin_only() {
+            audit(
+                &st,
+                actor,
+                client.ip,
+                "appearance_changed",
+                &target.code(),
+                id,
+            );
+        }
+        return Redirect::to(&target.saved_href()).into_response();
+    }
+    let Ok(panels) = parsed_panels(&form) else {
+        return fail(&ctx, Fail::BadRequest);
+    };
     let choice = match parsed_choice(&st, &ctx, &cu, &target, &form) {
         Ok(c) => c,
         Err(None) => return fail(&ctx, Fail::BadRequest),
@@ -818,7 +1154,7 @@ pub async fn backgrounds_submit(
     };
     let (st2, key, t2) = (st.clone(), cu.key.clone(), target.clone());
     if !matches!(
-        blocking(move || store_choice(&st2, &key, &t2, |_| choice)).await,
+        blocking(move || store_choice(&st2, &key, &t2, |_| choice, Some(panels))).await,
         Some(Ok(()))
     ) {
         return fail(&ctx, Fail::Internal);
@@ -968,27 +1304,34 @@ pub async fn upload(
     // Show the new set right away: added to the pictures in use, or as the only one.
     let (st2, key, t2, id) = (st.clone(), cu.key.clone(), target.clone(), set.id.clone());
     let shown = blocking(move || {
-        store_choice(&st2, &key, &t2, |old| {
-            Some(match old {
-                Some(Background {
-                    fill: Fill::Images { mut sets },
-                    dim,
-                    blur,
-                }) => {
-                    sets.push(id);
-                    Background {
-                        fill: Fill::Images { sets },
+        store_choice(
+            &st2,
+            &key,
+            &t2,
+            |old| {
+                Some(match old {
+                    Some(Background {
+                        fill: Fill::Images { mut sets },
                         dim,
                         blur,
+                    }) => {
+                        sets.push(id);
+                        Background {
+                            fill: Fill::Images { sets },
+                            dim,
+                            blur,
+                        }
                     }
-                }
-                old => Background {
-                    fill: Fill::Images { sets: vec![id] },
-                    dim: old.map_or(DEFAULT_DIM, |b| b.dim.max(DEFAULT_DIM)),
-                    blur: 0,
-                },
-            })
-        })
+                    // From a color or none to pictures: the veil the glass mode chooses.
+                    _ => Background {
+                        fill: Fill::Images { sets: vec![id] },
+                        dim: None,
+                        blur: 0,
+                    },
+                })
+            },
+            None,
+        )
     })
     .await;
     if !matches!(shown, Some(Ok(()))) {

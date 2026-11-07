@@ -299,9 +299,10 @@ async fn own_pictures_upload_show_rotate_and_delete() {
     let wide = format!("/.cc/bg/{id}/wide.jpg");
 
     // The new set is in use at once; every screen shape falls back to the landscape picture.
+    // Dim was never chosen: frosted glass gets the light veil.
     let page = e.page_of(&s, "/").await;
     assert!(
-        page.contains("class=\"backdrop\" data-state=\"image\" data-dim=\"2\""),
+        page.contains("class=\"backdrop\" data-state=\"image\" data-dim=\"1\""),
         "{page}"
     );
     assert_eq!(page.matches(&wide).count(), 3, "{page}");
@@ -726,4 +727,485 @@ async fn a_forced_password_change_still_gets_its_backdrop() {
     assert_eq!(r.status, StatusCode::NOT_FOUND);
     let r = e.get_h("/.cc/account", &[("cookie", &cookie)]).await;
     assert_eq!(r.header("location"), "/.cc/password");
+}
+
+fn all_skins(e: &mut Env) {
+    state_mut(e).skins = ["anime", "classic", "gaming", "modern", "sleek"]
+        .map(String::from)
+        .into();
+}
+
+#[tokio::test]
+async fn modern_is_the_skin_out_of_the_box() {
+    let mut e = env();
+    all_skins(&mut e);
+    assert!(e.get("/").await.text().contains("data-skin=\"modern\""));
+    let jana = e.session("jana", "familie").await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(page.contains("data-skin=\"modern\""), "{page}");
+    let page = e.page_of(&jana, "/.cc/account").await;
+    assert!(page.contains("Default (Modern)"), "{page}");
+    e.form_post(&jana, "/.cc/account", &[("lang", "de")]).await;
+    let page = e.page_of(&jana, "/.cc/account").await;
+    assert!(
+        page.contains("Standard (Modern)") && page.contains(">Elegant<"),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn glass_and_opacity_per_skin_with_admin_defaults() {
+    let mut e = env();
+    with_skins(&mut e);
+    let admin = e.session("Tibor", "admin").await;
+    let jana = e.session("jana", "familie").await;
+    // Out of the box: frosted, the skin's own opacity, the skin's own backdrop.
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-glass=\"frosted\"")
+            && !page.contains("data-opacity")
+            && page.contains("class=\"backdrop\" data-state=\"none\" data-dim=\"0\""),
+        "{page}"
+    );
+    let editor = e
+        .page_of(&jana, "/.cc/account/backgrounds?skin=classic")
+        .await;
+    assert!(
+        editor.contains("<option value=\"\" selected>Default (Frosted)</option>")
+            && editor.contains("Default (As the skin has it)")
+            && editor.contains("hard to read over bright pictures"),
+        "{editor}"
+    );
+
+    // The admin's default for classic: clear, opacity 4, a color without a chosen dim.
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/account/backgrounds",
+            &[
+                ("target", "default:classic"),
+                ("fill", "color"),
+                ("stops", "1"),
+                ("c1", "#102030"),
+                ("dim", ""),
+                ("glass", "clear"),
+                ("opacity", "4"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let a = e.state.looks.appearance();
+    assert_eq!(a.panels["classic"].glass, Some(crate::db::Glass::Clear));
+    assert_eq!(a.backgrounds["classic"].dim, None);
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-glass=\"clear\" data-opacity=\"4\"")
+            && page.contains("data-state=\"color\" data-dim=\"2\""),
+        "{page}"
+    );
+    let editor = e
+        .page_of(&jana, "/.cc/account/backgrounds?skin=classic")
+        .await;
+    assert!(
+        editor.contains("Default (Clear)") && editor.contains("Default (70%)"),
+        "{editor}"
+    );
+    // Not for the other skin, nor for visitors.
+    e.form_post(&jana, "/.cc/account", &[("skin", "sleek")])
+        .await;
+    assert!(
+        e.page_of(&jana, "/")
+            .await
+            .contains("data-glass=\"frosted\" data-keys")
+    );
+    e.form_post(&jana, "/.cc/account", &[("skin", "classic")])
+        .await;
+    assert!(e.get("/").await.text().contains("data-glass=\"frosted\""));
+
+    // The account's own glass wins; its "use the default" background keeps the admin's
+    // color, with the dim of frosted glass.
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[
+                ("target", "user:classic"),
+                ("fill", "default"),
+                ("glass", "frosted"),
+                ("opacity", ""),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-glass=\"frosted\" data-opacity=\"4\"")
+            && page.contains("data-state=\"color\" data-dim=\"1\""),
+        "{page}"
+    );
+    // An explicit dim stays; resetting the glass removes the entry again.
+    e.form_post(
+        &jana,
+        "/.cc/account/backgrounds",
+        &[
+            ("target", "user:classic"),
+            ("fill", "none"),
+            ("dim", "3"),
+            ("glass", ""),
+            ("opacity", "1"),
+        ],
+    )
+    .await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-glass=\"clear\" data-opacity=\"1\"")
+            && page.contains("data-state=\"none\" data-dim=\"3\""),
+        "{page}"
+    );
+    e.form_post(
+        &jana,
+        "/.cc/account/backgrounds",
+        &[("target", "user:classic"), ("fill", "default")],
+    )
+    .await;
+    assert!(
+        e.state
+            .db
+            .user("jana")
+            .unwrap()
+            .unwrap()
+            .settings
+            .panels
+            .is_empty()
+    );
+
+    // Share pages: their own panels.
+    e.form_post(
+        &admin,
+        "/.cc/account/backgrounds",
+        &[
+            ("target", "share"),
+            ("fill", "none"),
+            ("glass", "clear"),
+            ("opacity", "2"),
+        ],
+    )
+    .await;
+    let page = e.get("/s/doesnotexist1").await.text();
+    assert!(
+        page.contains("data-glass=\"clear\" data-opacity=\"2\""),
+        "{page}"
+    );
+
+    for bad in [
+        ("glass", "matte"),
+        ("opacity", "0"),
+        ("opacity", "6"),
+        ("dim", "x"),
+    ] {
+        let r = e
+            .form_post(
+                &jana,
+                "/.cc/account/backgrounds",
+                &[("target", "user:classic"), ("fill", "none"), bad],
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad:?}");
+    }
+}
+
+#[tokio::test]
+async fn presets_become_an_ordinary_gradient() {
+    let mut e = env();
+    all_skins(&mut e);
+    let jana = e.session("jana", "familie").await;
+    let editor = e
+        .page_of(&jana, "/.cc/account/backgrounds?skin=gaming")
+        .await;
+    let order: Vec<usize> = ["\"neon\"", "\"graphite\"", "\"sakura-dusk\"", "\"mint\""]
+        .iter()
+        .map(|id| editor.find(&format!("data-preset={id}")).expect(id))
+        .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{editor}");
+    assert!(editor.contains("/.cc/presets.css?v="), "{editor}");
+    let css = e.get("/.cc/presets.css").await;
+    assert_eq!(css.header("content-type"), "text/css; charset=utf-8");
+    assert!(
+        css.text()
+            .contains(".bg-preset[data-preset=\"neon\"] { --preset: linear-gradient(135deg, #070a14, #2a0b3d, #0f5f73); }"),
+        "{}",
+        css.text()
+    );
+
+    // A stored dim and the panels stay when a swatch is picked.
+    e.form_post(
+        &jana,
+        "/.cc/account/backgrounds",
+        &[
+            ("target", "user:gaming"),
+            ("fill", "none"),
+            ("dim", "3"),
+            ("glass", "clear"),
+        ],
+    )
+    .await;
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[("target", "user:gaming"), ("preset", "sakura-dusk")],
+        )
+        .await;
+    assert_eq!(
+        r.header("location"),
+        "/.cc/account/backgrounds?skin=gaming&saved=1"
+    );
+    let settings = e.state.db.user("jana").unwrap().unwrap().settings;
+    assert_eq!(
+        settings.backgrounds["gaming"],
+        crate::db::Background {
+            fill: crate::db::Fill::Color {
+                colors: vec!["#3b3a7d".into(), "#ef9bb8".into(), "#ffcba0".into()],
+                angle: 160
+            },
+            dim: Some(3),
+            blur: 0
+        }
+    );
+    assert_eq!(
+        settings.panels["gaming"].glass,
+        Some(crate::db::Glass::Clear)
+    );
+    e.form_post(&jana, "/.cc/account", &[("skin", "gaming")])
+        .await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("/.cc/backdrop.css?c=3b3a7d-ef9bb8-ffcba0&amp;a=160"),
+        "{page}"
+    );
+    // The editor shows it as a color, ready to change.
+    let editor = e
+        .page_of(&jana, "/.cc/account/backgrounds?skin=gaming")
+        .await;
+    assert!(
+        editor.contains("value=\"color\" checked") && editor.contains("value=\"#ef9bb8\""),
+        "{editor}"
+    );
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[("target", "user:gaming"), ("preset", "plaid")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn built_in_sets_are_for_everyone_and_never_deleted() {
+    let e = env();
+    assert_eq!(
+        e.state
+            .builtin_sets
+            .iter()
+            .map(|b| (b.name, b.slots.len()))
+            .collect::<Vec<_>>(),
+        [("mountains", 3), ("sakura", 3), ("garden", 3)]
+    );
+    let jana = e.session("jana", "familie").await;
+    let admin = e.session("Tibor", "admin").await;
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
+    let small = crate::web::assets::url("backgrounds/mountains-wide.small.jpg");
+    assert!(
+        editor.contains("value=\"builtin:mountains\"")
+            && editor.contains("Use Mountains")
+            && editor.contains(&small)
+            && !editor.contains("value=\"builtin:mountains\">Delete"),
+        "{editor}"
+    );
+
+    // Mixed with an own set; "never" shows the first.
+    e.upload_set(&jana, "user:default", &[("wide", &png(16, 9))])
+        .await;
+    let own = set_ids_of(&e, "jana")[0].clone();
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[
+                ("target", "user:default"),
+                ("fill", "images"),
+                ("sets", "builtin:sakura"),
+                ("sets", &own),
+                ("sets", "builtin:nope"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let bg = &e
+        .state
+        .db
+        .user("jana")
+        .unwrap()
+        .unwrap()
+        .settings
+        .backgrounds["default"];
+    assert_eq!(
+        crate::appearance::set_ids(bg),
+        ["builtin:sakura".to_string(), own.clone()]
+    );
+    e.form_post(&jana, "/.cc/account", &[("rotation", "never")])
+        .await;
+    let page = e.page_of(&jana, "/").await;
+    let wide = crate::web::assets::url("backgrounds/sakura-wide.jpg");
+    let tall = crate::web::assets::url("backgrounds/sakura-tall.jpg");
+    assert!(page.contains(&wide) && page.contains(&tall), "{page}");
+    let r = e.get(&wide).await;
+    assert_eq!(
+        (r.status, r.header("content-type")),
+        (StatusCode::OK, "image/jpeg")
+    );
+    assert!(r.header("cache-control").contains("immutable"));
+
+    // Not deletable, and a sweep leaves them alone.
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[("target", "user:default"), ("delete", "builtin:sakura")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    super::jobs::sweep_leftovers(e.state.clone()).await;
+    let bg = &e
+        .state
+        .db
+        .user("jana")
+        .unwrap()
+        .unwrap()
+        .settings
+        .backgrounds["default"];
+    assert_eq!(crate::appearance::set_ids(bg).len(), 2);
+
+    // The admin's share background may use one; visitors see it.
+    e.form_post(
+        &admin,
+        "/.cc/account/backgrounds",
+        &[
+            ("target", "share"),
+            ("fill", "images"),
+            ("sets", "builtin:garden"),
+        ],
+    )
+    .await;
+    let page = e.get("/s/doesnotexist1").await.text();
+    assert!(
+        page.contains(&crate::web::assets::url("backgrounds/garden-square.jpg")),
+        "{page}"
+    );
+    // Deleting an own set keeps the built-in one in the background.
+    e.form_post(
+        &jana,
+        "/.cc/account/backgrounds",
+        &[("target", "user:default"), ("delete", &own)],
+    )
+    .await;
+    let bg = &e
+        .state
+        .db
+        .user("jana")
+        .unwrap()
+        .unwrap()
+        .settings
+        .backgrounds["default"];
+    assert_eq!(
+        crate::appearance::set_ids(bg),
+        ["builtin:sakura".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn skin_pictures_follow_the_theme() {
+    let mut e = env();
+    {
+        let st = state_mut(&mut e);
+        st.skins = ["classic", "modern", "sleek", "gaming"]
+            .map(String::from)
+            .into();
+        let pic = |skin: &str, light: bool| crate::appearance::SkinPicture {
+            dark: format!("backgrounds/default-{skin}-dark.svg"),
+            light: light.then(|| format!("backgrounds/default-{skin}-light.svg")),
+        };
+        st.skin_pictures = [
+            ("sleek".to_string(), pic("sleek", true)),
+            ("gaming".to_string(), pic("gaming", false)),
+        ]
+        .into();
+    }
+    let jana = e.session("jana", "familie").await;
+    let (dark, light) = (
+        "/.cc/assets/backgrounds/default-sleek-dark.svg",
+        "/.cc/assets/backgrounds/default-sleek-light.svg",
+    );
+    // modern: its backdrop color from the skin's tokens.
+    assert!(
+        e.page_of(&jana, "/")
+            .await
+            .contains("data-state=\"none\" data-dim=\"0\"")
+    );
+    e.form_post(&jana, "/.cc/account", &[("skin", "sleek")])
+        .await;
+    // System theme: the browser picks; frosted glass dims the picture lightly.
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-state=\"image\" data-dim=\"1\"")
+            && page.contains(&format!(
+                "<source media=\"(prefers-color-scheme: light)\" srcset=\"{light}\"><img class=\"backdrop__img\" src=\"{dark}\""
+            )),
+        "{page}"
+    );
+    e.form_post(&jana, "/.cc/account", &[("theme", "light")])
+        .await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains(&format!("src=\"{light}\"")) && !page.contains(dark),
+        "{page}"
+    );
+    e.form_post(&jana, "/.cc/account", &[("theme", "dark")])
+        .await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains(&format!("src=\"{dark}\"")) && !page.contains(light),
+        "{page}"
+    );
+    // Without a light file the dark one serves both themes.
+    e.form_post(
+        &jana,
+        "/.cc/account",
+        &[("skin", "gaming"), ("theme", "light")],
+    )
+    .await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("src=\"/.cc/assets/backgrounds/default-gaming-dark.svg\"")
+            && !page.contains("prefers-color-scheme"),
+        "{page}"
+    );
+    // "The skin's own" with clear glass: the picture, dimmed more.
+    e.form_post(
+        &jana,
+        "/.cc/account/backgrounds",
+        &[
+            ("target", "user:gaming"),
+            ("fill", "none"),
+            ("glass", "clear"),
+        ],
+    )
+    .await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-state=\"image\" data-dim=\"2\"")
+            && page.contains("default-gaming-dark.svg"),
+        "{page}"
+    );
 }

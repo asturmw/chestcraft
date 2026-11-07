@@ -30,3 +30,7 @@ above, without any additional terms or conditions.
 
 The English passphrase word list (`src/shares/words/en.txt`) is the EFF Short Wordlist by
 the Electronic Frontier Foundation, under CC BY 3.0; see `src/shares/words/README.md`.
+
+The built-in background pictures (`assets/backgrounds/*.jpg`) were generated with the Anima
+model and upscaled with RealESRGAN x2plus; the Anima license restricts use of the model,
+not of its outputs.
