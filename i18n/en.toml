@@ -167,6 +167,8 @@ gone = "This item isn't in the trash anymore."
 no_write = "You can't restore “{name}” because you can no longer change that folder."
 
 [ops]
+same_place = "{name} is there already."
+into_itself = "A folder can't go into itself."
 too_large = "“{name}” is larger than the limit of {size}."
 failed_title = "That didn't work"
 back = "Back"

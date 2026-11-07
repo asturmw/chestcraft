@@ -240,7 +240,12 @@ fn new_rel_name(s: &str) -> Option<RelPath> {
     (!rel.is_root() && rel.components().all(|c| validate_new_name(c).is_ok())).then_some(rel)
 }
 
-fn clash_json(ctx: &Ctx, ex: &Existing, new_size: Option<u64>, can_replace: bool) -> Response {
+pub(super) fn clash_json(
+    ctx: &Ctx,
+    ex: &Existing,
+    new_size: Option<u64>,
+    can_replace: bool,
+) -> Response {
     let body = json!({
         "error": "exists",
         "message": ctx.tf("ops.exists", &[("name", &ex.name)]),

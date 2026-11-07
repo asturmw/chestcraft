@@ -193,7 +193,14 @@ Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy toolin
   once, revoke) and "sign out on the other devices" (`Db::sessions_of`); account page now
   `no-store`. Secret pages `no-store`, never in URLs; everything audited (actor
   `user:<key>`). Header links "Accounts" for admins. Markup provisional.
-- Open: rename/move/copy in the UI come with the UI integration; the primitives exist. A thumbnail that fails to load needs a JS
+- Slice 16 done: JSON API for rename/move/copy (`web/ops.rs`), one item per call like
+  uploads: `POST /.cc/rename {vol, path, name}`, `/.cc/move` and `/.cc/copy {vol, path,
+  to_vol, to_dir}`, `clash` = ask (409 + the upload `clash` object) | keep_both | replace
+  (in the way → trash, needs `d` there) | skip. Rights like MCP (rename/move `m` on the
+  item, `m` at the target in the same volume, `w` in another; copy `r` + `w`); signed-in
+  only, `X-CSRF-Token`; audited (`rename`/`move`/`copy`, target → detail); shares follow.
+  The UI dialogs and the clipboard (`yy`/`dd`/`p`) still need the JS (UI integration).
+- Open: A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token,
   accounts/agents, audit and account-access markup is provisional until the design session
   delivers those screens; the agents part (Addendum 2 "UI") needs a note in its handoff.

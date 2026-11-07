@@ -119,6 +119,7 @@ async fn sign_out_on_other_devices() {
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.text().contains("Signed out on 2 other devices."));
     assert!(page.text().contains("You are signed in only here."));
+    e.audited(&["sessions_ended"]).await;
     assert!(
         e.state
             .db
@@ -300,14 +301,7 @@ async fn admin_manages_accounts_and_agents() {
     assert!(e.state.db.agent_tokens().unwrap().is_empty());
 
     // Everything is in the audit log, with the admin as actor.
-    let log = e
-        .get_h(
-            "/.cc/admin/audit?actor=user:tibor",
-            &[("cookie", &s.cookie)],
-        )
-        .await
-        .text();
-    for action in [
+    let actions = [
         "user_created",
         "user_role",
         "user_disabled",
@@ -315,7 +309,16 @@ async fn admin_manages_accounts_and_agents() {
         "agent_created",
         "agent_token_created",
         "agent_token_revoked",
-    ] {
+    ];
+    e.audited(&actions).await;
+    let log = e
+        .get_h(
+            "/.cc/admin/audit?actor=user:tibor",
+            &[("cookie", &s.cookie)],
+        )
+        .await
+        .text();
+    for action in actions {
         assert!(
             log.contains(&format!("<td>{action}</td>")),
             "{action} in {log}"

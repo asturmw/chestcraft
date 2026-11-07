@@ -162,6 +162,8 @@ gone = "Das ist nicht mehr im Papierkorb."
 no_write = "Du kannst „{name}“ nicht wiederherstellen, weil du den Ordner nicht mehr ändern darfst."
 
 [ops]
+same_place = "{name} ist schon dort."
+into_itself = "Ein Ordner kann nicht in sich selbst."
 too_large = "„{name}“ ist größer als das Limit von {size}."
 failed_title = "Das hat nicht geklappt"
 back = "Zurück"
