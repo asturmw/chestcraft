@@ -22,8 +22,9 @@
 #   5. restart the service if it runs and wait for /healthz; if it doesn't come up, the
 #      previous binary goes back (the new one stays as chestcraft.failed)
 #
-# It creates no user and no config and never touches the volumes; the only files it
-# replaces are its own: units, drop-ins and the older binaries (.prev, .failed).
+# It creates no user and no config and never touches the volumes; it creates the state and
+# cache folders and an empty secrets file if missing, and the only files it replaces are its
+# own: units, drop-ins and the older binaries (.prev, .failed).
 # A first install needs the service user and the config file first (config.example.toml).
 set -euo pipefail
 
@@ -121,6 +122,14 @@ put "$unitdir/$service.service.d/10-paths.conf" "$paths" && reload_units=1
 running_as=$(systemctl show --property=User --value "$service.service")
 [[ $running_as == "$svc_user" ]] ||
     die "$service.service runs as \"$running_as\", not $svc_user: check $unitdir/$service.service.d/"
+# StateDirectory= / CacheDirectory= of the units: systemd makes them at the first start, but
+# account commands (import-copyparty, user add) may run before that.
+for dir in /var/lib/chestcraft /var/cache/chestcraft; do
+    if [[ ! -e $dir ]]; then
+        install -d -o "$svc_user" -g "$(id -gn -- "$svc_user")" -m 700 "$dir"
+        echo "created $dir"
+    fi
+done
 secrets=/etc/chestcraft/secrets.toml
 if [[ ! -e $secrets ]]; then
     # LoadCredential= needs the file; tokens go in later (chestcraft telegram-setup).
