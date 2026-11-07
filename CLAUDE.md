@@ -170,8 +170,17 @@ Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy toolin
   status API `app.backup`, alert `backup:failed`. `deploy/smartd.conf`: self-tests only.
   Not verified under the real sandbox yet: ffmpeg/curl/zpool with MemoryDenyWriteExecute +
   the syscall filter (staging).
-- Open: `admin.sock` (plan: CLI state commands through it while the server runs) is not
-  built for any command; all CLI state commands need the service stopped. The account page
+- Slice 14 done: admin socket (`src/cli.rs`, `web/adminsock.rs`). `user`, `agent`,
+  `api-token` and the new `backup` (now) are clap+serde enums in the lib (`AdminCmd`,
+  flattened into main's CLI); `cli::run` writes into `Out` (stdout, stderr, code). The CLI
+  first tries `paths.admin_socket` (default `/run/chestcraft/admin.sock` =
+  RuntimeDirectory, ≤ 107 bytes): JSON `{version, cmd}` → server checks SO_PEERCRED (root
+  or its own uid), same VERSION, runs it in spawn_blocking, answers `Out`; no socket /
+  refused → opens the DB itself (not as root). Socket 600, stale socket replaced at bind,
+  removed at shutdown; folder missing → off (logged). CLI user commands are now audited
+  (`user_created`, `user_role`, …, actor `cli`); `user add` uses the no-overwrite insert.
+  `import-copyparty` still needs the service stopped (reads includes relative to its file).
+- Open: The account page
   still lacks app passwords and "sign out everywhere", and rename/move/copy in the UI come
   with the UI integration; the primitives exist. A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token and
@@ -201,8 +210,11 @@ LAN/Tailscale only, agent accounts with a role + bearer tokens) as the last back
 - **Install:** the binary on the server is root-owned because the root SMART collector runs
   it. It must never be writable by the service user.
 - **Commits:** one per green slice (tests, clippy, C-free build) on `main`, staged by explicit
-  path. Never commit the design session's files (`design/`, its edits to `docs/`), never push
-  (Tibor, 2026-11-05).
+  path. Never commit the design session's files (`design/`, its edits to `docs/`).
+- **Push:** Claude may push `main` to `origin` (GitHub, public) without asking when it is a
+  good moment, e.g. after a green slice commit. Before each push, check the new commits for
+  secrets and lab specifics (see "Public-ready repo"). Never force-push, never rewrite
+  pushed history, never push `design` (the design session's branch) (Tibor, 2026-11-07).
 
 ## Layout (planned)
 

@@ -90,6 +90,12 @@ fn env() -> Env {
     }
 }
 
+/// A full server state on temp-dir volumes, for tests in other modules.
+pub(super) fn state_for_tests() -> (Shared, tempfile::TempDir) {
+    let e = env();
+    (e.state, e._tmp)
+}
+
 impl Env {
     fn act_as(&self, p: Option<Principal>) {
         *self.state.test_principal.lock().unwrap() = p;
@@ -3423,7 +3429,8 @@ async fn dashboard_is_for_the_admin_and_shows_what_the_machine_has() {
 async fn alerts_fire_once_resolve_and_show_on_the_alerts_page() {
     let e = env();
     let admin = e.session("Admin", "admin").await;
-    let t0 = now();
+    // All snapshots in one hour, so one hourly reading is kept (now() at :59 would span two).
+    let t0 = now() / 3600 * 3600;
     let msgs = tick_with(&e, degraded_snapshot(t0));
     let titles: Vec<&str> = msgs.iter().map(|m| m.title.as_str()).collect();
     assert!(

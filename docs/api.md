@@ -38,7 +38,7 @@ monitor sees.
   Cloudflare headers, or from an address outside the local networks) get `404`.
 - **Token:** `Authorization: Bearer ccs_…`. The admin creates tokens on the volumes page
   (`/.cc/admin/volumes`, section "Status API tokens") or with
-  `chestcraft api-token add LABEL` (service stopped); each is shown once, stored as a
+  `chestcraft api-token add LABEL`; each is shown once, stored as a
   SHA-256, revocable. A token is read-only and not tied to an account. At most 20.
 - `401` + `WWW-Authenticate: Bearer` without a valid token (`{"error": "token required"}`
   or `{"error": "invalid token"}`). Wrong tokens count like wrong passwords: after 5 the

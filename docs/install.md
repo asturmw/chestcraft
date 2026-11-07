@@ -35,14 +35,15 @@ On the server, as root:
    `chestcraft.service.d/10-paths.conf` (the folders the service may write to), creates an
    empty `/etc/chestcraft/secrets.toml`, puts the binary in place and enables
    `chestcraft-collect.timer` (SMART readings as root every 30 minutes).
-5. **First admin account** (before the first start: account commands need the service
-   stopped): `install -d -o chestcraft -g chestcraft -m 700 /var/lib/chestcraft`, then
-   `sudo -u chestcraft chestcraft user add NAME --role admin`. It prints a one-time
-   password to change at the first sign-in. Accounts from copyparty:
-   `chestcraft import-copyparty` (see `--help`).
-6. **Start:** `systemctl enable --now chestcraft`, then
+5. **Start:** `systemctl enable --now chestcraft`, then
    `curl http://127.0.0.1:3923/healthz` (`ok`, or `collector` until the first SMART
    reading).
+6. **First admin account:** `chestcraft user add NAME --role admin` (as root or the service
+   user). It prints a one-time password to change at the first sign-in. While the server
+   runs, `user`, `agent`, `api-token` and `backup` commands go through its admin socket
+   (`/run/chestcraft/admin.sock`); otherwise they open the database themselves, as the
+   service user. Accounts from copyparty: `chestcraft import-copyparty` (see `--help`;
+   it needs the service stopped).
 7. **Disks:** install smartmontools and use `smartd.conf` from the release as
    `/etc/smartd.conf` (self-test schedule only; chestcraft sends the alerts).
 8. **Alerts:** put the bot token into `secrets.toml` (`telegram_token = "…"`), run
@@ -82,7 +83,8 @@ which must list only the sandbox besides the state, cache and backup folders.
 
 ## Backup and restore
 
-Every night at `trash.purge_at` the server copies its state to `paths.backup_dir`:
+Every night at `trash.purge_at` the server copies its state to `paths.backup_dir`
+(`chestcraft backup` does it now):
 
 ```text
 state.redb               the database: accounts, sessions, shares, trash index, audit log,

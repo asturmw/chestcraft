@@ -31,7 +31,8 @@ health_roles = ["agenten"]                         # roles that may read pools/d
 
 An agent is an account of its own: a name and one role from `[roles]`, never `admin`. It has
 no password and can't sign in on the web or use WebDAV; it only has tokens, one per host it
-runs on. Run these as the service user while the service is stopped:
+runs on. Run these as the service user or root (while the server runs, they go through
+its admin socket):
 
 ```sh
 chestcraft agent add hermes --role agenten
