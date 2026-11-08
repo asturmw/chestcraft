@@ -13,9 +13,10 @@ Project map, build/run, rules and common changes (for every agent):
 
 Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
 13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A, B and
-C done (slices 17–19). UI integration (step 7) in slices on `main`: slices 20 (D) and 21 (E)
-done; next F (keyboard maps, clipboard + paste, rename/move/copy dialogs over `web/ops.rs`).
-Then NAS setup (step 4), staging (8).
+C done (slices 17–19). UI integration (step 7) in slices on `main`: slices 20–22 (D, E, F)
+done: everything the design has delivered so far (browser, gate pages, skins) is live; the
+other screens wait for the design session's mocks (`design/pages/`). Next: NAS setup
+(step 4), staging (8), and the next UI slices as the design delivers screens.
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -267,13 +268,35 @@ Then NAS setup (step 4), staging (8).
   (`AppState.account_downloads`, no limit): `/.cc/dl-slots` signed in answers
   `{"max":null,"active":n}`. Queue toast `.queue` (count, bar, stop/close). Checked in
   headless Firefox (real downloads; save with a mocked picker, Firefox has none).
+- Slice 22 done (UI slice F): keyboard maps, clipboard, rename/move/copy in the browser.
+  `?dirs` JSON on folders (`{"dirs","write","move"}`, no dot-names, ≤ 5000) and `/?dirs`
+  (readable volumes) for the folder picker. `assets/ops.js` (accounts only: the browser
+  element carries `data-vol` + `data-csrf`): in-app clipboard in localStorage
+  (`cc-clipboard`, survives folder changes, syncs across tabs) with the action bar's
+  `.actionbar__paste` chip (count, paste, clear); paste/move/copy one item per call over
+  `web/ops.rs`, 409 → `op-clash` dialog (keep both / replace / skip, apply to all), progress
+  in the queue toast, result shown after the reload (sessionStorage flash); cut items
+  already in the target stay. Rename dialog (stem preselected, taken name → field error);
+  folder picker dialog (path crumbs from all volumes, enter folders, "Move/Copy here"
+  enabled by the target's rights, a folder never into itself, move into the same folder
+  off). Status bar: Move, Copy and Rename (`status__overflow`, Rename only for one item),
+  More menu (`#sel-more`) for phone/tablet; row menu gets Rename/Move/Copy (`cc:row-menu`
+  event). `assets/keys.js`: Vim (j/k, gg/G, l/Enter, h/Backspace, /, n/N, Esc, Space, V,
+  yy/dd/p, D, r, o, s, u, z, ?) and Standard (arrows, Home/End, Enter, Alt+↑, Ctrl+A,
+  Shift+↑/↓, Space, Ctrl+C/X/V, Del, F2, /, Esc, ?) maps, Off = nothing; never in text
+  fields, dialogs or menus; cursor = `data-state~="cursor"` with focus on its link; filter
+  Enter → first match; viewer h/l/q and ←/→/Esc (`data-js="viewer-*"`). Shortcut overview
+  dialog (`keys_help`, key names localized: Strg, Entf, …). Checked in headless Firefox
+  with real key input (both maps, paste/clash/rename/picker flows).
 - Open: A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). For the design session (not in its NOTES
   yet): tablet nav (the `appbar__menu` drawer; 720–1023 px has no nav besides crumbs and the
   account menu), the account menu, a folder-upload entry (only drag and drop now), an
   `i-arrow-down` icon for descending sort, `a.menu__item` (links in menus), dialogs, upload
   tray, banners, pager, grid view CSS, share of several items (Share shows for exactly
-  one). The dashboard/alerts, volumes/API-token, accounts/agents, audit and account-access
+  one), the rename/picker/clash/shortcut dialogs; at 1280 px the selection bar wraps to two
+  rows while Rename shows (one item selected); "keep both" on the server names `x (1).ext`,
+  save-to-folder (design) `x (2).ext`. The dashboard/alerts, volumes/API-token, accounts/agents, audit and account-access
   markup is provisional until the design session delivers those screens; the agents part
   (Addendum 2 "UI") needs a note in its handoff.
 
