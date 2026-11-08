@@ -397,8 +397,8 @@ fn dataset_row(ctx: &Ctx, i: &DatasetInfo, now: i64) -> Markup {
             td class="num" { (ctx.size(ds.used)) }
             td class="num" { (ctx.size(ds.avail)) }
             td class="num" {
-                @if let Some(pct) = ds.quota_percent() {
-                    (ctx.tf("dashboard.ds_quota_value", &[("percent", &pct.to_string()), ("quota", &ctx.size(ds.quota))]))
+                @if let Some((pct, limit)) = ds.quota_use() {
+                    (ctx.tf("dashboard.ds_quota_value", &[("percent", &pct.to_string()), ("quota", &ctx.size(limit))]))
                 } @else { "–" }
             }
             td class="num" {

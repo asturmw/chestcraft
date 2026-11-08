@@ -322,6 +322,12 @@ fn failing_disk_md_rootfs_snapshots_and_app() {
             .find(|d| d.ds.name == "tank/transfer")
             .unwrap();
         t.ds.used = t.ds.quota / 100 * 95;
+        // refquota counts the dataset's own data.
+        let v = ds
+            .iter_mut()
+            .find(|d| d.ds.name == "tank/media/video")
+            .unwrap();
+        v.ds.referenced = v.ds.refquota / 100 * 96;
     }
     s.app.missing_roles = vec![("Kim".into(), "gast".into())];
     s.app.missing_shares = vec![crate::health::MissingShare {
@@ -353,6 +359,7 @@ fn failing_disk_md_rootfs_snapshots_and_app() {
         "fired ds:tank/media/video:snapshots",
         "fired ds:tank/media:snapshots",
         "fired ds:tank/transfer:quota",
+        "fired ds:tank/media/video:quota",
     ] {
         assert!(c.contains(&want.to_string()), "{want} missing in {c:?}");
     }
