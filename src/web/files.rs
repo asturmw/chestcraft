@@ -12,7 +12,7 @@
 //!   (folders: "dir":true, "size":0; paths relative to <folder>)
 //! GET  /.cc/dl-slots
 //!   200 {"max":4,"free":2}   anonymous: the per-IP download limit and its free slots
-//!   200 {"max":null}         signed in: no limit
+//!   200 {"max":null,"active":1}  signed in: no limit; downloads running from this IP
 //! ```
 //!
 //! The tree has the zip's rights, hidden-file rule (`hidden=1` for admins), internal-name
@@ -314,7 +314,7 @@ pub async fn handle(
                 return Redirect::permanent(&format!("{raw_path}/{query_suffix}")).into_response();
             }
             if q.has("zip") {
-                let guard = match anon_guard(&st, &principal, &client) {
+                let guard = match download_guard(&st, &principal, &client) {
                     Ok(g) => g,
                     Err(()) => return fail(&ctx, Fail::TooMany),
                 };
@@ -326,7 +326,7 @@ pub async fn handle(
                 };
             }
             if q.has("tree") {
-                let guard = match anon_guard(&st, &principal, &client) {
+                let guard = match download_guard(&st, &principal, &client) {
                     Ok(g) => g,
                     Err(()) => return fail(&ctx, Fail::TooMany),
                 };
@@ -444,7 +444,7 @@ pub async fn handle(
                 };
                 return preview::viewer(&ctx, req).await;
             }
-            let guard = match anon_guard(&st, &principal, &client) {
+            let guard = match download_guard(&st, &principal, &client) {
                 Ok(g) => g,
                 Err(()) => return fail(&ctx, Fail::TooMany),
             };
@@ -454,14 +454,15 @@ pub async fn handle(
     }
 }
 
-/// Anonymous visitors get a limited number of parallel downloads per IP.
-pub fn anon_guard(
+/// Anonymous visitors get a limited number of parallel downloads per IP; accounts' downloads
+/// are counted, so the page's download queue can keep to its own limit.
+pub fn download_guard(
     st: &AppState,
     principal: &Principal,
     client: &ClientInfo,
 ) -> Result<Option<DownloadGuard>, ()> {
     if *principal != Principal::Anonymous {
-        return Ok(None);
+        return Ok(Some(st.account_downloads.track(client.ip)));
     }
     st.limiter
         .try_acquire(client.ip, st.cfg.limits.anon_downloads_per_ip)
@@ -809,6 +810,11 @@ pub async fn listing(
         ],
         sorted: (sort_col, desc),
         folder_href: raw_path.to_string(),
+        slots_href: if frame.share.is_some() {
+            format!("{}.cc/dl-slots", frame.root.1)
+        } else {
+            "/.cc/dl-slots".to_string()
+        },
         post_href: raw_path.to_string(),
         form_csrf: frame.form_csrf,
         can_write: frame.can_mkdir,
@@ -1039,7 +1045,7 @@ pub fn slots_response(st: &AppState, limited: bool, client: &ClientInfo) -> Resp
         let max = st.cfg.limits.anon_downloads_per_ip;
         serde_json::json!({"max": max, "free": max.saturating_sub(st.limiter.active(client.ip))})
     } else {
-        serde_json::json!({"max": null})
+        serde_json::json!({"max": null, "active": st.account_downloads.active(client.ip)})
     };
     (
         [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
@@ -1177,7 +1183,7 @@ async fn folder_post(
     let form = Query::parse(std::str::from_utf8(&bytes).ok());
     let op = form.get("op").unwrap_or_default();
     if op == "zip" || op == "tree" {
-        let guard = match anon_guard(st, principal, client) {
+        let guard = match download_guard(st, principal, client) {
             Ok(g) => g,
             Err(()) => return fail(ctx, Fail::TooMany),
         };

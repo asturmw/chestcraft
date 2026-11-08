@@ -1,4 +1,5 @@
-//! Concurrent download limit per IP (anonymous visitors).
+//! Concurrent downloads per IP: limited for anonymous visitors, counted for accounts (the
+//! download queue of the page asks how many run, see `/.cc/dl-slots`).
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -27,6 +28,16 @@ impl DownloadLimiter {
             inner: self.inner.clone(),
             ip,
         })
+    }
+
+    /// Count a download without a limit.
+    pub fn track(&self, ip: IpAddr) -> DownloadGuard {
+        let mut map = self.inner.lock().unwrap();
+        *map.entry(ip).or_insert(0) += 1;
+        DownloadGuard {
+            inner: self.inner.clone(),
+            ip,
+        }
     }
 
     /// Downloads this address runs now.
@@ -59,6 +70,10 @@ mod tests {
         assert!(l.try_acquire(ip, 4).is_none());
         assert!(l.try_acquire("203.0.113.2".parse().unwrap(), 4).is_some());
         drop(guards);
+        assert_eq!(l.active(ip), 0);
+        let tracked: Vec<_> = (0..6).map(|_| l.track(ip)).collect();
+        assert_eq!(l.active(ip), 6);
+        drop(tracked);
         assert_eq!(l.active(ip), 0);
         assert!(l.try_acquire(ip, 4).is_some());
     }
