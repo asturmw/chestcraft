@@ -673,6 +673,10 @@ pub struct ListingView {
     pub form_csrf: Option<String>,
     pub can_write: bool,
     pub can_delete: bool,
+    /// Rename and move items of this folder (`m`).
+    pub can_move: bool,
+    /// Signed in: the volume for rename, move, copy and the clipboard (`web/ops.rs`).
+    pub ops_vol: Option<String>,
     /// Present when the visitor may upload here (needs JS).
     pub upload: Option<UploadUi>,
     /// Days until deleted items are purged (0 = kept).
@@ -868,6 +872,10 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             let mut s = ctx.scripts.clone();
             s.push("browser.js");
             s.push("download.js");
+            if v.ops_vol.is_some() {
+                s.push("ops.js");
+            }
+            s.push("keys.js");
             s
         },
         ..ctx.clone()
@@ -901,7 +909,17 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             data-t-queue-saved=(ctx.t("browser.queue_saved")) data-t-queue-stop=(ctx.t("browser.queue_stop"))
             data-t-queue-close=(ctx.t("browser.queue_close")) data-t-save-done=(ctx.t("browser.save_done"))
             data-t-save-failed=(ctx.t("browser.save_failed")) data-t-save-denied=(ctx.t("browser.save_denied"))
-            data-t-list-failed=(ctx.t("browser.list_failed")) {
+            data-t-list-failed=(ctx.t("browser.list_failed"))
+            data-vol=[v.ops_vol.as_deref()] data-csrf=[v.ops_vol.as_ref().and(v.form_csrf.as_deref())]
+            data-can-write=[v.can_write.then_some("1")] data-can-move=[v.can_move.then_some("1")]
+            data-t-paste-one=(ctx.t("browser.paste_label_one")) data-t-paste-other=(ctx.t("browser.paste_label_other"))
+            data-t-clip-copy=(ctx.t("browser.clip_clear_copy")) data-t-clip-cut=(ctx.t("browser.clip_clear_cut"))
+            data-t-move-one=(ctx.t("browser.move_title_one")) data-t-move-other=(ctx.t("browser.move_title_other"))
+            data-t-copy-one=(ctx.t("browser.copy_title_one")) data-t-copy-other=(ctx.t("browser.copy_title_other"))
+            data-t-move-here=(ctx.t("browser.move_here")) data-t-copy-here=(ctx.t("browser.copy_here"))
+            data-t-volumes=(ctx.t("browser.picker_volumes")) data-t-picker-empty=(ctx.t("browser.picker_empty"))
+            data-t-moved=(ctx.t("browser.queue_moved")) data-t-copied=(ctx.t("browser.queue_copied"))
+            data-t-rename=(ctx.t("browser.rename")) data-t-move=(ctx.t("browser.move")) data-t-copy=(ctx.t("browser.copy")) {
             div class="browser__pane" {
                 @if let Some(h) = &v.share {
                     (share_head(ctx, h))
@@ -950,6 +968,18 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                             aria-label=(ctx.t("browser.folder_name")) {
                             (icon("folder-plus"))
                             span class="btn__label" aria-hidden="true" { (ctx.t("browser.folder_name")) }
+                        }
+                    }
+                    @if v.ops_vol.is_some() && v.can_write {
+                        span class="actionbar__paste" data-js="paste" hidden {
+                            button class="btn" type="button" data-js="paste-go" {
+                                (icon("clipboard"))
+                                span class="btn__label" aria-hidden="true" {
+                                    strong data-js="paste-count" {}
+                                    span class="actionbar__verb" { " " (ctx.t("browser.paste_verb")) }
+                                }
+                            }
+                            button class="btn btn--icon" type="button" data-js="clip-clear" { (icon("x")) }
                         }
                     }
                     div class="dl actionbar__download" { (download_menu(ctx, "dl-folder", v, false)) }
@@ -1039,6 +1069,24 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                                 (menu_button("dl-zip", "zip", ctx.t("browser.dl_zip"), "", false))
                             }
                         }
+                        @if v.ops_vol.is_some() && v.can_move {
+                            button class="btn" type="button" data-js="move" {
+                                (icon("move"))
+                                span class="btn__label" { (ctx.t("browser.move")) }
+                            }
+                        }
+                        @if v.ops_vol.is_some() {
+                            button class="btn status__overflow" type="button" data-js="copy" {
+                                (icon("copy"))
+                                span class="btn__label" { (ctx.t("browser.copy")) }
+                            }
+                        }
+                        @if v.ops_vol.is_some() && v.can_move {
+                            button class="btn status__overflow" type="button" data-js="rename" hidden {
+                                (icon("rename"))
+                                span class="btn__label" { (ctx.t("browser.rename")) }
+                            }
+                        }
                         @if v.share_base.is_some() {
                             button class="btn" type="button" data-js="share" {
                                 (icon("share"))
@@ -1049,6 +1097,24 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                             button class="btn btn--danger" type="button" data-js="delete" {
                                 (icon("trash"))
                                 span class="btn__label" { (ctx.t("browser.delete")) }
+                            }
+                        }
+                        @if v.ops_vol.is_some() {
+                            button class="btn status__more" type="button" aria-haspopup="menu" popovertarget="sel-more" {
+                                (icon("more"))
+                                span class="btn__label" { (ctx.t("browser.more")) }
+                            }
+                            div class="menu" id="sel-more" role="menu" aria-label=(ctx.t("browser.more")) popover {
+                                button class="menu__item" type="button" role="menuitem" data-js="copy" {
+                                    (icon("copy"))
+                                    span class="menu__text" { span class="menu__label" { (ctx.t("browser.copy")) } }
+                                }
+                                @if v.can_move {
+                                    button class="menu__item" type="button" role="menuitem" data-js="rename" {
+                                        (icon("rename"))
+                                        span class="menu__text" { span class="menu__label" { (ctx.t("browser.rename")) } }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1098,6 +1164,12 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                     }
                 }
             }
+            @if v.ops_vol.is_some() {
+                (ops_dialogs(ctx))
+            }
+            @if ctx.keys != "off" {
+                (keys_help(ctx))
+            }
             @if v.can_delete {
                 dialog class="dialog" data-js="delete-dialog" aria-labelledby="delete-title" {
                     form class="dialog__form" method="dialog" {
@@ -1125,6 +1197,150 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
         }
     };
     app(ctx, &v.title, &v.crumbs, main, floating)
+}
+
+/// Rename, the move/copy folder picker and the name-clash question for `assets/ops.js`
+/// (provisional markup until the design delivers these dialogs).
+fn ops_dialogs(ctx: &Ctx) -> Markup {
+    html! {
+        dialog class="dialog" data-js="rename-dialog" aria-labelledby="rename-title" {
+            form class="dialog__form" method="dialog" {
+                h2 class="dialog__title" id="rename-title" { (ctx.t("browser.rename_title")) }
+                div class="field" data-js="rename-field" {
+                    label class="field__label" for="rename-name" { (ctx.t("browser.rename_label")) }
+                    div class="field__control" {
+                        input class="field__input" id="rename-name" type="text" required maxlength="255"
+                            autocomplete="off" spellcheck="false" aria-describedby="rename-error";
+                    }
+                    p class="field__error" id="rename-error" data-js="rename-error" role="alert" {}
+                }
+                div class="dialog__actions" {
+                    button class="btn" type="button" data-js="dialog-cancel" { (ctx.t("common.cancel")) }
+                    button class="btn btn--primary" type="submit" value="go" { (ctx.t("browser.rename_submit")) }
+                }
+            }
+        }
+        dialog class="dialog picker" data-js="picker" aria-labelledby="picker-title" {
+            form class="dialog__form" method="dialog" {
+                h2 class="dialog__title" id="picker-title" data-js="picker-title" {}
+                nav class="picker__path" aria-label=(ctx.t("browser.location")) data-js="picker-path" {}
+                ul class="picker__list" data-js="picker-list" {}
+                p class="dialog__text" data-js="picker-note" {}
+                div class="dialog__actions" {
+                    button class="btn" type="button" data-js="dialog-cancel" { (ctx.t("common.cancel")) }
+                    button class="btn btn--primary" type="submit" value="go" data-js="picker-go" {}
+                }
+            }
+        }
+        dialog class="name-clash" data-js="op-clash" aria-labelledby="op-clash-title" {
+            form class="name-clash__form" method="dialog" {
+                h2 class="name-clash__title" id="op-clash-title" data-js="clash-title" {}
+                p class="name-clash__existing" data-js="clash-existing" {}
+                div class="name-clash__actions" {
+                    button type="submit" value="keep_both" autofocus { (ctx.t("upload.keep_both")) }
+                    button type="submit" value="replace" data-js="clash-replace" { (ctx.t("upload.replace")) }
+                    button type="submit" value="skip" { (ctx.t("upload.skip")) }
+                }
+                label class="name-clash__all" data-js="clash-all-label" {
+                    input type="checkbox" data-js="clash-all";
+                    " " span data-js="clash-all-text" data-t=(ctx.t("upload.apply_all")) {}
+                }
+            }
+        }
+    }
+}
+
+/// One line of the shortcut overview: the keys and the i18n key of what they do.
+type KeyRow = (String, &'static str);
+
+/// The shortcut overview (`?`) for the visitor's key map.
+pub fn keys_help(ctx: &Ctx) -> Markup {
+    let ctrl = ctx.t("keys.ctrl");
+    let k = |s: &str| s.replace("Ctrl", ctrl);
+    let (list, viewer): (Vec<KeyRow>, Vec<KeyRow>) = if ctx.keys == "vim" {
+        (
+            vec![
+                ("j / k".into(), "keys.move_cursor"),
+                ("gg / G".into(), "keys.top_bottom"),
+                (format!("l / {}", ctx.t("keys.enter")), "keys.open"),
+                (format!("h / {}", ctx.t("keys.backspace")), "keys.up"),
+                ("/".into(), "keys.filter"),
+                ("n / N".into(), "keys.next_match"),
+                ("Esc".into(), "keys.clear"),
+                (ctx.t("keys.space").into(), "keys.toggle"),
+                ("V".into(), "keys.range"),
+                ("yy".into(), "keys.copy"),
+                ("dd".into(), "keys.cut"),
+                ("p".into(), "keys.paste"),
+                ("D".into(), "keys.delete"),
+                ("r".into(), "keys.rename"),
+                ("o".into(), "keys.new_folder"),
+                ("s".into(), "keys.share"),
+                ("u".into(), "keys.upload"),
+                ("z".into(), "keys.zip"),
+                ("?".into(), "keys.help"),
+            ],
+            vec![
+                ("h / l".into(), "keys.prev_next"),
+                ("q".into(), "keys.close"),
+            ],
+        )
+    } else {
+        (
+            vec![
+                ("↑ / ↓".into(), "keys.move_cursor"),
+                (
+                    format!("{} / {}", ctx.t("keys.home"), ctx.t("keys.end")),
+                    "keys.top_bottom",
+                ),
+                (ctx.t("keys.enter").into(), "keys.open"),
+                ("Alt+↑".into(), "keys.up"),
+                ("/".into(), "keys.filter"),
+                ("Esc".into(), "keys.clear"),
+                (ctx.t("keys.space").into(), "keys.toggle"),
+                (format!("{}+↑ / ↓", ctx.t("keys.shift")), "keys.range"),
+                (k("Ctrl+A"), "keys.select_all"),
+                (k("Ctrl+C"), "keys.copy"),
+                (k("Ctrl+X"), "keys.cut"),
+                (k("Ctrl+V"), "keys.paste"),
+                (ctx.t("keys.del").into(), "keys.delete"),
+                ("F2".into(), "keys.rename"),
+                ("?".into(), "keys.help"),
+            ],
+            vec![
+                ("← / →".into(), "keys.prev_next"),
+                ("Esc".into(), "keys.close"),
+            ],
+        )
+    };
+    html! {
+        dialog class="dialog keys" data-js="keys-help" aria-labelledby="keys-title" {
+            form class="dialog__form" method="dialog" {
+                h2 class="dialog__title" id="keys-title" { (ctx.t("keys.title")) }
+                p class="dialog__text" {
+                    (if ctx.keys == "vim" { ctx.t("keys.intro_vim") } else { ctx.t("keys.intro_standard") })
+                }
+                table class="keys__table" {
+                    tbody {
+                        @for (key, what) in &list {
+                            tr { th scope="row" { kbd { (key) } } td { (ctx.t(what)) } }
+                        }
+                    }
+                }
+                h3 class="keys__group" { (ctx.t("keys.viewer")) }
+                table class="keys__table" {
+                    tbody {
+                        @for (key, what) in &viewer {
+                            tr { th scope="row" { kbd { (key) } } td { (ctx.t(what)) } }
+                        }
+                    }
+                }
+                div class="dialog__actions" {
+                    button class="btn btn--primary" type="submit" value="close" { (ctx.t("keys.close")) }
+                }
+            }
+        }
+    }
 }
 
 fn file_row(ctx: &Ctx, r: &Row) -> Markup {
@@ -1561,10 +1777,21 @@ pub fn viewer_stage(
 }
 
 pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
+    let ctx = &Ctx {
+        scripts: {
+            let mut s = ctx.scripts.clone();
+            s.push("keys.js");
+            s
+        },
+        ..ctx.clone()
+    };
     layout(
         ctx,
         &v.name,
         html! {
+            @if ctx.keys != "off" {
+                (keys_help(ctx))
+            }
             @if let Some(h) = &v.share {
                 (share_head(ctx, h))
             }
@@ -1574,13 +1801,13 @@ pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
                     h1 class="viewer__name" id="viewer-name" { (v.name) }
                     nav class="viewer__nav" aria-label=(ctx.t("viewer.nav")) {
                         @if let Some(h) = &v.prev_href {
-                            a class="viewer__prev" rel="prev" href=(h) { (ctx.t("viewer.prev")) }
+                            a class="viewer__prev" rel="prev" href=(h) data-js="viewer-prev" { (ctx.t("viewer.prev")) }
                         }
                         @if let Some(h) = &v.next_href {
-                            a class="viewer__next" rel="next" href=(h) { (ctx.t("viewer.next")) }
+                            a class="viewer__next" rel="next" href=(h) data-js="viewer-next" { (ctx.t("viewer.next")) }
                         }
                     }
-                    a class="viewer__close" href=(v.close_href) { (ctx.t("viewer.close")) }
+                    a class="viewer__close" href=(v.close_href) data-js="viewer-close" { (ctx.t("viewer.close")) }
                 }
                 (viewer_stage(ctx, &v.name, v.ftype, &v.body, &v.download_href))
                 aside class="viewer__info" aria-label=(ctx.t("viewer.info")) {

@@ -3110,6 +3110,60 @@ async fn folder_pages_use_the_app_shell_and_the_browser_markup() {
     );
 }
 
+/// `?dirs` lists folders for the move/copy dialog, with the rights in the folder itself;
+/// `/?dirs` the readable volumes. Folder pages of accounts carry the clipboard and the
+/// rename/move/copy controls; visitors' pages don't.
+#[tokio::test]
+async fn folder_picker_json_and_the_ops_controls() {
+    let e = env();
+    e.put("medien/Urlaub Gardasee/Tag 1/a.txt", b"x");
+    e.put("medien/Urlaub Gardasee/.git/x", b"x");
+    let json = |r: Res| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+    let s = e.session("jana", "familie").await;
+    let c = [("cookie", s.cookie.as_str())];
+    let r = e.get_h("/Medien/Urlaub%20Gardasee/?dirs", &c).await;
+    assert_eq!(r.header("cache-control"), "no-store");
+    assert_eq!(
+        json(r),
+        serde_json::json!({"dirs": ["Tag 1"], "write": true, "move": true})
+    );
+    assert_eq!(
+        json(e.get_h("/?dirs", &c).await),
+        serde_json::json!({"dirs": ["Eingang", "Medien", "Share"], "write": false, "move": false})
+    );
+    let leser = e.session("lena", "leser").await;
+    assert_eq!(
+        json(e.get_h("/Medien/?dirs", &[("cookie", &leser.cookie)]).await),
+        serde_json::json!({"dirs": ["Urlaub Gardasee"], "write": false, "move": false})
+    );
+    // Anonymous visitors see public volumes only.
+    assert_eq!(
+        json(e.get("/?dirs").await),
+        serde_json::json!({"dirs": ["Share"], "write": false, "move": false})
+    );
+
+    let t = e.get_h("/Medien/Urlaub%20Gardasee/", &c).await.text();
+    for part in [
+        r#"data-vol="Medien" data-csrf=""#,
+        r#"<span class="actionbar__paste" data-js="paste" hidden>"#,
+        r#"<button class="btn" type="button" data-js="move">"#,
+        r#"<button class="btn status__overflow" type="button" data-js="rename" hidden>"#,
+        r#"popovertarget="sel-more""#,
+        r#"data-js="picker""#,
+        r#"data-js="op-clash""#,
+        r#"data-js="keys-help""#,
+        "/.cc/assets/ops.js",
+        "/.cc/assets/keys.js",
+    ] {
+        assert!(t.contains(part), "{part}\n{t}");
+    }
+    let t = e.get("/Share/").await.text();
+    assert!(
+        !t.contains("data-js=\"paste\"") && !t.contains("ops.js") && !t.contains("data-vol="),
+        "{t}"
+    );
+}
+
 #[tokio::test]
 async fn listings_link_files_to_the_viewer_with_thumbnails_or_icons() {
     let e = env();

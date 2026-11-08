@@ -230,8 +230,10 @@
         rowMenu.append(a);
       }
       if (row.dataset.share) rowMenu.append(menuItem(ds.tShare, 'share', row.dataset.share));
+      // Other scripts add their items here (ops.js: rename, move, copy).
+      const add = (label, iconId, action) => rowMenu.append(menuItem(label, iconId, action));
+      browser.dispatchEvent(new CustomEvent('cc:row-menu', { detail: { row, add } }));
       if (delDialog) rowMenu.append(menuItem(ds.tDelete, 'trash', () => askDelete([row])));
-      rowMenu.dispatchEvent(new CustomEvent('cc:row-menu', { detail: { row } }));
       window.cc.openMenu(rowMenu, btn);
     });
   }
@@ -239,5 +241,7 @@
   // A page restored from the back/forward cache keeps its checkboxes.
   addEventListener('pageshow', update);
   update();
-  window.cc = Object.assign(window.cc || {}, { browser: { rows, selected, selectOnly, update, sizeText, items } });
+  window.cc = Object.assign(window.cc || {}, {
+    browser: { rows, selected, selectOnly, update, sizeText, items, setState, toggle, askDelete, submit, pick },
+  });
 })();

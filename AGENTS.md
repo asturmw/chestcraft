@@ -112,7 +112,7 @@ as the user that owns `state_dir`.
 | External programs (absolute paths) | `tools.rs`, `health/cmd.rs` |
 | UI strings | `i18n/en.toml`, `i18n/de.toml`, `src/i18n.rs` |
 | App shell (app bar, sidebar tree, tab bar), browser view, gate pages | `web/views.rs`, `web/nav.rs` |
-| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs), `browser.js` (selection, filter, row menu), `download.js` (save to folder, separately, queue), `upload.js`, `provisional.css` (screens not designed yet) |
+| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs), `browser.js` (selection, filter, row menu), `download.js` (save to folder, separately, queue), `ops.js` (clipboard, rename, move/copy picker), `keys.js` (Vim/Standard maps), `upload.js`, `provisional.css` (screens not designed yet) |
 | Deploy | `deploy/release.sh`, `deploy/install.sh`, `deploy/units/` |
 
 ## Rules a change must keep

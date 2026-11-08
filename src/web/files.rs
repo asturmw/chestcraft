@@ -10,6 +10,9 @@
 //!   200 application/x-ndjson, one line per entry, folders before their contents:
 //!       {"path":"sub/a.jpg","dir":false,"size":123,"mtime":"2026-11-04T21:14:00Z"}
 //!   (folders: "dir":true, "size":0; paths relative to <folder>)
+//! GET  <folder>/?dirs                    its folders (no dot-names), for the move/copy dialogs
+//!   200 {"dirs":["a","b"],"write":true,"move":true}   rights in <folder> itself
+//! GET  /?dirs                            the readable volumes, same shape
 //! GET  /.cc/dl-slots
 //!   200 {"max":4,"free":2}   anonymous: the per-IP download limit and its free slots
 //!   200 {"max":null,"active":1}  signed in: no limit; downloads running from this IP
@@ -53,6 +56,8 @@ use tokio_util::io::ReaderStream;
 const PAGE_SIZE: usize = 2000;
 /// Folder item counts in listings stop here.
 const COUNT_CAP: usize = 10_000;
+/// Folders a `?dirs` answer lists at most.
+const DIRS_CAP: usize = 5_000;
 
 /// RFC 5987 attr-chars, for `filename*=`.
 const ATTR_CHARS: &AsciiSet = &NON_ALPHANUMERIC
@@ -148,7 +153,19 @@ pub async fn landing(
     Extension(principal): Extension<Principal>,
     Extension(current): Extension<Current>,
     headers: HeaderMap,
+    uri: Uri,
 ) -> Response {
+    if Query::parse(uri.query()).has("dirs") {
+        let names = st
+            .volumes
+            .iter()
+            .filter(|v| {
+                volume_perms(&st.cfg, &principal, client.origin, v.name()).contains(Perms::READ)
+            })
+            .map(|v| v.name().to_string())
+            .collect();
+        return dirs_response(names, Perms::empty());
+    }
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     let nav = nav::build(
         &st,
@@ -325,6 +342,16 @@ pub async fn handle(
                     Err(f) => fail(&ctx, f),
                 };
             }
+            if q.has("dirs") {
+                let listed = {
+                    let (vol, rel) = (vol.clone(), rel.clone());
+                    tokio::task::spawn_blocking(move || vol.subdirs(&rel, DIRS_CAP)).await
+                };
+                return match listed {
+                    Ok(Ok(names)) => dirs_response(names, perms),
+                    _ => fail(&ctx, Fail::Internal),
+                };
+            }
             if q.has("tree") {
                 let guard = match download_guard(&st, &principal, &client) {
                     Ok(g) => g,
@@ -452,6 +479,20 @@ pub async fn handle(
         }
         Kind::Other => fail(&ctx, Fail::NotFound),
     }
+}
+
+/// `?dirs`: folder names for the move and copy dialogs, with what the visitor may do in
+/// the folder itself (`write`: copy here; `move`: move here within the volume).
+fn dirs_response(dirs: Vec<String>, perms: Perms) -> Response {
+    (
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        axum::Json(serde_json::json!({
+            "dirs": dirs,
+            "write": perms.contains(Perms::WRITE),
+            "move": perms.contains(Perms::MOVE),
+        })),
+    )
+        .into_response()
 }
 
 /// Anonymous visitors get a limited number of parallel downloads per IP; accounts' downloads
@@ -819,6 +860,8 @@ pub async fn listing(
         form_csrf: frame.form_csrf,
         can_write: frame.can_mkdir,
         can_delete: frame.can_delete,
+        can_move: ctx.csrf.is_some() && perms.contains(Perms::MOVE),
+        ops_vol: (ctx.csrf.is_some() && frame.share.is_none()).then(|| vol.name().to_string()),
         upload: frame.upload,
         trash_days: frame.trash_days,
         hidden_toggle: frame.admin.then(|| {
