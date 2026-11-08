@@ -600,6 +600,7 @@ pub async fn password_page(
         csrf: cu.csrf.clone(),
         error: None,
         saved: false,
+        error_on_current: false,
     };
     views::password(&ctx, &view).into_response()
 }
@@ -679,6 +680,7 @@ pub async fn password_submit(
     };
 
     let min = password::MIN_ACCOUNT_PASSWORD.to_string();
+    let on_current = matches!(result, Err(Some(Rejected::WrongCurrent)) | Err(None)) && !forced;
     let error = match result {
         Ok(()) => {
             audit(
@@ -722,6 +724,7 @@ pub async fn password_submit(
         csrf: cu.csrf.clone(),
         saved: error.is_none(),
         error,
+        error_on_current: on_current,
     };
     (status, views::password(&ctx, &view)).into_response()
 }

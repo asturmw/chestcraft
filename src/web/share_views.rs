@@ -3,7 +3,8 @@
 //! design deliverables are integrated.
 
 use super::views::{
-    Ctx, ShareHead, UploadUi, ViewerBody, layout, share_head, upload_ui, viewer_stage,
+    Ctx, GateField, ShareHead, UploadUi, ViewerBody, gate, gate_field, layout, share_head,
+    upload_ui, viewer_stage,
 };
 use maud::{Markup, html};
 
@@ -12,23 +13,20 @@ use maud::{Markup, html};
 
 pub fn share_password(ctx: &Ctx, action: &str, error: Option<&str>) -> Markup {
     let ctx = &ctx.gate();
-    let title = ctx.t("share.password_title");
-    layout(
+    gate(
         ctx,
-        title,
+        ctx.t("share.password_title"),
+        "lock",
         html! {
-            h1 class="share-password__title" { (title) }
-            p class="share-password__intro" { (ctx.t("share.password_intro")) }
-            @if let Some(e) = error {
-                p class="form__error" role="alert" { (e) }
-            }
-            form class="share-password" method="post" action=(action) {
-                label class="field" {
-                    span class="field__label" { (ctx.t("share.password")) }
-                    input class="field__input" type="password" name="password" required
-                        autocomplete="off" autocapitalize="off" spellcheck="false" autofocus;
+            p class="gate__text" { (ctx.t("share.password_intro")) }
+            form class="gate__form" method="post" action=(action) {
+                (gate_field(ctx, GateField {
+                    id: "pw", name: "password", label: ctx.t("share.password"), kind: "password",
+                    value: "", autocomplete: "off", minlength: None, hint: None, error,
+                }))
+                button class="btn btn--primary btn--block gate__submit" type="submit" {
+                    span class="btn__label" { (ctx.t("share.open")) }
                 }
-                button class="share-password__submit" type="submit" { (ctx.t("share.open")) }
             }
         },
     )
@@ -89,7 +87,7 @@ pub fn share_dropbox(ctx: &Ctx, head: &ShareHead, upload: &UploadUi, uploads: &[
         html! {
             (share_head(ctx, head))
             p class="dropbox__intro" { (ctx.t("share.dropbox_intro")) }
-            (upload_ui(ctx, upload))
+            (upload_ui(ctx, upload, false))
             noscript { p class="banner" data-state="warning" { (ctx.t("share.needs_js")) } }
             section class="dropbox__mine" aria-labelledby="dropbox-mine" {
                 h2 id="dropbox-mine" { (ctx.t("share.your_uploads")) }
@@ -493,30 +491,28 @@ pub fn share_detail(ctx: &Ctx, v: &DetailView) -> Markup {
 pub fn public_unlock(ctx: &Ctx, vol: &str, next: &str, open: bool, error: Option<&str>) -> Markup {
     let ctx = &ctx.gate();
     let title = ctx.tf("public_write.title", &[("volume", vol)]);
-    layout(
+    gate(
         ctx,
         &title,
+        "upload",
         html! {
-            h1 class="public-write__title" { (title) }
             @if !open {
-                p class="banner" data-state="closed" { (ctx.t("public_write.closed")) }
+                p class="gate__text" data-state="closed" { (ctx.t("public_write.closed")) }
             } @else {
-                p class="public-write__intro" { (ctx.t("public_write.intro")) }
-                @if let Some(e) = error {
-                    p class="form__error" role="alert" { (e) }
-                }
-                form class="public-write" method="post" action="/.cc/public-write" {
+                p class="gate__text" { (ctx.t("public_write.intro")) }
+                form class="gate__form" method="post" action="/.cc/public-write" {
                     input type="hidden" name="vol" value=(vol);
                     input type="hidden" name="next" value=(next);
-                    label class="field" {
-                        span class="field__label" { (ctx.t("share.password")) }
-                        input class="field__input" type="password" name="password" required
-                            autocomplete="off" autocapitalize="off" spellcheck="false" autofocus;
+                    (gate_field(ctx, GateField {
+                        id: "pw", name: "password", label: ctx.t("share.password"), kind: "password",
+                        value: "", autocomplete: "off", minlength: None, hint: None, error,
+                    }))
+                    button class="btn btn--primary btn--block gate__submit" type="submit" {
+                        span class="btn__label" { (ctx.t("public_write.submit")) }
                     }
-                    button type="submit" { (ctx.t("public_write.submit")) }
                 }
             }
-            p { a href=(next) { (ctx.t("ops.back")) } }
+            p class="gate__text" { a href=(next) { (ctx.t("ops.back")) } }
         },
     )
 }

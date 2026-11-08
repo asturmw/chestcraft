@@ -13,7 +13,10 @@ Project map, build/run, rules and common changes (for every agent):
 
 Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
 13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A, B and
-C done (slices 17–19). Next: NAS setup (step 4), UI integration (7), staging (8).
+C done (slices 17–19). UI integration (step 7) in slices on `main`: slice 20 (D) done; next
+E (download menu: save to folder, separately, queue; requests 6, 10), then F (keyboard maps,
+clipboard + paste, rename/move/copy dialogs over `web/ops.rs`). Then NAS setup (step 4),
+staging (8).
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -230,10 +233,38 @@ C done (slices 17–19). Next: NAS setup (step 4), UI integration (7), staging (
   `GET /.cc/dl-slots` → `{"max":N,"free":n}` for anonymous visitors (per-IP limiter),
   `{"max":null}` signed in; `/s/<id>/.cc/dl-slots` after the password (always limited).
   Documented in the `web/files.rs` module docs, like uploads (`web/api.rs`) and ops.
+- Slice 20 done (UI slice D; design requests 4, 5): the design's `tokens.css`, `app.css`,
+  `skins/*.css`, `icons.svg` and `fonts/` ship unchanged in `assets/`, copied from the `design`
+  branch by `deploy/design-sync.sh` (rerun it when the design changes; it also lists files
+  the branch dropped). All five skins are live (`modern` by default). App shell
+  (`views::app`): app bar (brand, crumbs, admin link, account button + popover menu,
+  sign-in link and language switch for visitors), sidebar (`web/nav.rs`: readable volumes,
+  the current one opened along the path, tags public/home only, free space of the current
+  volume, links with the own active share count) on landing, folders, viewer, trash, my
+  shares and account; phone tab bar for accounts. Folder page = `proto/browser.html`: title
+  row (summary "N items, size", filter, phone download, list/grid), action bar (Upload →
+  file picker, New folder → dialog, Download ▾ with the zip as a GET form so it works
+  without JS; save/each rendered hidden until slice E), `table.files` (folder item counts
+  via `VolumeRoot::count`, date-only phone meta line, `<time>`, share badge with expiry
+  tooltip, `aria-sort`, caption), status bar idle/select, hidden `form#sel` (zip, delete).
+  Gate pages (`views::gate`): sign-in (brand + language switch), password change, share
+  password, public-upload unlock; fields with reveal button. `assets/app.js` (all pages):
+  popover menus placed next to their button, arrow keys, reveal, dialog cancel.
+  `assets/browser.js`: selection (checkbox, row click, shift range, long-press on phones,
+  select all), status count/size, filter (no case/accents), row menu, delete confirm, new
+  folder, selection zip. Undesigned screens render in `main.panel` with
+  `assets/provisional.css`. Referrer-Policy is now `same-origin`: with `no-referrer`
+  browsers send `Origin: null` on form POSTs and every form failed the origin check.
+  Checked in headless Firefox (WebDriver BiDi) at 1280 and phone width, dark and light.
 - Open: A thumbnail that fails to load needs a JS
-  fallback to the type icon (UI integration). The dashboard/alerts, volumes/API-token,
-  accounts/agents, audit and account-access markup is provisional until the design session
-  delivers those screens; the agents part (Addendum 2 "UI") needs a note in its handoff.
+  fallback to the type icon (UI integration). For the design session (not in its NOTES
+  yet): tablet nav (the `appbar__menu` drawer; 720–1023 px has no nav besides crumbs and the
+  account menu), the account menu, a folder-upload entry (only drag and drop now), an
+  `i-arrow-down` icon for descending sort, `a.menu__item` (links in menus), dialogs, upload
+  tray, banners, pager, grid view CSS, share of several items (Share shows for exactly
+  one). The dashboard/alerts, volumes/API-token, accounts/agents, audit and account-access
+  markup is provisional until the design session delivers those screens; the agents part
+  (Addendum 2 "UI") needs a note in its handoff.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in

@@ -10,6 +10,7 @@ group = ","
 # Tokens: {d} day, {d2} two-digit day, {m2} two-digit month, {mon} month name, {y} year,
 # {H} hour, {M} minute.
 datetime = "{d} {mon} {y}, {H}:{M}"
+date = "{d} {mon} {y}"
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 [common]
@@ -23,6 +24,25 @@ trash = "Trash"
 dashboard = "Dashboard"
 users = "Accounts"
 account = "Account"
+cancel = "Cancel"
+show_password = "Show password"
+
+# App shell: sidebar, tab bar (phone), account menu.
+[nav]
+volumes = "Folders"
+sections = "Sections"
+shares = "My shares"
+# Tab bar label (short).
+shares_tab = "Shares"
+trash = "Trash"
+account = "Account"
+account_menu = "Account menu"
+admin = "Admin"
+# Tags next to a volume in the folder tree.
+tag_public = "public"
+tag_home = "home only"
+# {percent} is a whole number.
+space_used = "{percent}% used"
 
 [landing]
 title = "Your folders"
@@ -74,6 +94,50 @@ layout = "Layout"
 layout_list = "List"
 layout_grid = "Grid"
 
+# "14 items, 296.7 MB": {items} is items_one/items_other, {size} the files' total size.
+summary = "{items}, {size}"
+# A folder's count that hit the limit.
+items_many = "{count}+ items"
+# Phone line under a name: "312 kB, 5 Nov 2026".
+meta = "{size}, {date}"
+# Screen readers: the table caption. {column} is one of the sorted_* words.
+caption = "Contents of {name}, sorted by {column}"
+caption_desc = "Contents of {name}, sorted by {column}, descending"
+sorted_name = "name"
+sorted_size = "size"
+sorted_modified = "date modified"
+select_all = "Select all"
+col_actions = "Actions"
+actions_for = "Actions for {name}"
+shared_until = "Active share, runs out on {date}"
+shared_forever = "Active share without expiry"
+filter = "Filter this folder"
+filter_placeholder = "Filter"
+folder_actions = "Folder actions"
+upload = "Upload"
+folder_name_label = "Name"
+shortcuts = "Keyboard shortcuts"
+selection = "Selection"
+# After the number of selected items: "2 selected".
+selected = "selected"
+clear_selection = "Clear selection"
+delete = "Delete"
+# Confirm dialog; {count} and {name} are filled in by the page.
+delete_title_one = "Move {count} item to the trash?"
+delete_title_other = "Move {count} items to the trash?"
+delete_title_name = "Move “{name}” to the trash?"
+# The download menu (folder or selection).
+dl_toggle = "Download"
+# Narrow screens.
+dl_toggle_short = "Download"
+dl_folder = "Download folder"
+dl_selection = "Download selection"
+dl_save = "Save to folder …"
+dl_save_hint = "Subfolders are kept"
+dl_each = "Separately"
+dl_each_hint_folder = "Each file on its own, subfolders as zip"
+dl_zip = "As one zip file"
+queue_stop = "Cancel the remaining downloads"
 [error]
 forbidden_title = "Request refused"
 forbidden_body = "chestcraft refused this request because it didn't come from this site. Reload the page and try again."

@@ -83,8 +83,12 @@ fn env() -> Env {
     ))
     .unwrap();
     let db = open_db(&cfg).unwrap();
+    let mut state = AppState::new(cfg, I18n::builtin(), db, &Default::default());
+    // Tests pick their skins: the embedded ones would change what every page renders.
+    state.skins = Vec::new();
+    state.skin_pictures = Default::default();
     Env {
-        state: Arc::new(AppState::new(cfg, I18n::builtin(), db, &Default::default())),
+        state: Arc::new(state),
         _tmp: tmp,
     }
 }
@@ -376,7 +380,7 @@ async fn every_response_carries_the_security_headers() {
     let e = env();
     let r = e.get("/").await;
     assert_eq!(r.header("x-content-type-options"), "nosniff");
-    assert_eq!(r.header("referrer-policy"), "no-referrer");
+    assert_eq!(r.header("referrer-policy"), "same-origin");
     assert_eq!(r.header("x-robots-tag"), "noindex, nofollow");
     assert_eq!(r.header("cache-control"), "private, no-cache");
     assert!(
@@ -2252,7 +2256,7 @@ async fn folder_share_round_trip() {
     );
     // A visitor's password page: no brand, no language switch.
     assert!(
-        !t.contains("lang-switch") && !t.contains("app-header__brand"),
+        !t.contains("class=\"langswitch\"") && !t.contains("class=\"brand"),
         "{t}"
     );
     let r = e.get(&format!("/s/{id}/IMG_2041.jpg")).await;
@@ -2260,7 +2264,7 @@ async fn folder_share_round_trip() {
 
     let r = e.unlock(&id, "falsch-falsch", "127.0.0.1", &[]).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
-    assert!(!r.text().contains("lang-switch"), "{}", r.text());
+    assert!(!r.text().contains("class=\"langswitch\""), "{}", r.text());
     // Case and separators don't matter for passphrases (phones capitalize).
     let typed = pw.replace('-', " ").to_uppercase();
     let r = e
@@ -2281,7 +2285,7 @@ async fn folder_share_round_trip() {
         t.contains("IMG_2041.jpg") && t.contains("Fotos vom See") && t.contains("Admin"),
         "{t}"
     );
-    assert!(t.contains("lang-switch"), "{t}");
+    assert!(t.contains("class=\"langswitch\""), "{t}");
     assert!(!t.contains("data-js=\"upload\""), "view only: {t}");
     let r = e.get_h(&format!("/s/{id}/IMG_2041.jpg"), &c).await;
     assert_eq!(
@@ -2625,7 +2629,7 @@ async fn shares_never_exceed_the_creator_and_pause_with_them() {
         .get_h("/Medien/", &[("cookie", &jana.cookie)])
         .await
         .text();
-    assert!(t.contains("data-state=\"shared\""), "{t}");
+    assert!(t.contains("class=\"sharebadge\""), "{t}");
     let cookie = e.visit(&id, &pw).await;
     let c = [("cookie", cookie.as_str())];
 
@@ -2842,8 +2846,8 @@ async fn public_uploads_open_with_a_password_and_never_overwrite() {
         .text();
     assert!(
         t.contains("name=\"password\"")
-            && !t.contains("lang-switch")
-            && !t.contains("app-header__brand"),
+            && !t.contains("class=\"langswitch\"")
+            && !t.contains("class=\"brand"),
         "{t}"
     );
     let unlock = |pw: &str| form(&[("vol", "Share"), ("password", pw), ("next", "/Share/")]);
@@ -3039,6 +3043,67 @@ impl Env {
     }
 }
 
+/// The folder page follows the design's browser markup: app shell with the folder tree
+/// opened along the path, the action bar, the file table and the status bar; the
+/// selection posts through the `sel` form.
+#[tokio::test]
+async fn folder_pages_use_the_app_shell_and_the_browser_markup() {
+    let e = env();
+    e.put("medien/Urlaub Gardasee/Tag 1/a.txt", b"x");
+    e.put("medien/Urlaub Gardasee/Tag 1/b.txt", b"x");
+    e.put("medien/Urlaub Gardasee/.versteckt", b"x");
+    e.put("medien/Urlaub Gardasee/b.bin", &[0u8; 1500]);
+    let s = e.session("jana", "teiler").await;
+    let (id, _) = e
+        .create_share(&s, "Medien", "Urlaub Gardasee/b.bin", &[])
+        .await;
+    assert!(!id.is_empty());
+    let t = e
+        .get_h("/Medien/Urlaub%20Gardasee/", &[("cookie", &s.cookie)])
+        .await
+        .text();
+    for part in [
+        r#"<body class="page page--app">"#,
+        r#"<header class="appbar">"#,
+        // The tree: the volume and the folder above this one lead here.
+        r#"<a class="tree__link" href="/Medien/" aria-current="location">"#,
+        r#"<a class="tree__link" href="/Medien/Urlaub%20Gardasee/" aria-current="page">"#,
+        r#"<main class="browser" id="main" data-view="list""#,
+        r#"<div class="actionbar" role="toolbar""#,
+        r#"<table class="files" data-js="files">"#,
+        // A folder's size column counts its items; hidden files don't count.
+        r#"<td class="files__size">2 items</td>"#,
+        // Files' total: the folder's own files only.
+        r#"<p class="browser__summary">3 items, 1.5 kB</p>"#,
+        r#"class="sharebadge" title="Active share, runs out on "#,
+        r#"<footer class="status" data-state="idle" data-js="status">"#,
+        r#"<form id="sel" method="post" action="/Medien/Urlaub%20Gardasee/" hidden"#,
+        r#"name="n" value="b.bin" form="sel""#,
+        // The zip works without JS: a GET form in the download menu.
+        r#"<form class="dl__form" method="get" action="/Medien/Urlaub%20Gardasee/"><input type="hidden" name="zip" value="">"#,
+        r#"<nav class="tabbar""#,
+        r#"<span class="sidenav__count">1</span>"#,
+    ] {
+        assert!(t.contains(part), "{part}\n{t}");
+    }
+    assert!(!t.contains(".versteckt"), "{t}");
+
+    // Visitors without an account: no tab bar, no account menu, a sign-in link.
+    let t = e.get("/Share/").await.text();
+    assert!(
+        t.contains(r#"href="/.cc/login""#)
+            && !t.contains("class=\"tabbar\"")
+            && !t.contains("account-menu"),
+        "{t}"
+    );
+    // Gate pages: one card.
+    let t = e.get("/.cc/login").await.text();
+    assert!(
+        t.contains(r#"<body class="page page--gate">"#) && t.contains("gate__card"),
+        "{t}"
+    );
+}
+
 #[tokio::test]
 async fn listings_link_files_to_the_viewer_with_thumbnails_or_icons() {
     let e = env();
@@ -3047,7 +3112,7 @@ async fn listings_link_files_to_the_viewer_with_thumbnails_or_icons() {
     e.act_as(Some(admin()));
     let t = e.get("/Medien/Urlaub%20Gardasee/").await.text();
     assert!(t.contains(r#"href="IMG_2041.jpg?view""#), "{t}");
-    assert!(t.contains(r#"href="IMG_2041.jpg?dl""#), "{t}");
+    assert!(t.contains(r#"data-dl="IMG_2041.jpg?dl""#), "{t}");
     assert!(
         t.contains(r#"class="thumb" src="IMG_2041.jpg?thumb&amp;v="#),
         "{t}"
@@ -3658,7 +3723,7 @@ async fn visitor_pages_take_the_language_from_cookie_or_browser() {
     // The sign-in page keeps the brand and the language switch, back to itself.
     let t = e.get("/.cc/login?next=%2FMedien%2F").await.text();
     assert!(
-        t.contains("app-header__brand")
+        t.contains("class=\"brand")
             && t.contains("/.cc/lang?set=de&amp;next=%2F.cc%2Flogin%3Fnext%3D%252FMedien%252F"),
         "{t}"
     );

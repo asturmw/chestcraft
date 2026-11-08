@@ -111,7 +111,8 @@ as the user that owns `state_dir`.
 | copyparty account import | `import/` |
 | External programs (absolute paths) | `tools.rs`, `health/cmd.rs` |
 | UI strings | `i18n/en.toml`, `i18n/de.toml`, `src/i18n.rs` |
-| CSS/JS/icons (embedded by `build.rs`) | `assets/` |
+| App shell (app bar, sidebar tree, tab bar), browser view, gate pages | `web/views.rs`, `web/nav.rs` |
+| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs), `browser.js`, `upload.js`, `provisional.css` (screens not designed yet) |
 | Deploy | `deploy/release.sh`, `deploy/install.sh`, `deploy/units/` |
 
 ## Rules a change must keep
@@ -134,7 +135,11 @@ as the user that owns `state_dir`.
 - **i18n.** Every UI string lives in both `i18n/en.toml` and `i18n/de.toml` with the same
   placeholders; a test fails otherwise.
 - **UI contract.** Views follow `docs/ui-handoff.md` section 5 (class names, no inline
-  styles). `design/` is owned by a separate design branch; don't edit it on `main`.
+  styles) and the design's prototypes (`design/proto/` on the `design` branch). `design/`
+  is owned by a separate design branch; don't edit it on `main`, and don't edit the copies
+  `deploy/design-sync.sh` puts into `assets/`. Screens the design hasn't delivered render
+  inside `main.panel` with `assets/provisional.css`. JS hooks are `data-js`; scripts never
+  select by class.
 - **DB tables.** A new table is created in `Db::open` and copied in `Db::copy_to`; the backup
   test compares table lists.
 - **Public repo.** No secrets, real hostnames, IPs, user names or paths. Tests and fixtures

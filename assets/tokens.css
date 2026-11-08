@@ -1,1 +1,199 @@
-/* Placeholder. The design session delivers tokens.css (design/), integrated in plan step 7. */
+/* chestcraft — tokens. Layer order: tokens < app < skin < glass. A skin overrides tokens
+   under [data-skin="<name>"] and adds its own rules in the skin layer; the glass layer holds
+   the clear-glass overrides, which win over every skin. */
+@layer tokens, app, skin, glass;
+
+/* Fonts: SIL OFL 1.1, licenses in fonts/. Subset: Latin, Latin-1, general punctuation,
+   € ™ arrows. Browsers fetch a face only when a skin uses it. */
+@font-face { font-family: "Atkinson Hyperlegible Next"; src: url(fonts/atkinson-next.woff2) format("woff2");
+  font-weight: 200 800; font-style: normal; font-display: swap; }
+@font-face { font-family: "Instrument Sans"; src: url(fonts/instrument-sans.woff2) format("woff2");
+  font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Jost"; src: url(fonts/jost.woff2) format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Chakra Petch"; src: url(fonts/chakra-petch-regular.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Chakra Petch"; src: url(fonts/chakra-petch-medium.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Chakra Petch"; src: url(fonts/chakra-petch-semibold.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Chakra Petch"; src: url(fonts/chakra-petch-bold.woff2) format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "M PLUS Rounded 1c"; src: url(fonts/mplus-rounded-1c-regular.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "M PLUS Rounded 1c"; src: url(fonts/mplus-rounded-1c-medium.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "M PLUS Rounded 1c"; src: url(fonts/mplus-rounded-1c-bold.woff2) format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "M PLUS Rounded 1c"; src: url(fonts/mplus-rounded-1c-extrabold.woff2) format("woff2"); font-weight: 800; font-display: swap; }
+
+@layer tokens {
+  :root {
+    /* type */
+    --font-body: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --font-display: var(--font-body);
+    --font-num: var(--font-body);
+    --display-weight: 700;
+    --display-tracking: -0.01em;
+    --fs-xs: 0.75rem;
+    --fs-sm: 0.8125rem;
+    --fs-body: 0.9375rem;
+    --fs-md: 1.0625rem;
+    --fs-lg: 1.375rem;
+    --fs-xl: 1.75rem;
+    --fs-2xl: 2.375rem;
+
+    /* shape and rhythm */
+    --radius-s: 4px;
+    --radius-m: 8px;
+    --radius-l: 12px;
+    --radius-pill: 999px;
+    --gutter: 16px;
+    --gap: 16px;
+    --appbar-h: 56px;
+    --sidenav-w: 260px;
+    --row-h: 44px;
+    --btn-h: 36px;
+    --btn-px: 14px;
+    --tap: 44px;
+    --icon-stroke: 1.75;
+    --icon-cap: round;
+    --icon-join: round;
+    --float: 12px;
+    --tabbar-h: 0px;
+    --shadow: 0 1px 2px color-mix(in srgb, var(--shade) 30%, transparent);
+    --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+
+
+  /* Theme. Every color token is light-dark(<light>, <dark>), resolved by color-scheme: the
+     server writes data-theme on <html> from the account setting; without it ("System") the
+     browser follows the system. data-theme works on any subtree too (components.html). */
+  :root { color-scheme: light dark; }
+  [data-theme="dark"] { color-scheme: dark; }
+  [data-theme="light"] { color-scheme: light; }
+
+  :root {
+    --bg: light-dark(#eef1f5, #15181e);
+    --surface: light-dark(#ffffff, #1c2028);
+    --surface-2: light-dark(#f4f6f9, #232833);
+    --surface-3: light-dark(#e7ebf1, #2c3240);
+    --line: light-dark(#d5dbe4, #333a47);
+    --line-strong: light-dark(#aeb7c4, #4b5466);
+    --text: light-dark(#161a21, #e9ecf1);
+    --text-muted: light-dark(#4f5765, #a5adba);
+    --accent: light-dark(#1f5fd1, #6aa5ff);
+    --accent-hover: light-dark(#174ba8, #8ab8ff);
+    --on-accent: light-dark(#ffffff, #0b1424);
+    /* the accent as text or icon on panels; light skins with a bright fill accent darken it */
+    --accent-ink: light-dark(#1b58c4, #6aa5ff);
+    --select: light-dark(rgb(31 95 209 / 0.14), rgb(106 165 255 / 0.2));
+    --select-line: var(--accent);
+    --cursor: light-dark(#9a5c00, #ffd166);
+    --focus: light-dark(#9a5c00, #ffd166);
+    --ok: light-dark(#11703f, #5dd39e);
+    --warn: light-dark(#8f5000, #ffb547);
+    --danger: light-dark(#9b2121, #ff9e9e);
+    --on-danger: light-dark(#ffffff, #2a0606);
+    --backdrop-color: var(--bg);
+    /* the veil over a background picture (data-dim): black in dark, white in light */
+    --dim-color: light-dark(#fff, #000);
+    /* bases for mixes: --shade under shadows (light ones are softer and bluish), --wash for
+       hover and zebra tints (toward the text color), --sunk under tinted tiles and badges */
+    --shade: light-dark(rgb(28 38 64 / 0.4), #000);
+    --wash: light-dark(rgb(20 30 50 / 0.8), #fff);
+    --sunk: light-dark(#fff, #000);
+
+    /* glass: skins set the frosted look. Panels (app bar, sidenav, browser, gate card)
+       read the resolved --panel-* below; filled controls use --bar-bg / --field-bg.
+       --glass-k tones the backdrop behind a panel: dark multiplies it by k (toward black),
+       light pulls it toward white by the same amount (see the theme switch below). */
+    --glass-tint: var(--surface);
+    --glass-alpha: 0.7;
+    --glass: color-mix(in srgb, var(--glass-tint) calc(var(--glass-alpha) * 100%), transparent);
+    --glass-blur: 18px;
+    --glass-sat: 1.2;
+    --glass-k: 0.7;
+    --glass-line: light-dark(rgb(16 24 40 / 0.1), rgb(255 255 255 / 0.1));
+    --glass-shadow: 0 10px 30px color-mix(in srgb, var(--shade) 30%, transparent);
+    --clear-line: light-dark(rgb(16 24 40 / 0.36), rgb(255 255 255 / 0.3));
+    --clear-ink: 0 1px 2px light-dark(rgb(255 255 255 / 0.9), rgb(0 0 0 / 0.85)), 0 0 12px light-dark(rgb(255 255 255 / 0.75), rgb(0 0 0 / 0.55));
+    --clear-icon: drop-shadow(0 1px 1.5px light-dark(rgb(255 255 255 / 0.9), rgb(0 0 0 / 0.8)));
+    --clear-select: light-dark(color-mix(in srgb, var(--accent) 30%, rgb(255 255 255 / 0.6)), color-mix(in srgb, var(--accent) 34%, rgb(0 0 0 / 0.55)));
+    --bar-bg: color-mix(in srgb, var(--surface-2) 94%, transparent);
+    --bar-line: var(--line);
+    --menu-bg: color-mix(in srgb, var(--surface-2) 97%, transparent);
+    --field-bg: color-mix(in srgb, var(--bg) 82%, transparent);
+    /* shadows of bars and popups that float over the list */
+    --bar-shadow: 0 10px 30px color-mix(in srgb, var(--shade) 35%, transparent);
+    --pop-shadow: 0 16px 40px color-mix(in srgb, var(--shade) 45%, transparent);
+
+    /* file-type tints (icons only, never text) */
+    --t-folder: light-dark(#c48a12, #f2c45a);
+    --t-image: light-dark(#c2407a, #f39ac0);
+    --t-video: light-dark(#7c3aed, #c59bff);
+    --t-audio: light-dark(#0b7bb0, #7dd3fc);
+    --t-pdf: light-dark(#c2361f, #ff8a7a);
+    --t-text: light-dark(#5b6676, #b8c2d1);
+    --t-doc: light-dark(#2557c9, #7aa7ff);
+    --t-sheet: light-dark(#15803d, #6ee7a8);
+    --t-archive: light-dark(#8a5a2b, #d9b38c);
+    --t-code: light-dark(#4f46e5, #a5b4fc);
+    --t-model: light-dark(#0f766e, #5eead4);
+    --t-gcode: light-dark(#c2410c, #fdba74);
+    --t-vector: light-dark(#a21caf, #f0abfc);
+    --t-disk: light-dark(#475569, #cbd5e1);
+    --t-file: light-dark(#5b6676, #b8c2d1);
+  }
+
+  /* The only theme-dependent value that is not a color: the backdrop tone behind panels.
+     Light mirrors dark: x·k (dark) ↔ 1 − (1 − x)·k = contrast(k / (2 − k)) brightness(2 − k). */
+  :root, [data-theme="dark"] {
+    --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)) brightness(var(--glass-k));
+  }
+  [data-theme="light"] {
+    --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)) contrast(calc(var(--glass-k) / (2 - var(--glass-k)))) brightness(calc(2 - var(--glass-k)));
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) {
+      --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)) contrast(calc(var(--glass-k) / (2 - var(--glass-k)))) brightness(calc(2 - var(--glass-k)));
+    }
+  }
+
+  /* glass mode, per user and skin (html[data-glass]); frosted is the default. Repeated on
+     [data-theme] so a themed subtree resolves its own panel values. */
+  :root, [data-theme] {
+    --panel-bg: var(--glass);
+    --panel-filter: var(--glass-filter);
+    --panel-line: var(--glass-line);
+    --panel-shadow: var(--glass-shadow);
+    --ink-shadow: none;
+    --icon-shadow: none;
+    --row-select: var(--select);
+  }
+  [data-glass="clear"], [data-glass="clear"] [data-theme] {
+    --panel-bg: transparent;
+    --panel-filter: none;
+    --panel-line: var(--clear-line);
+    --panel-shadow: none;
+    --ink-shadow: var(--clear-ink);
+    --icon-shadow: var(--clear-icon);
+    --row-select: var(--clear-select);
+  }
+}
+
+/* Browsers without light-dark() (Safari < 17.5, Chrome < 123, Firefox < 120) get the base
+   dark palette in every skin: readable, not themed. Unlayered, so it beats the skins. */
+@supports not (color: light-dark(#000, #fff)) {
+  :root {
+    color-scheme: dark;
+    --bg: #15181e; --surface: #1c2028; --surface-2: #232833; --surface-3: #2c3240;
+    --line: #333a47; --line-strong: #4b5466; --text: #e9ecf1; --text-muted: #a5adba;
+    --accent: #6aa5ff; --accent-hover: #8ab8ff; --on-accent: #0b1424; --accent-ink: #6aa5ff;
+    --select: rgb(106 165 255 / 0.2); --cursor: #ffd166; --focus: #ffd166;
+    --ok: #5dd39e; --warn: #ffb547; --danger: #ff9e9e; --on-danger: #2a0606;
+    --dim-color: #000; --shade: #000; --wash: #fff; --sunk: #000;
+    --glass-tint: #1c2028; --glass-line: rgb(255 255 255 / 0.1); --clear-line: rgb(255 255 255 / 0.3);
+    --clear-ink: 0 1px 2px rgb(0 0 0 / 0.85), 0 0 12px rgb(0 0 0 / 0.55);
+    --clear-icon: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.8));
+    --clear-select: rgb(106 165 255 / 0.3);
+    --backdrop-color: #15181e; --bar-bg: rgb(35 40 51 / 0.94); --bar-line: #333a47;
+    --menu-bg: rgb(35 40 51 / 0.97); --field-bg: rgb(21 24 30 / 0.82);
+    --t-folder: #f2c45a; --t-image: #f39ac0; --t-video: #c59bff; --t-audio: #7dd3fc; --t-pdf: #ff8a7a;
+    --t-text: #b8c2d1; --t-doc: #7aa7ff; --t-sheet: #6ee7a8; --t-archive: #d9b38c; --t-code: #a5b4fc;
+    --t-model: #5eead4; --t-gcode: #fdba74; --t-vector: #f0abfc; --t-disk: #cbd5e1; --t-file: #b8c2d1;
+  }
+}

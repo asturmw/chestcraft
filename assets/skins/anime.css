@@ -1,0 +1,174 @@
+/* Skin: anime — soft pastel daydream. Bubbly floating panels, sakura pink + sky blue +
+   peach, rounded type, a few falling petals in one corner, sparkles on cursor and count.
+   One family: M PLUS Rounded 1c. No character art: the user's own backgrounds carry the
+   art. Dark and light. */
+@layer skin {
+  [data-skin="anime"] {
+    --font-body: "M PLUS Rounded 1c", system-ui, sans-serif;
+    --display-weight: 800;
+    --display-tracking: 0;
+    --fs-body: 0.9375rem;
+    --fs-xl: 2rem;
+    --radius-s: 10px; --radius-m: 16px; --radius-l: 26px;
+    --gutter: 20px; --gap: 18px; --float: 16px;
+    --row-h: 46px;
+    --btn-h: 40px;
+    --btn-px: 18px;
+    --appbar-h: 60px;
+    --icon-stroke: 1.9;
+    --bg: light-dark(#fff3f8, #1d1829);
+    --surface: light-dark(#fffafd, #28213c);
+    --surface-2: light-dark(#fdeef5, #362c4f);
+    --surface-3: light-dark(#f9e0ec, #44395f);
+    --line: light-dark(#f0d2e0, #4a3f67);
+    --line-strong: light-dark(#d9a6bf, #6b5c91);
+    --text: light-dark(#3a1730, #fff5fa);
+    --text-muted: light-dark(#6b4560, #dccfe8);
+    --accent: light-dark(#ff8cbd, #ff9cc6);
+    --accent-hover: light-dark(#ff78b1, #ffb8d6);
+    --on-accent: #3a0d22;
+    --accent-ink: light-dark(#9d2258, #ff9cc6);
+    /* sky and peach as fills (pastel) and as text or icons (-ink, darker in light) */
+    --sky: light-dark(#8fd0ff, #9fd8ff);
+    --sky-ink: light-dark(#16598a, #9fd8ff);
+    --peach: light-dark(#ffc796, #ffd2a8);
+    --peach-ink: light-dark(#b15611, #ffd2a8);
+    --select: light-dark(rgb(255 140 189 / 0.22), rgb(255 156 198 / 0.2));
+    --cursor: light-dark(#16598a, #9fd8ff);
+    --focus: light-dark(#3a1730, #ffe08a);
+    --backdrop-color: light-dark(#fff0f6, #1d1829);
+    --shade: light-dark(rgb(150 60 110 / 0.4), #000);
+    --wash: light-dark(rgb(90 30 70 / 0.8), #fff);
+    --glass-tint: light-dark(rgb(255 250 253), rgb(40 33 60)); --glass-alpha: 0.64;
+    --glass-blur: 16px; --glass-sat: 1.3; --glass-k: 0.66;
+    --glass-line: light-dark(rgb(120 40 80 / 0.1), rgb(255 255 255 / 0.12));
+    --glass-shadow: 0 12px 40px light-dark(rgb(150 60 110 / 0.14), rgb(20 10 40 / 0.4));
+    --clear-line: light-dark(rgb(58 23 48 / 0.36), rgb(255 255 255 / 0.4));
+    --bar-bg: light-dark(rgb(253 238 245 / 0.94), rgb(48 39 72 / 0.94));
+    --bar-line: light-dark(rgb(58 23 48 / 0.08), rgb(255 255 255 / 0.1));
+    --petals: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 90'%3E%3Cg%3E%3Cpath transform='translate(70 4) rotate(30 12 12)' d='M12 21c-5.5-3.6-7.6-8.6-4.9-14.6.9-1.9 2.4-3.1 3.6-3.4L12 5.3l1.3-2.3c1.2.3 2.7 1.5 3.6 3.4 2.7 6 .6 11-4.9 14.6z'/%3E%3Cpath transform='translate(40 36) rotate(-35 9 9) scale(.75)' d='M12 21c-5.5-3.6-7.6-8.6-4.9-14.6.9-1.9 2.4-3.1 3.6-3.4L12 5.3l1.3-2.3c1.2.3 2.7 1.5 3.6 3.4 2.7 6 .6 11-4.9 14.6z'/%3E%3Cpath transform='translate(92 52) rotate(80 7 7) scale(.55)' d='M12 21c-5.5-3.6-7.6-8.6-4.9-14.6.9-1.9 2.4-3.1 3.6-3.4L12 5.3l1.3-2.3c1.2.3 2.7 1.5 3.6 3.4 2.7 6 .6 11-4.9 14.6z'/%3E%3Cpath transform='translate(8 62) rotate(150 6 6) scale(.45)' d='M12 21c-5.5-3.6-7.6-8.6-4.9-14.6.9-1.9 2.4-3.1 3.6-3.4L12 5.3l1.3-2.3c1.2.3 2.7 1.5 3.6 3.4 2.7 6 .6 11-4.9 14.6z'/%3E%3C/g%3E%3C/svg%3E");
+    --sparkle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5c.8 5.4 3.7 8.5 9.5 9.5-5.8 1-8.7 4.1-9.5 9.5-.8-5.4-3.7-8.5-9.5-9.5 5.8-1 8.7-4.1 9.5-9.5z'/%3E%3C/svg%3E");
+  }
+  [data-skin="anime"] body { font-weight: 500; }
+
+  [data-skin="anime"] .appbar { border-radius: var(--radius-pill); padding: 6px 8px 6px 16px; }
+  [data-skin="anime"] .brand { font-size: 1.25rem; font-weight: 800; }
+  [data-skin="anime"] .brand__mark { color: var(--accent-ink); width: 28px; height: 28px; }
+  [data-skin="anime"] .crumbs__link { padding: 6px 12px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--wash) 7%, transparent); }
+  [data-skin="anime"] .crumbs__link[aria-current="page"] { background: var(--row-select); color: var(--text); font-weight: 700; }
+  [data-skin="anime"] .crumbs__item + .crumbs__item::before {
+    content: ""; width: 10px; height: 10px; padding: 0; margin-inline: 6px; background: var(--peach-ink);
+    mask: var(--sparkle) center / contain no-repeat;
+  }
+  [data-skin="anime"] .account__avatar { background: linear-gradient(135deg, var(--accent), var(--peach)); color: var(--on-accent); }
+
+  [data-skin="anime"] .sidenav,
+  [data-skin="anime"] .browser,
+  [data-skin="anime"] .gate__card { border-radius: var(--radius-l); }
+  [data-skin="anime"] .sidenav { padding: 16px 12px; }
+  [data-skin="anime"] .sidenav__title { font-weight: 800; color: var(--accent-ink); font-size: var(--fs-body); }
+  [data-skin="anime"] .tree__children { display: none; }
+  [data-skin="anime"] .tree__link, [data-skin="anime"] .sidenav__link { border-radius: var(--radius-pill); min-height: 40px; padding-left: 12px; }
+  [data-skin="anime"] .tree__link .icon { color: var(--peach-ink); }
+  [data-skin="anime"] .tree__link[aria-current] { background: var(--row-select); }
+  [data-skin="anime"] .tree__link[aria-current] .icon { color: var(--accent-ink); }
+  [data-skin="anime"] .tree__tag { color: var(--sky-ink); }
+  [data-skin="anime"] .space { margin-top: 10px; padding: 12px; border-radius: var(--radius-m); background: color-mix(in srgb, var(--wash) 6%, transparent); }
+  [data-skin="anime"] .bar { height: 10px; }
+  [data-skin="anime"] .bar__fill { fill: var(--accent-ink); }
+
+  /* petals drift in the lower right corner, away from the title row tools */
+  [data-skin="anime"] .browser { position: relative; padding: 26px 26px 20px; }
+  [data-skin="anime"] .browser::after {
+    content: ""; position: absolute; bottom: calc(var(--btn-h) + 48px); right: 16px; width: 150px; height: 112px; pointer-events: none;
+    background: linear-gradient(200deg, var(--accent), var(--peach)); opacity: 0.5;
+    mask: var(--petals) center / contain no-repeat;
+  }
+  [data-skin="anime"] .browser__head { margin-bottom: 18px; }
+  [data-skin="anime"] .browser__heading { flex-direction: column; align-items: flex-start; gap: 4px; }
+  [data-skin="anime"] .browser__title { position: relative; padding-bottom: 12px; }
+  [data-skin="anime"] .browser__title::after {
+    content: ""; position: absolute; left: 0; bottom: 0; width: 56px; height: 6px; border-radius: 6px;
+    background: linear-gradient(90deg, var(--accent), var(--peach), var(--sky));
+  }
+
+  [data-skin="anime"] .btn { border-radius: var(--radius-pill); font-weight: 700; border-color: var(--line-strong); }
+  [data-skin="anime"] .btn--icon { border-color: transparent; }
+  [data-skin="anime"] .btn--primary {
+    background: linear-gradient(135deg, var(--accent), var(--peach)); border: 0; color: var(--on-accent);
+    box-shadow: 0 6px 18px rgb(255 156 198 / 0.35);
+  }
+  [data-skin="anime"] .btn--primary:hover { filter: brightness(1.06); }
+  [data-skin="anime"] .filter { border-radius: var(--radius-pill); min-height: 40px; padding-left: 14px; }
+  [data-skin="anime"] .seg { border-radius: var(--radius-pill); }
+  [data-skin="anime"] .seg__item { border-radius: var(--radius-pill); }
+  [data-skin="anime"] .seg__item[aria-current="true"] { background: var(--accent); color: var(--on-accent); }
+
+  [data-skin="anime"] .actionbar { border-radius: var(--radius-pill); margin-bottom: 12px; gap: 8px; }
+  [data-skin="anime"] .status { border-radius: var(--radius-pill); }
+  [data-skin="anime"] .status[data-state="idle"] { padding-left: 18px; }
+  [data-skin="anime"] .status__group--select { gap: 8px; }
+  [data-skin="anime"] .status[data-state="select"] { border-color: rgb(255 156 198 / 0.6); box-shadow: 0 0 0 4px rgb(255 156 198 / 0.1), 0 10px 30px light-dark(rgb(150 60 110 / 0.16), rgb(20 10 40 / 0.4)); }
+  [data-skin="anime"] .status__count { display: flex; align-items: center; gap: 6px; }
+  [data-skin="anime"] .status__count::before {
+    content: ""; width: 16px; height: 16px; background: var(--accent-ink); mask: var(--sparkle) center / contain no-repeat;
+  }
+  [data-skin="anime"] .status__count strong { color: var(--accent-ink); }
+  [data-skin="anime"] .status__actions .btn:hover { background: color-mix(in srgb, var(--wash) 8%, transparent); }
+  [data-skin="anime"] .menu { border-radius: var(--radius-l); padding: 8px; }
+  [data-skin="anime"] .menu__item { border-radius: var(--radius-m); }
+  [data-skin="anime"] .menu__item .icon { color: var(--peach-ink); }
+  [data-skin="anime"] .actionbar__paste .btn:first-child { background: color-mix(in srgb, var(--sky) 16%, transparent); border-color: color-mix(in srgb, var(--sky-ink) 50%, transparent); }
+  [data-skin="anime"] .actionbar__paste .btn:first-child .icon { color: var(--sky-ink); }
+
+  [data-skin="anime"] .files { border-collapse: separate; border-spacing: 0 4px; }
+  [data-skin="anime"] .files th { border: 0; color: var(--text-muted); font-weight: 700; }
+  [data-skin="anime"] .files td { border: 0; }
+  [data-skin="anime"] .files__row td:first-child { border-radius: var(--radius-pill) 0 0 var(--radius-pill); }
+  [data-skin="anime"] .files__row td:last-child { border-radius: 0 var(--radius-pill) var(--radius-pill) 0; }
+  [data-skin="anime"] .files__row:hover td { background: color-mix(in srgb, var(--wash) 6%, transparent); }
+  [data-skin="anime"] .files__row[data-state~="selected"] td { background: var(--row-select); }
+  [data-skin="anime"] .files__row[data-state~="cursor"] td { box-shadow: inset 0 2px 0 var(--cursor), inset 0 -2px 0 var(--cursor); }
+  [data-skin="anime"] .files__row[data-state~="cursor"] td:first-child { position: relative; box-shadow: inset 2px 0 0 var(--cursor), inset 0 2px 0 var(--cursor), inset 0 -2px 0 var(--cursor); }
+  [data-skin="anime"] .files__row[data-state~="cursor"] td:last-child { box-shadow: inset -2px 0 0 var(--cursor), inset 0 2px 0 var(--cursor), inset 0 -2px 0 var(--cursor); }
+  [data-skin="anime"] .files__row[data-state~="cursor"] td:first-child::before {
+    content: ""; position: absolute; left: -9px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%);
+    background: var(--cursor); mask: var(--sparkle) center / contain no-repeat;
+  }
+  [data-skin="anime"] .files__check input { accent-color: var(--accent-ink); }
+  [data-skin="anime"] .files__icon { width: 54px; }
+  [data-skin="anime"] .ficon { width: 36px; height: 36px; border-radius: 50%; background: color-mix(in srgb, currentColor 18%, color-mix(in srgb, var(--sunk) 25%, transparent)); }
+  [data-skin="anime"] .ficon .icon { width: 20px; height: 20px; }
+  [data-skin="anime"] .thumb { width: 36px; height: 36px; border-radius: 50%; background: color-mix(in srgb, var(--wash) 10%, transparent); object-fit: cover; }
+  [data-skin="anime"] .sharebadge { background: color-mix(in srgb, var(--sky) 18%, color-mix(in srgb, var(--sunk) 35%, transparent)); color: var(--sky-ink); }
+
+  [data-skin="anime"] .gate__card { position: relative; padding: 32px 26px 26px; overflow: hidden; }
+  [data-skin="anime"] .gate__card::before {
+    content: ""; position: absolute; top: 8px; right: 10px; width: 120px; height: 90px; pointer-events: none;
+    background: linear-gradient(200deg, var(--accent), var(--peach)); opacity: 0.5;
+    mask: var(--petals) center / contain no-repeat;
+  }
+  [data-skin="anime"] .gate__emblem { background: linear-gradient(135deg, var(--accent), var(--peach)); color: var(--on-accent); width: 52px; height: 52px; }
+  [data-skin="anime"] .gate__title { font-size: 1.625rem; }
+  [data-skin="anime"] .field__control { border-radius: var(--radius-pill); padding-left: 6px; }
+  [data-skin="anime"] .field__reveal { border-radius: 50%; }
+  [data-skin="anime"] .gate__submit { min-height: 52px; font-size: 1rem; }
+
+  @media (max-width: 719px) {
+    [data-skin="anime"] { --gutter: 12px; --row-h: 60px; --fs-xl: 1.625rem; --float: 8px; }
+    [data-skin="anime"] .appbar { border-radius: var(--radius-l); padding: 6px 6px 6px 14px; }
+    [data-skin="anime"] .browser { padding: 20px 10px calc(var(--tabbar-h) + var(--float) * 2); }
+    [data-skin="anime"] .browser::after { width: 100px; height: 75px; bottom: calc(var(--tabbar-h) + 90px); }
+    [data-skin="anime"] .browser__title { font-size: var(--fs-xl); }
+    [data-skin="anime"] :is(.actionbar, .status) { border-radius: var(--radius-l); }
+    [data-skin="anime"] .status__actions .btn { border-radius: var(--radius-m); }
+    [data-skin="anime"] .tabbar { border-radius: var(--radius-pill); }
+    [data-skin="anime"] .tabbar__item { border-radius: var(--radius-pill); }
+    [data-skin="anime"] .tabbar__item[aria-current="page"] { background: var(--row-select); color: var(--accent-ink); }
+  }
+}
+
+@layer glass {
+  [data-skin="anime"][data-glass="clear"] .crumbs__link[aria-current="page"] { color: var(--accent-ink); }
+  [data-skin="anime"][data-glass="clear"] .status[data-state="select"] { border-color: rgb(255 156 198 / 0.75); }
+}

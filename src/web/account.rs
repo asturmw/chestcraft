@@ -441,6 +441,7 @@ fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> Acco
 
 pub async fn page(
     State(st): State<Shared>,
+    Extension(client): Extension<ClientInfo>,
     Extension(principal): Extension<Principal>,
     Extension(current): Extension<Current>,
     headers: HeaderMap,
@@ -450,6 +451,17 @@ pub async fn page(
         return Redirect::to(LOGIN_FOR_ACCOUNT).into_response();
     };
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
+    let nav = super::nav::build(
+        &st,
+        ctx.lang,
+        &principal,
+        current.as_deref(),
+        client.origin,
+        super::views::Section::Account,
+        None,
+    )
+    .await;
+    let ctx = ctx.with_nav(nav);
     let q = Query::parse(uri.query());
     let mut v = account_view(&st, &ctx, &cu, q.has("saved"));
     let access = super::users::access_view(&st, &cu).await;

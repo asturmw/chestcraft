@@ -15,6 +15,7 @@ mod headers;
 pub mod jobs;
 mod limits;
 pub mod monitor;
+mod nav;
 mod ops;
 mod preview;
 mod public;
@@ -189,6 +190,7 @@ pub fn page_ctx<'a>(
         styles: Vec::new(),
         lang_switch: None,
         brand: true,
+        nav: None,
     }
 }
 

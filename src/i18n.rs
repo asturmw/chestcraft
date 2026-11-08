@@ -247,6 +247,21 @@ impl I18n {
     /// Date and time in the language's pattern, e.g. "05.11.2026, 18:30" or
     /// "5 Nov 2026, 18:30". Pattern tokens: {d} {d2} {m2} {mon} {y} {H} {M}.
     pub fn datetime(&self, lang: Lang, unix_secs: i64, tz: &jiff::tz::TimeZone) -> String {
+        self.format_time(lang, "format.datetime", unix_secs, tz)
+    }
+
+    /// The date alone: "05.11.2026" or "5 Nov 2026".
+    pub fn date(&self, lang: Lang, unix_secs: i64, tz: &jiff::tz::TimeZone) -> String {
+        self.format_time(lang, "format.date", unix_secs, tz)
+    }
+
+    fn format_time(
+        &self,
+        lang: Lang,
+        key: &str,
+        unix_secs: i64,
+        tz: &jiff::tz::TimeZone,
+    ) -> String {
         let Ok(ts) = jiff::Timestamp::from_second(unix_secs) else {
             return String::new();
         };
@@ -261,7 +276,7 @@ impl I18n {
             .map(String::as_str)
             .unwrap_or("");
         let mut out = String::new();
-        let pattern = self.t(lang, "format.datetime");
+        let pattern = self.t(lang, key);
         let mut rest = pattern;
         while let Some(start) = rest.find('{') {
             out.push_str(&rest[..start]);
@@ -325,7 +340,7 @@ mod tests {
         );
         for (k, v) in &en.strings {
             assert!(!v.trim().is_empty(), "empty string for {k}");
-            if k != "format.datetime" {
+            if k != "format.datetime" && k != "format.date" {
                 assert_eq!(
                     placeholders(v),
                     placeholders(&de.strings[k]),
@@ -366,6 +381,8 @@ mod tests {
             .as_second();
         assert_eq!(i.datetime(DE, ts, &tz), "05.11.2026, 18:30");
         assert_eq!(i.datetime(EN, ts, &tz), "5 Nov 2026, 18:30");
+        assert_eq!(i.date(DE, ts, &tz), "05.11.2026");
+        assert_eq!(i.date(EN, ts, &tz), "5 Nov 2026");
     }
 
     #[test]

@@ -26,7 +26,7 @@ use crate::config::Config;
 use crate::db::{Db, DbError, GuestSession, PublicWrite, Share, User};
 use crate::fs::path::RelPath;
 use crate::fs::volume::{Kind, Volumes};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::io;
 use std::net::IpAddr;
 
@@ -476,16 +476,38 @@ pub fn follow_move(
 }
 
 /// Names in `dir` of `volume` that have a share that isn't revoked or expired (for the
-/// badge in listings).
-pub fn shared_names(shares: &[Share], volume: &str, dir: &RelPath, now: i64) -> HashSet<String> {
-    shares
+/// badge in listings), with the time the last of their shares runs out (None: one never
+/// does).
+pub fn shared_names(
+    shares: &[Share],
+    volume: &str,
+    dir: &RelPath,
+    now: i64,
+) -> HashMap<String, Option<i64>> {
+    let mut out: HashMap<String, Option<i64>> = HashMap::new();
+    let live = shares
         .iter()
-        .filter(|s| s.volume == volume && s.revoked.is_none() && s.expires.is_none_or(|t| t > now))
-        .filter_map(|s| {
-            let p = RelPath::parse(&s.path).ok()?;
-            (p.parent()? == *dir).then(|| p.name().map(str::to_string))?
-        })
-        .collect()
+        .filter(|s| s.volume == volume && s.revoked.is_none() && s.expires.is_none_or(|t| t > now));
+    for s in live {
+        let Ok(p) = RelPath::parse(&s.path) else {
+            continue;
+        };
+        let (Some(parent), Some(name)) = (p.parent(), p.name()) else {
+            continue;
+        };
+        if parent != *dir {
+            continue;
+        }
+        out.entry(name.to_string())
+            .and_modify(|until| {
+                *until = match (*until, s.expires) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    _ => None,
+                }
+            })
+            .or_insert(s.expires);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------------------
@@ -855,9 +877,9 @@ mod tests {
 
         let all = t.db.shares().unwrap();
         let names = shared_names(&all, "Dokumente", &p(""), 2000);
-        assert_eq!(names, HashSet::from(["Angebot.pdf".to_string()]));
+        assert_eq!(names.keys().collect::<Vec<_>>(), ["Angebot.pdf"]);
         let names = shared_names(&all, "Dokumente", &p("Belege"), 2000);
-        assert_eq!(names, HashSet::from(["Rechnungen".to_string()]));
+        assert_eq!(names.keys().collect::<Vec<_>>(), ["Rechnungen"]);
         assert!(shared_names(&all, "Dokumente", &p(""), 1000 + 31 * 86_400).is_empty());
     }
 

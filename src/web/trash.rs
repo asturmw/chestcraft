@@ -103,6 +103,17 @@ pub async fn page(
         return Redirect::to(SIGN_IN).into_response();
     };
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
+    let nav = super::nav::build(
+        &st,
+        ctx.lang,
+        &principal,
+        current.as_deref(),
+        client.origin,
+        super::views::Section::Trash,
+        None,
+    )
+    .await;
+    let ctx = ctx.with_nav(nav);
     let items = {
         let st = st.clone();
         tokio::task::spawn_blocking(move || st.db.trash_items()).await
