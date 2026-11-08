@@ -2287,6 +2287,11 @@ async fn folder_share_round_trip() {
     );
     assert!(t.contains("class=\"langswitch\""), "{t}");
     assert!(!t.contains("data-js=\"upload\""), "view only: {t}");
+    // The download queue asks the share for free slots.
+    assert!(
+        t.contains(&format!(r#"data-slots="/s/{id}/.cc/dl-slots""#)),
+        "{t}"
+    );
     let r = e.get_h(&format!("/s/{id}/IMG_2041.jpg"), &c).await;
     assert_eq!(
         (r.status, r.body.as_slice()),
@@ -3069,6 +3074,7 @@ async fn folder_pages_use_the_app_shell_and_the_browser_markup() {
         r#"<a class="tree__link" href="/Medien/" aria-current="location">"#,
         r#"<a class="tree__link" href="/Medien/Urlaub%20Gardasee/" aria-current="page">"#,
         r#"<main class="browser" id="main" data-view="list""#,
+        r#"data-slots="/.cc/dl-slots" data-folder="Urlaub Gardasee""#,
         r#"<div class="actionbar" role="toolbar""#,
         r#"<table class="files" data-js="files">"#,
         // A folder's size column counts its items; hidden files don't count.
@@ -3835,7 +3841,14 @@ async fn download_slots_for_visitors() {
     );
     let s = e.session("jana", "familie").await;
     let r = e.get_h("/.cc/dl-slots", &[("cookie", &s.cookie)]).await;
-    assert_eq!(json(r), serde_json::json!({"max": null}));
+    assert_eq!(json(r), serde_json::json!({"max": null, "active": 0}));
+    // Accounts' downloads aren't limited but counted while their body streams.
+    let dl = e.get_h("/Medien/a.txt?dl", &[("cookie", &s.cookie)]).await;
+    assert_eq!(dl.status, StatusCode::OK);
+    let held2 = e.state.account_downloads.track(ip);
+    let r = e.get_h("/.cc/dl-slots", &[("cookie", &s.cookie)]).await;
+    assert_eq!(json(r), serde_json::json!({"max": null, "active": 1}));
+    drop(held2);
 
     // Shares: below the share, after the password; visitors always count.
     let admin = e.session("Admin", "admin").await;

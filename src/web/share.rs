@@ -10,7 +10,7 @@
 
 use super::api::{self, NewReq, Uploader};
 use super::auth::same_origin;
-use super::files::{self, Fail, Frame, anon_guard, enc, fail};
+use super::files::{self, Fail, Frame, download_guard, enc, fail};
 use super::guest::{self, Opened, ShareGuest, Unlock};
 use super::preview::{self, ViewerReq};
 use super::query::Query;
@@ -364,7 +364,7 @@ async fn content(
         if q.has("view") {
             return Redirect::to(base).into_response();
         }
-        let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
+        let Ok(guard) = download_guard(st, &Principal::Anonymous, client) else {
             return fail(&ctx, Fail::TooMany);
         };
         if !head_req && starts_download(headers) {
@@ -423,14 +423,14 @@ async fn content(
                 ("", Vec::new())
             };
             if op == "tree" {
-                let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
+                let Ok(guard) = download_guard(st, &Principal::Anonymous, client) else {
                     return fail(&ctx, Fail::TooMany);
                 };
                 return files::tree_response(vol, abs, only, false, head_req, guard)
                     .unwrap_or_else(|f| fail(&ctx, f));
             }
             if op == "zip" {
-                let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
+                let Ok(guard) = download_guard(st, &Principal::Anonymous, client) else {
                     return fail(&ctx, Fail::TooMany);
                 };
                 if !head_req {
@@ -504,7 +504,7 @@ async fn content(
                 };
                 return preview::viewer(&ctx, req).await;
             }
-            let Ok(guard) = anon_guard(st, &Principal::Anonymous, client) else {
+            let Ok(guard) = download_guard(st, &Principal::Anonymous, client) else {
                 return fail(&ctx, Fail::TooMany);
             };
             if !head_req && starts_download(headers) {

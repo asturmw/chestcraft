@@ -662,6 +662,8 @@ pub struct ListingView {
     pub sorted: (usize, bool),
     /// This folder's address (zip and tree go here).
     pub folder_href: String,
+    /// Free download slots of this visitor: `/.cc/dl-slots`, or the share's.
+    pub slots_href: String,
     /// Label and link of the admin's show/hide hidden files switch.
     pub hidden_toggle: Option<(String, String)>,
     pub showing_hidden: bool,
@@ -865,6 +867,7 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
         scripts: {
             let mut s = ctx.scripts.clone();
             s.push("browser.js");
+            s.push("download.js");
             s
         },
         ..ctx.clone()
@@ -890,7 +893,15 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             data-t-delete-name=(ctx.t("browser.delete_title_name"))
             data-t-dl-file=(ctx.t("browser.download")) data-t-dl-folder=(ctx.t("browser.dl_zip"))
             data-t-share=(ctx.t("browser.share")) data-t-delete=(ctx.t("browser.delete"))
-            data-decimal=(ctx.t("format.decimal")) {
+            data-decimal=(ctx.t("format.decimal"))
+            data-slots=(v.slots_href) data-folder=(v.title) data-hidden=[v.showing_hidden.then_some("1")]
+            data-t-each-one=(ctx.t("browser.dl_each_hint_one")) data-t-each-other=(ctx.t("browser.dl_each_hint_other"))
+            data-t-many=(ctx.t("browser.dl_many_title"))
+            data-t-queue-count=(ctx.t("browser.queue_count")) data-t-queue-started=(ctx.t("browser.queue_started"))
+            data-t-queue-saved=(ctx.t("browser.queue_saved")) data-t-queue-stop=(ctx.t("browser.queue_stop"))
+            data-t-queue-close=(ctx.t("browser.queue_close")) data-t-save-done=(ctx.t("browser.save_done"))
+            data-t-save-failed=(ctx.t("browser.save_failed")) data-t-save-denied=(ctx.t("browser.save_denied"))
+            data-t-list-failed=(ctx.t("browser.list_failed")) {
             div class="browser__pane" {
                 @if let Some(h) = &v.share {
                     (share_head(ctx, h))
@@ -1074,6 +1085,16 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                             button class="btn" type="button" data-js="dialog-cancel" { (ctx.t("common.cancel")) }
                             button class="btn btn--primary" type="submit" { (ctx.t("browser.create_folder")) }
                         }
+                    }
+                }
+            }
+            dialog class="dialog" data-js="dl-many-dialog" aria-labelledby="dl-many-title" {
+                form class="dialog__form" method="dialog" {
+                    h2 class="dialog__title" id="dl-many-title" data-js="dl-many-title" {}
+                    p class="dialog__text" { (ctx.t("browser.dl_many_text")) }
+                    div class="dialog__actions" {
+                        button class="btn" type="submit" value="cancel" { (ctx.t("common.cancel")) }
+                        button class="btn btn--primary" type="submit" value="go" autofocus { (ctx.t("browser.dl_many_go")) }
                     }
                 }
             }

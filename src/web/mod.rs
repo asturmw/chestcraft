@@ -61,6 +61,8 @@ pub struct AppState {
     pub db: Arc<Db>,
     pub backoff: Backoff,
     pub limiter: limits::DownloadLimiter,
+    /// Downloads of signed-in users per IP, counted but not limited.
+    pub account_downloads: limits::DownloadLimiter,
     pub uploads: Uploads,
     /// Passphrase word lists for share and public upload passwords.
     pub words: crate::shares::words::WordLists,
@@ -122,6 +124,7 @@ impl AppState {
             db,
             backoff: Backoff::default(),
             limiter: limits::DownloadLimiter::default(),
+            account_downloads: limits::DownloadLimiter::default(),
             #[cfg(test)]
             test_principal: std::sync::Mutex::new(None),
         }

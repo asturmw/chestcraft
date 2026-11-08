@@ -13,10 +13,9 @@ Project map, build/run, rules and common changes (for every agent):
 
 Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
 13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A, B and
-C done (slices 17–19). UI integration (step 7) in slices on `main`: slice 20 (D) done; next
-E (download menu: save to folder, separately, queue; requests 6, 10), then F (keyboard maps,
-clipboard + paste, rename/move/copy dialogs over `web/ops.rs`). Then NAS setup (step 4),
-staging (8).
+C done (slices 17–19). UI integration (step 7) in slices on `main`: slices 20 (D) and 21 (E)
+done; next F (keyboard maps, clipboard + paste, rename/move/copy dialogs over `web/ops.rs`).
+Then NAS setup (step 4), staging (8).
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -256,6 +255,18 @@ staging (8).
   `assets/provisional.css`. Referrer-Policy is now `same-origin`: with `no-referrer`
   browsers send `Origin: null` on form POSTs and every form failed the origin check.
   Checked in headless Firefox (WebDriver BiDi) at 1280 and phone width, dark and light.
+- Slice 21 done (UI slice E; design requests 6, 10): `assets/download.js` runs the download
+  menu's script-only ways in every listing (volumes, public volumes, share folders). "Save
+  to folder" (only where `showDirectoryPicker` exists): `?tree` / `op=tree`, folders
+  created, files fetched with `?dl` and piped into the picked folder (whole folder → a
+  subfolder named after it; selection → straight in), never overwrites (same size =
+  already there, else `name (2).ext`), summary saved / already there / renamed / failed.
+  "Separately": files `?dl`, folders `?zip` (whole folder: its top level from `?tree`),
+  more than 20 ask first (`dl-many-dialog`). Both at most 4 at a time; "separately" asks
+  `dl-slots` before each start. Accounts' downloads are now counted per IP
+  (`AppState.account_downloads`, no limit): `/.cc/dl-slots` signed in answers
+  `{"max":null,"active":n}`. Queue toast `.queue` (count, bar, stop/close). Checked in
+  headless Firefox (real downloads; save with a mocked picker, Firefox has none).
 - Open: A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). For the design session (not in its NOTES
   yet): tablet nav (the `appbar__menu` drawer; 720–1023 px has no nav besides crumbs and the
