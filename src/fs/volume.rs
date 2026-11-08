@@ -266,6 +266,79 @@ impl VolumeRoot {
         Ok(out)
     }
 
+    /// What [`Self::list`] would show of one directory entry, from the directory entry alone
+    /// where its type is known (no stat for plain files and folders): None when `list`
+    /// leaves it out, else whether it is a folder.
+    fn shown_kind(
+        &self,
+        dirfd: &OwnedFd,
+        rel: &RelPath,
+        ent: &rustix::fs::DirEntry,
+        include_hidden: bool,
+    ) -> Option<bool> {
+        let cname = ent.file_name();
+        let bytes = cname.to_bytes();
+        if bytes == b"." || bytes == b".." {
+            return None;
+        }
+        let name = std::str::from_utf8(bytes).ok()?;
+        if is_internal_name(name) || (!include_hidden && name.starts_with('.')) {
+            return None;
+        }
+        let ft = match ent.file_type() {
+            FileType::Unknown => FileType::from_raw_mode(
+                statat(dirfd, cname, AtFlags::SYMLINK_NOFOLLOW)
+                    .ok()?
+                    .st_mode as _,
+            ),
+            ft => ft,
+        };
+        match ft {
+            FileType::Directory => Some(true),
+            FileType::Symlink => {
+                let meta = self.stat(&rel.join(name).ok()?).ok()?;
+                Some(meta.kind == Kind::Dir)
+            }
+            _ => Some(false),
+        }
+    }
+
+    /// The names of the folders in a directory (no dot-names), sorted naturally, at most
+    /// `cap` of them: the sidebar's folder tree.
+    pub fn subdirs(&self, rel: &RelPath, cap: usize) -> io::Result<Vec<String>> {
+        let dirfd = self.open_dir(rel)?;
+        let mut dir = Dir::read_from(&dirfd)?;
+        let mut out = Vec::new();
+        while let Some(ent) = dir.read() {
+            let ent = ent?;
+            if self.shown_kind(&dirfd, rel, &ent, false) == Some(true) {
+                out.push(ent.file_name().to_string_lossy().into_owned());
+            }
+        }
+        out.sort_by(|a, b| crate::fs::sort::natural_cmp(a, b));
+        out.truncate(cap);
+        Ok(out)
+    }
+
+    /// How many entries [`Self::list`] would show in a directory, counting up to `cap`.
+    pub fn count(&self, rel: &RelPath, include_hidden: bool, cap: usize) -> io::Result<usize> {
+        let dirfd = self.open_dir(rel)?;
+        let mut dir = Dir::read_from(&dirfd)?;
+        let mut n = 0;
+        while let Some(ent) = dir.read() {
+            if self
+                .shown_kind(&dirfd, rel, &ent?, include_hidden)
+                .is_some()
+            {
+                n += 1;
+                if n >= cap {
+                    break;
+                }
+            }
+        }
+        Ok(n)
+    }
+
     pub fn space(&self) -> io::Result<Space> {
         let s = fstatvfs(&self.root)?;
         Ok(Space {
@@ -291,6 +364,45 @@ mod tests {
 
     fn p(s: &str) -> RelPath {
         RelPath::parse(s).unwrap()
+    }
+
+    /// Folder tree and item counts see what a listing sees: no internal names, dot-names
+    /// only on request, symlinks only while they stay inside.
+    #[test]
+    fn subdirs_and_counts_match_the_listing() {
+        let outside = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for d in [
+            "Werkstatt",
+            "Archiv 10",
+            "Archiv 9",
+            ".git",
+            ".chestcraft-trash",
+        ] {
+            std::fs::create_dir(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join("Notiz.txt"), "x").unwrap();
+        std::fs::write(root.join(".hidden"), "x").unwrap();
+        symlink("Werkstatt", root.join("Link")).unwrap();
+        symlink(outside.path(), root.join("Escape")).unwrap();
+        let v = volume(root);
+        assert_eq!(
+            v.subdirs(&RelPath::root(), 10).unwrap(),
+            ["Archiv 9", "Archiv 10", "Link", "Werkstatt"]
+        );
+        assert_eq!(
+            v.subdirs(&RelPath::root(), 2).unwrap(),
+            ["Archiv 9", "Archiv 10"]
+        );
+        let listed = v.list(&RelPath::root(), false).unwrap().len();
+        assert_eq!(v.count(&RelPath::root(), false, 100).unwrap(), listed);
+        assert_eq!(listed, 5);
+        assert_eq!(
+            v.count(&RelPath::root(), true, 100).unwrap(),
+            v.list(&RelPath::root(), true).unwrap().len()
+        );
+        assert_eq!(v.count(&RelPath::root(), false, 3).unwrap(), 3);
     }
 
     #[test]

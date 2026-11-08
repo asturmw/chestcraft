@@ -143,6 +143,7 @@ pub struct ListQuery {
 
 pub async fn list(
     State(st): State<Shared>,
+    Extension(client): Extension<ClientInfo>,
     Extension(principal): Extension<Principal>,
     Extension(current): Extension<Current>,
     headers: HeaderMap,
@@ -152,6 +153,17 @@ pub async fn list(
         return Redirect::to(SIGN_IN).into_response();
     };
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
+    let nav = super::nav::build(
+        &st,
+        ctx.lang,
+        &principal,
+        current.as_deref(),
+        client.origin,
+        super::views::Section::Shares,
+        None,
+    )
+    .await;
+    let ctx = ctx.with_nav(nav);
     let all = principal.is_admin() && q.all == "1";
     let loaded = {
         let (st, key) = (st.clone(), cu.key.clone());

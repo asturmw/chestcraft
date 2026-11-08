@@ -23,9 +23,11 @@ pub async fn security(req: Request, next: Next) -> Response {
     let h = res.headers_mut();
     h.entry(X_CONTENT_TYPE_OPTIONS)
         .or_insert(HeaderValue::from_static("nosniff"));
-    // Share links and folder names must not leak to other sites.
+    // Share links and folder names must not leak to other sites. Not `no-referrer`: with
+    // it, browsers send `Origin: null` on a form POST (Fetch spec, "append a request Origin
+    // header"), and the same-origin check refuses every form.
     h.entry(REFERRER_POLICY)
-        .or_insert(HeaderValue::from_static("no-referrer"));
+        .or_insert(HeaderValue::from_static("same-origin"));
     h.entry(HeaderName::from_static("x-robots-tag"))
         .or_insert(HeaderValue::from_static("noindex, nofollow"));
     // `private` keeps Cloudflare and other shared caches from storing anything: a cached

@@ -23,9 +23,10 @@ use super::auth::{audit, csrf_ok, forbidden, now};
 use super::guest::{self, PublicGuest};
 use super::headers::SANDBOX_CSP;
 use super::limits::DownloadGuard;
+use super::nav;
 use super::preview::{self, ViewerReq};
 use super::query::Query;
-use super::views::{self, Crumb, Ctx, ListingView, Row, ShareHead, UploadUi, VolumeCard};
+use super::views::{self, Crumb, Ctx, ListingView, Row, Section, ShareHead, UploadUi, VolumeCard};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, api, page_ctx, stream};
 use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, public_writer_perms, volume_perms};
 use crate::fs::filetype;
@@ -50,6 +51,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
 const PAGE_SIZE: usize = 2000;
+/// Folder item counts in listings stop here.
+const COUNT_CAP: usize = 10_000;
 
 /// RFC 5987 attr-chars, for `filename*=`.
 const ATTR_CHARS: &AsciiSet = &NON_ALPHANUMERIC
@@ -147,6 +150,17 @@ pub async fn landing(
     headers: HeaderMap,
 ) -> Response {
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
+    let nav = nav::build(
+        &st,
+        ctx.lang,
+        &principal,
+        current.as_deref(),
+        client.origin,
+        Section::Files,
+        None,
+    )
+    .await;
+    let ctx = ctx.with_nav(nav);
     let readable: Vec<Arc<VolumeRoot>> = st
         .volumes
         .iter()
@@ -334,7 +348,21 @@ pub async fn handle(
                 raw_path,
             )
             .await;
-            let mut ctx = ctx;
+            let nav = nav::build(
+                &st,
+                ctx.lang,
+                &principal,
+                current.as_deref(),
+                client.origin,
+                Section::Files,
+                Some(nav::Here {
+                    vol: vol.clone(),
+                    dir: rel.clone(),
+                    page: true,
+                }),
+            )
+            .await;
+            let mut ctx = ctx.with_nav(nav);
             if frame.upload.is_some() {
                 ctx.scripts.push("upload.js");
                 ctx.scripts.dedup();
@@ -370,7 +398,21 @@ pub async fn handle(
                 .await;
             }
             if q.has("view") {
-                let mut ctx = ctx;
+                let nav = nav::build(
+                    &st,
+                    ctx.lang,
+                    &principal,
+                    current.as_deref(),
+                    client.origin,
+                    Section::Files,
+                    Some(nav::Here {
+                        vol: vol.clone(),
+                        dir: rel.parent().unwrap_or_default(),
+                        page: false,
+                    }),
+                )
+                .await;
+                let mut ctx = ctx.with_nav(nav);
                 if principal.is_anonymous() {
                     ctx.theme = None;
                     ctx.lang_switch = Some(uri.to_string());
@@ -440,7 +482,6 @@ pub struct Frame {
     pub root: (String, String),
     pub sub: RelPath,
     pub title: String,
-    pub show_space: bool,
     /// The admin: hidden-files switch.
     pub admin: bool,
     pub form_csrf: Option<String>,
@@ -508,7 +549,6 @@ async fn volume_frame(
         root: (vol.name().to_string(), format!("/{}/", enc(vol.name()))),
         sub: rel.clone(),
         title: rel.name().unwrap_or(vol.name()).to_string(),
-        show_space: true,
         admin: principal.is_admin(),
         can_mkdir: may_write,
         can_delete: ctx.csrf.is_some() && perms.contains(Perms::DELETE),
@@ -556,20 +596,18 @@ pub async fn listing(
     let badges = ctx.signed_in;
     let listed = {
         let (vol, rel, db) = (vol.clone(), rel.clone(), st.db.clone());
-        tokio::task::spawn_blocking(
-            move || -> io::Result<(Vec<Entry>, Option<Space>, Vec<crate::db::Share>)> {
-                let entries = vol.list(&rel, show_hidden)?;
-                let shares = if badges {
-                    db.shares().unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                Ok((entries, vol.space().ok(), shares))
-            },
-        )
+        tokio::task::spawn_blocking(move || -> io::Result<(Vec<Entry>, Vec<crate::db::Share>)> {
+            let entries = vol.list(&rel, show_hidden)?;
+            let shares = if badges {
+                db.shares().unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            Ok((entries, shares))
+        })
         .await
     };
-    let (mut entries, space, shares) = match listed {
+    let (mut entries, shares) = match listed {
         Ok(Ok(x)) => x,
         Ok(Err(e)) if e.kind() == io::ErrorKind::NotFound => return fail(ctx, Fail::NotFound),
         _ => return fail(ctx, Fail::Internal),
@@ -603,18 +641,47 @@ pub async fn listing(
     });
 
     let total = entries.len();
+    let total_bytes: u64 = entries
+        .iter()
+        .filter(|e| e.meta.kind != Kind::Dir)
+        .map(|e| e.meta.size)
+        .sum();
+    let has_files = entries.iter().any(|e| e.meta.kind != Kind::Dir);
     let pages = total.div_ceil(PAGE_SIZE).max(1);
     let page = q
         .get("page")
         .and_then(|p| p.parse::<usize>().ok())
         .unwrap_or(1)
         .clamp(1, pages);
-    let slice = &entries[(page - 1) * PAGE_SIZE..(page * PAGE_SIZE).min(total)];
+    let slice = entries[(page - 1) * PAGE_SIZE..(page * PAGE_SIZE).min(total)].to_vec();
+    // How many items each folder on this page holds (the size column of folders).
+    let counts: Vec<Option<usize>> = {
+        let (vol, rel, names) = (
+            vol.clone(),
+            rel.clone(),
+            slice
+                .iter()
+                .map(|e| (e.meta.kind == Kind::Dir).then(|| e.name.clone()))
+                .collect::<Vec<_>>(),
+        );
+        tokio::task::spawn_blocking(move || {
+            names
+                .iter()
+                .map(|n| {
+                    let sub = rel.join(n.as_ref()?).ok()?;
+                    vol.count(&sub, show_hidden, COUNT_CAP).ok()
+                })
+                .collect()
+        })
+        .await
+        .unwrap_or_default()
+    };
     let grid = q.get("layout") == Some("grid");
     let keep = if show_hidden { "&hidden=1" } else { "" };
     let rows = slice
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
             let is_dir = e.meta.kind == Kind::Dir;
             let name = enc(&e.name);
             let share_href = frame.share_volume.as_ref().and_then(|v| {
@@ -625,6 +692,17 @@ pub async fn listing(
                     enc(path.as_str())
                 ))
             });
+            let size = if is_dir {
+                counts
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map(|n| items_label(ctx, n))
+                    .unwrap_or_default()
+            } else {
+                ctx.size(e.meta.size)
+            };
+            let date = ctx.date(e.meta.mtime);
             Row {
                 name: e.name.clone(),
                 href: if is_dir {
@@ -641,13 +719,19 @@ pub async fn listing(
                     .then(|| format!("{name}{}", preview::thumb_query(&e.meta, Size::Grid))),
                 download_href: (!is_dir).then(|| format!("{name}?dl")),
                 is_dir,
-                size: if is_dir {
-                    String::new()
+                bytes: if is_dir { 0 } else { e.meta.size },
+                meta: if size.is_empty() {
+                    date
                 } else {
-                    ctx.size(e.meta.size)
+                    ctx.tf("browser.meta", &[("size", &size), ("date", &date)])
                 },
+                size,
                 modified: ctx.datetime(e.meta.mtime),
-                shared: shared.contains(&e.name),
+                modified_iso: ctx.iso_local(e.meta.mtime),
+                shared: shared.get(&e.name).map(|until| match until {
+                    Some(t) => ctx.tf("browser.shared_until", &[("date", &ctx.date(*t))]),
+                    None => ctx.t("browser.shared_forever").to_string(),
+                }),
                 share_href,
             }
         })
@@ -685,20 +769,35 @@ pub async fn listing(
     let sort_link = |s: SortBy| link(1, s, s == sort && !desc, show_hidden);
 
     let crumbs = crumbs(&frame.root, &frame.sub);
-
-    let share_here = frame
-        .share_volume
-        .as_ref()
-        .map(|v| format!("/.cc/shares/new?vol={}&path={}", enc(v), enc(rel.as_str())));
+    let items = items_label(ctx, total);
+    let summary = if has_files {
+        ctx.tf(
+            "browser.summary",
+            &[("items", &items), ("size", &ctx.size(total_bytes))],
+        )
+    } else {
+        items
+    };
+    let (sort_col, column_key) = match sort {
+        SortBy::Name => (0, "browser.sorted_name"),
+        SortBy::Size => (1, "browser.sorted_size"),
+        SortBy::Modified => (2, "browser.sorted_modified"),
+    };
+    let caption = ctx.tf(
+        if desc {
+            "browser.caption_desc"
+        } else {
+            "browser.caption"
+        },
+        &[("name", &frame.title), ("column", ctx.t(column_key))],
+    );
     let view = ListingView {
         title: frame.title,
         crumbs,
-        free: space
-            .filter(|_| frame.show_space)
-            .map(|s| ctx.tf("browser.free_space", &[("free", &ctx.size(s.avail))])),
+        summary,
+        caption,
         read_only: !perms.intersects(CHANGES),
         rows,
-        total,
         page,
         pages,
         prev_href: (page > 1).then(|| link(page - 1, sort, desc, show_hidden)),
@@ -708,11 +807,8 @@ pub async fn listing(
             sort_link(SortBy::Size),
             sort_link(SortBy::Modified),
         ],
-        zip_href: if show_hidden {
-            format!("{raw_path}?zip&hidden=1")
-        } else {
-            format!("{raw_path}?zip")
-        },
+        sorted: (sort_col, desc),
+        folder_href: raw_path.to_string(),
         post_href: raw_path.to_string(),
         form_csrf: frame.form_csrf,
         can_write: frame.can_mkdir,
@@ -734,7 +830,11 @@ pub async fn listing(
         }),
         showing_hidden: show_hidden,
         share: frame.share,
-        share_here,
+        share_base: frame
+            .share_volume
+            .as_ref()
+            .map(|v| format!("/.cc/shares/new?vol={}&path=", enc(v))),
+        dir: rel.as_str().to_string(),
         share_blocked: frame.share_blocked,
         public_upload_href: frame.public_upload_href,
         layout: if grid { "grid" } else { "list" },
@@ -744,6 +844,18 @@ pub async fn listing(
         ],
     };
     views::listing(ctx, &view).into_response()
+}
+
+/// "6 items"; a count that reached [`COUNT_CAP`] reads "10,000+ items".
+fn items_label(ctx: &Ctx, n: usize) -> String {
+    if n >= COUNT_CAP {
+        ctx.tf(
+            "browser.items_many",
+            &[("count", &ctx.number(COUNT_CAP as u64))],
+        )
+    } else {
+        ctx.tn("browser.items", n as u64)
+    }
 }
 
 enum RangeReq {

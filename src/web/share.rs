@@ -452,7 +452,6 @@ async fn content(
                 root: (share_name.clone(), format!("{base}/")),
                 sub: sub.clone(),
                 title: sub.name().unwrap_or(&share_name).to_string(),
-                show_space: false,
                 admin: false,
                 form_csrf: None,
                 can_mkdir: false,

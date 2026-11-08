@@ -38,7 +38,8 @@
   let clashForAll = null;
   let dialogChain = Promise.resolve();
 
-  root.hidden = false;
+  // On folder pages the action bar's Upload button opens the file picker.
+  if (ds.pick !== 'bar') root.hidden = false;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const store = {
@@ -380,6 +381,8 @@
 
   const files = root.querySelector('[data-js="upload-files"]');
   const folder = root.querySelector('[data-js="upload-folder"]');
+  const pick = document.querySelector('[data-js="upload-pick"]');
+  if (pick) pick.addEventListener('click', () => files.click());
   files.addEventListener('change', () => {
     enqueue([...files.files].map((f) => ({ file: f, name: f.name })));
     files.value = '';

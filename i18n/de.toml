@@ -8,6 +8,7 @@ name = "Deutsch"
 decimal = ","
 group = "."
 datetime = "{d2}.{m2}.{y}, {H}:{M}"
+date = "{d2}.{m2}.{y}"
 months = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."]
 
 [common]
@@ -21,6 +22,25 @@ trash = "Papierkorb"
 dashboard = "Dashboard"
 users = "Konten"
 account = "Konto"
+cancel = "Abbrechen"
+show_password = "Passwort anzeigen"
+
+# App-Rahmen: Seitenleiste, Tab-Leiste (Handy), Kontomenü.
+[nav]
+volumes = "Ablagen"
+sections = "Bereiche"
+shares = "Meine Freigaben"
+# Beschriftung in der Tab-Leiste (kurz).
+shares_tab = "Freigaben"
+trash = "Papierkorb"
+account = "Konto"
+account_menu = "Kontomenü"
+admin = "Verwaltung"
+# Markierungen neben einer Ablage im Ordnerbaum.
+tag_public = "öffentlich"
+tag_home = "nur zu Hause"
+# {percent} ist eine ganze Zahl.
+space_used = "{percent} % belegt"
 
 [landing]
 title = "Deine Ordner"
@@ -71,6 +91,50 @@ layout = "Ansicht"
 layout_list = "Liste"
 layout_grid = "Kacheln"
 
+# „14 Einträge, 296,7 MB“: {items} ist items_one/items_other, {size} die Größe der Dateien.
+summary = "{items}, {size}"
+# Anzahl eines Ordners, die die Grenze erreicht hat.
+items_many = "{count}+ Einträge"
+# Zeile unter dem Namen auf dem Handy: „312 kB, 05.11.2026“.
+meta = "{size}, {date}"
+# Screenreader: Beschriftung der Tabelle. {column} ist eins der sorted_*-Wörter.
+caption = "Inhalt von {name}, sortiert nach {column}"
+caption_desc = "Inhalt von {name}, absteigend sortiert nach {column}"
+sorted_name = "Name"
+sorted_size = "Größe"
+sorted_modified = "Änderungsdatum"
+select_all = "Alle auswählen"
+col_actions = "Aktionen"
+actions_for = "Aktionen für {name}"
+shared_until = "Aktive Freigabe, läuft am {date} ab"
+shared_forever = "Aktive Freigabe ohne Ablauf"
+filter = "Diesen Ordner filtern"
+filter_placeholder = "Filtern"
+folder_actions = "Ordneraktionen"
+upload = "Hochladen"
+folder_name_label = "Name"
+shortcuts = "Tastenkürzel"
+selection = "Auswahl"
+# Nach der Zahl der ausgewählten Einträge: „2 ausgewählt“.
+selected = "ausgewählt"
+clear_selection = "Auswahl aufheben"
+delete = "Löschen"
+# Bestätigung; {count} und {name} füllt die Seite aus.
+delete_title_one = "{count} Eintrag in den Papierkorb verschieben?"
+delete_title_other = "{count} Einträge in den Papierkorb verschieben?"
+delete_title_name = "„{name}“ in den Papierkorb verschieben?"
+# Das Download-Menü (Ordner oder Auswahl).
+dl_toggle = "Herunterladen"
+# Schmale Bildschirme.
+dl_toggle_short = "Laden"
+dl_folder = "Ordner herunterladen"
+dl_selection = "Auswahl herunterladen"
+dl_save = "In Ordner speichern …"
+dl_save_hint = "Unterordner bleiben erhalten"
+dl_each = "Einzeln"
+dl_each_hint_folder = "Jede Datei für sich, Unterordner als Zip"
+dl_zip = "Als eine Zip-Datei"
+queue_stop = "Restliche Downloads abbrechen"
 [error]
 forbidden_title = "Anfrage abgelehnt"
 forbidden_body = "chestcraft hat die Anfrage abgelehnt, weil sie nicht von dieser Seite kam. Lade die Seite neu und versuch es noch einmal."

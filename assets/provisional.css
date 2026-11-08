@@ -1,0 +1,77 @@
+/* chestcraft — provisional styles, not from the design session. They keep the screens the
+   design hasn't delivered yet readable over every backdrop (account, trash, shares, admin,
+   viewer, dialogs, upload tray) and fill small gaps in the shipped components. Each rule
+   goes when the design covers its screen; nothing here is part of the UI contract.
+   Unlayered on purpose: it wins over app.css, so every rule is scoped to provisional
+   blocks. */
+
+/* A page without a sidebar: the main panel takes the whole row. */
+.layout:not(:has(> .sidenav)) { grid-template-columns: minmax(0, 1fr); }
+
+/* Links among the menu items (account menu, row menu). */
+a.menu__item { text-decoration: none; }
+.account__menu form { display: contents; }
+.dl__form { display: contents; }
+
+/* Panels of undesigned screens. */
+.panel {
+  min-width: 0; padding: 16px 20px 20px; border-radius: var(--radius-l);
+  background: var(--panel-bg); border: 1px solid var(--panel-line); box-shadow: var(--panel-shadow);
+  -webkit-backdrop-filter: var(--panel-filter); backdrop-filter: var(--panel-filter);
+}
+[data-glass="clear"] .panel { background: transparent; border-color: var(--clear-line); box-shadow: none; }
+.panel h1 {
+  font-family: var(--font-display); font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking); font-size: var(--fs-xl); line-height: 1.15; margin-bottom: 12px;
+}
+.panel h2 { font-size: var(--fs-lg); margin: 24px 0 8px; }
+.panel h3 { font-size: var(--fs-md); margin: 16px 0 6px; }
+.panel p, .panel ul, .panel ol, .panel dl, .panel form { margin-block: 8px; }
+.panel ul { padding-left: 18px; list-style: disc; }
+.panel table { width: 100%; border-collapse: collapse; margin-block: 8px; }
+.panel th, .panel td { padding: 6px 8px; border-bottom: 1px solid var(--panel-line); text-align: left; vertical-align: top; }
+.panel th { font-size: var(--fs-xs); color: var(--text-muted); font-weight: 600; }
+.panel label { display: block; margin-block: 6px; }
+.panel .field { display: grid; gap: 4px; margin-block: 10px; }
+.panel :is(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"]), select, textarea) {
+  min-height: 36px; padding: 6px 10px; border-radius: var(--radius-s);
+  border: 1px solid var(--line-strong); background: var(--field-bg); color: var(--text); font: inherit;
+}
+.panel textarea { width: 100%; min-height: 80px; }
+.panel button:not(.btn, .menu__item) {
+  min-height: 36px; padding: 0 14px; border-radius: var(--radius-m); cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 600;
+}
+.panel button:not(.btn, .menu__item):hover { background: var(--surface-3); }
+.panel a { color: var(--accent-ink); }
+.panel :is(.breadcrumb__list) { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; padding: 0; }
+.panel .breadcrumb__item + .breadcrumb__item::before { content: "/"; padding-right: 4px; color: var(--text-muted); }
+.panel :is(.viewer__image, .viewer__video) { max-width: 100%; max-height: 75vh; }
+.panel .viewer__pdf { width: 100%; height: 75vh; border: 0; }
+.panel .viewer__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Banners and small notes inside designed screens. */
+.banner { margin-block: 0 12px; padding: 8px 12px; border-radius: var(--radius-m); background: var(--surface-2); color: var(--text); }
+.field__hint { font-size: var(--fs-sm); color: var(--text-muted); }
+.pager { display: flex; align-items: center; justify-content: center; gap: 16px; padding-top: 12px; font-size: var(--fs-sm); }
+.pager a { color: var(--accent-ink); }
+.browser__empty { padding: 24px 8px; color: var(--text-muted); }
+.share-head { margin-bottom: 12px; color: var(--text-muted); font-size: var(--fs-sm); }
+.share-head__name { font-size: var(--fs-md); color: var(--text); }
+
+/* Upload tray (inside the browser pane). */
+.upload-tray { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius-m); background: var(--bar-bg); border: 1px solid var(--bar-line); font-size: var(--fs-sm); }
+.upload-tray__title { font-size: var(--fs-sm); }
+.upload-tray__list { max-height: 30vh; overflow: auto; }
+
+/* Dialogs (new folder, delete, name clash). */
+.dialog, .name-clash {
+  width: min(440px, calc(100vw - 32px)); padding: 20px; border-radius: var(--radius-l);
+  border: 1px solid var(--bar-line); background: var(--surface); color: var(--text); box-shadow: var(--pop-shadow);
+}
+:is(.dialog, .name-clash)::backdrop { background: color-mix(in srgb, var(--shade) 55%, transparent); }
+.dialog__form, .name-clash__form { display: grid; gap: 14px; }
+.dialog__title, .name-clash__title { font-size: var(--fs-md); }
+.dialog__text { color: var(--text-muted); font-size: var(--fs-sm); }
+.dialog__actions, .name-clash__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.name-clash__actions button { min-height: 36px; padding: 0 14px; border-radius: var(--radius-m); border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }

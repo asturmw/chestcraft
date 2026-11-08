@@ -1,1 +1,600 @@
-/* Placeholder. The design session delivers app.css and skins/ (design/), integrated in plan step 7. */
+/* chestcraft — base components. Skins restyle these in the skin layer; markup is shared.
+   Breakpoints: phone < 720 px, tablet 720–1023 px, desktop >= 1024 px.
+   Everything floats over the backdrop. Panels (app bar, sidenav, browser, gate card) take
+   their look from --panel-* (frosted or clear, see tokens.css); controls (buttons, bars,
+   fields, menus, tab bar) have their own fill when frosted. Clear removes every fill
+   except the state marks (selected rows, cursor, current item): see the glass layer. */
+@layer app {
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: var(--fs-body);
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+    text-shadow: var(--ink-shadow);
+  }
+  h1, h2, h3, p { margin: 0; }
+  ul, ol { margin: 0; padding: 0; list-style: none; }
+  a { color: inherit; }
+  button, input { font: inherit; color: inherit; }
+  img, svg { display: block; }
+  [hidden] { display: none !important; }
+  kbd {
+    font: inherit; font-size: var(--fs-xs); line-height: 1;
+    padding: 3px 5px; border-radius: var(--radius-s);
+    border: 1px solid var(--line-strong); color: var(--text-muted);
+  }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .vh {
+    position: absolute !important; width: 1px; height: 1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+  .skip {
+    position: absolute; left: 8px; top: -100px; z-index: 100;
+    background: var(--surface); padding: 8px 12px; border-radius: var(--radius-m);
+  }
+  .skip:focus { top: 8px; }
+
+  .icon {
+    width: 20px; height: 20px; flex: none;
+    fill: none; stroke: currentColor;
+    stroke-width: var(--icon-stroke);
+    stroke-linecap: var(--icon-cap);
+    stroke-linejoin: var(--icon-join);
+    filter: var(--icon-shadow);
+  }
+
+  /* ---------- backdrop ---------- */
+  .backdrop {
+    position: fixed; inset: 0; z-index: 0; overflow: hidden;
+    background: var(--backdrop-color);
+  }
+  .backdrop__picture { position: absolute; inset: 0; display: none; }
+  .backdrop[data-state="image"] .backdrop__picture { display: block; }
+  .backdrop__img { width: 100%; height: 100%; object-fit: cover; }
+  .backdrop::after {
+    content: ""; position: absolute; inset: 0;
+    background: var(--dim-color); opacity: 0;
+  }
+  .backdrop[data-dim="1"]::after { opacity: 0.2; }
+  .backdrop[data-dim="2"]::after { opacity: 0.35; }
+  .backdrop[data-dim="3"]::after { opacity: 0.5; }
+  .backdrop[data-dim="4"]::after { opacity: 0.65; }
+  .backdrop[data-blur="1"] .backdrop__img { filter: blur(4px); transform: scale(1.03); }
+  .backdrop[data-blur="2"] .backdrop__img { filter: blur(10px); transform: scale(1.06); }
+  .backdrop[data-blur="3"] .backdrop__img { filter: blur(20px); transform: scale(1.1); }
+  .backdrop[data-blur="4"] .backdrop__img { filter: blur(40px); transform: scale(1.2); }
+
+  /* ---------- panels and filled controls ---------- */
+  .appbar, .sidenav, .browser, .gate__card {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-line);
+    box-shadow: var(--panel-shadow);
+    -webkit-backdrop-filter: var(--panel-filter); backdrop-filter: var(--panel-filter);
+  }
+  /* The browser panel draws its glass and line on a ::before layer, not on itself: an element
+     with a backdrop-filter is a backdrop root, and the bars inside it (status bar, phone
+     action bar) could then not blur the rows that scroll under them. */
+  .browser {
+    position: relative; isolation: isolate;
+    background: none; border-color: transparent; -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  .browser::before {
+    content: ""; position: absolute; inset: -1px; z-index: -1; border-radius: inherit; pointer-events: none;
+    background: var(--panel-bg); border: 1px solid var(--panel-line);
+    -webkit-backdrop-filter: var(--panel-filter); backdrop-filter: var(--panel-filter);
+  }
+  /* clear glass puts a shadow under all ink; only filled marks go without */
+  .btn--primary, .sharebadge, .account__avatar, .gate__emblem, .seg__item[aria-current="true"] { text-shadow: none; }
+  :is(.btn--primary, .gate__emblem, .seg__item[aria-current="true"]) .icon { filter: none; }
+
+  /* ---------- shell and app bar ---------- */
+  .shell {
+    position: relative; z-index: 1;
+    min-height: 100dvh;
+    display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr);
+  }
+  .appbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    min-height: var(--appbar-h);
+    margin: var(--float) var(--float) 0;
+    padding: 6px var(--gutter);
+    border-radius: var(--radius-l);
+  }
+  .appbar .appbar__menu { display: none; }
+  .brand {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-family: var(--font-display);
+    font-weight: var(--display-weight); font-size: var(--fs-md);
+    letter-spacing: var(--display-tracking);
+  }
+  .brand__mark { width: 24px; height: 24px; color: var(--accent-ink); }
+  .crumbs { min-width: 0; flex: 1 1 auto; }
+  .crumbs__list { display: flex; align-items: center; min-width: 0; }
+  .crumbs__item { display: flex; align-items: center; min-width: 0; color: var(--text-muted); }
+  .crumbs__item + .crumbs__item::before {
+    content: "/"; padding-inline: 8px; color: var(--line-strong);
+  }
+  .crumbs__link {
+    text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 4px 2px; border-radius: var(--radius-s);
+  }
+  .crumbs__link:hover { color: var(--text); text-decoration: underline; }
+  .crumbs__link[aria-current="page"] { color: var(--text); font-weight: 600; }
+  .appbar__tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .appbar__link {
+    display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px;
+    border-radius: var(--radius-m); text-decoration: none; color: var(--text-muted);
+  }
+  .appbar__link:hover { color: var(--text); background: var(--surface-2); }
+  .account {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 36px;
+    padding: 0 10px 0 4px; border: 0; background: none; border-radius: var(--radius-pill); cursor: pointer;
+  }
+  .account:hover { background: var(--surface-2); }
+  .account__avatar {
+    display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+    background: var(--surface-3); font-weight: 700; font-size: var(--fs-sm);
+  }
+
+  /* ---------- layout ---------- */
+  .layout {
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--float);
+    padding: var(--float); align-items: start;
+  }
+  .sidenav { display: none; }
+
+  /* ---------- sidenav ---------- */
+  .sidenav {
+    border-radius: var(--radius-l);
+    padding: 12px; position: sticky; top: var(--float);
+  }
+  .sidenav__title {
+    font-size: var(--fs-sm); font-weight: 600; color: var(--text-muted);
+    padding: 4px 8px 8px;
+  }
+  .tree__link, .sidenav__link {
+    display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px;
+    border-radius: var(--radius-m); text-decoration: none; color: var(--text);
+  }
+  .tree__link:hover, .sidenav__link:hover { background: var(--surface-2); }
+  .tree__link .icon, .sidenav__link .icon { width: 18px; height: 18px; color: var(--text-muted); }
+  .tree__link[aria-current] { font-weight: 600; }
+  .tree__link[aria-current="page"] { background: var(--row-select); }
+  .tree__children { padding-left: 18px; }
+  .tree__tag { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); }
+  .sidenav__count { margin-left: auto; font-size: var(--fs-sm); color: var(--text-muted); }
+  .sidenav__links { border-top: 1px solid var(--panel-line); margin-top: 12px; padding-top: 8px; }
+
+  .space { padding: 12px 8px 4px; }
+  .space__label { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-sm); margin-bottom: 6px; }
+  .space__vol { font-weight: 600; }
+  .space__free { color: var(--text-muted); }
+  .bar { width: 100%; height: 6px; border-radius: var(--radius-pill); overflow: hidden; }
+  .bar__track { fill: var(--surface-3); }
+  .bar__fill { fill: var(--accent-ink); }
+
+  /* ---------- browser ---------- */
+  .browser {
+    min-width: 0;
+    border-radius: var(--radius-l);
+    padding: 16px;
+  }
+  .browser__head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin-bottom: 12px; }
+  .browser__heading { flex: 1 1 240px; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  .browser__title {
+    font-family: var(--font-display); font-weight: var(--display-weight);
+    letter-spacing: var(--display-tracking);
+    font-size: var(--fs-xl); line-height: 1.15; overflow-wrap: anywhere;
+  }
+  .browser__summary { color: var(--text-muted); font-size: var(--fs-sm); }
+  .browser__tools { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: 0 1 360px; min-width: 0; }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: var(--btn-h); padding: 0 var(--btn-px);
+    border: 1px solid var(--line-strong); border-radius: var(--radius-m);
+    background: var(--surface-2); color: var(--text);
+    font-weight: 600; font-size: var(--fs-sm); text-decoration: none; cursor: pointer; white-space: nowrap;
+    transition: background-color 120ms var(--ease), border-color 120ms var(--ease);
+  }
+  .btn:hover { background: var(--surface-3); }
+  .btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn--quiet { background: none; border-color: transparent; color: var(--text-muted); }
+  .btn--quiet:hover { color: var(--text); background: var(--surface-2); }
+  .btn--danger { color: var(--danger); }
+  .btn--icon { padding: 0; width: var(--btn-h); border-color: transparent; background: none; color: var(--text-muted); }
+  .btn--icon:hover { color: var(--text); background: var(--surface-2); }
+  .btn--block { width: 100%; }
+
+  /* ---------- filter and view toggle (title row) ---------- */
+  .filter {
+    display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0;
+    min-height: 36px; padding: 0 6px 0 10px; border-radius: var(--radius-m);
+    background: var(--field-bg); border: 1px solid var(--line-strong); color: var(--text-muted);
+  }
+  .filter:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .filter .icon { width: 16px; height: 16px; }
+  .filter__input { flex: 1; width: 0; min-width: 0; border: 0; background: none; outline: none; padding: 6px 0; color: var(--text); }
+  .filter__input::placeholder { color: var(--text-muted); }
+  .seg { display: inline-flex; flex: none; padding: 2px; gap: 2px; border-radius: var(--radius-m); background: var(--field-bg); border: 1px solid var(--line-strong); }
+  .seg__item { width: 32px; min-height: 30px; }
+  .seg__item[aria-current="true"] { background: var(--surface-3); color: var(--text); }
+
+  /* ---------- action bar: folder actions (upload, new folder, paste, download) ---------- */
+  .actionbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: calc(var(--btn-h) + 12px);
+    margin-bottom: 10px; padding: 5px;
+    background: var(--bar-bg); border: 1px solid var(--bar-line); border-radius: var(--radius-l);
+  }
+  .actionbar__paste { display: inline-flex; align-items: center; gap: 2px; }
+  .actionbar__paste strong { font-weight: 800; }
+  .actionbar__download { margin-left: auto; }
+  .browser__download { display: none; }
+
+  /* ---------- download menu: one button, three ways (folder or selection) ---------- */
+  .dl { position: relative; display: inline-flex; }
+  .dl__caret { width: 14px; height: 14px; margin-left: -2px; opacity: 0.8; }
+  .dl:has(.menu:popover-open) .dl__caret { transform: rotate(180deg); }
+  /* Menus are popovers: they open in the top layer, so no panel clips them (gaming cuts its
+     corners with clip-path) and their backdrop blur sees the page, not just the bar they
+     belong to. Script places them next to their button (left/top or bottom). */
+  .menu {
+    position: fixed; inset: auto; margin: 0; overflow: visible;
+    min-width: 270px; padding: 6px; color: var(--text);
+    background: var(--menu-bg); border: 1px solid var(--bar-line); border-radius: var(--radius-m);
+    box-shadow: var(--pop-shadow);
+  }
+  .menu:popover-open { display: grid; gap: 2px; }
+  .menu__item {
+    display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px;
+    border: 0; border-radius: var(--radius-s); background: none; color: var(--text);
+    text-align: left; cursor: pointer;
+  }
+  .menu__item:hover, .menu__item:focus-visible { background: var(--surface-3); }
+  .menu__item .icon { margin-top: 1px; color: var(--text-muted); }
+  .menu__text { display: grid; gap: 1px; min-width: 0; }
+  .menu__label { font-weight: 600; font-size: var(--fs-sm); }
+  .menu__hint { font-size: var(--fs-xs); color: var(--text-muted); }
+
+  /* ---------- file table ---------- */
+  .files { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .files th { text-align: left; font-weight: 600; font-size: var(--fs-xs); color: var(--text-muted); padding: 6px 8px; border-bottom: 1px solid var(--panel-line); }
+  .files td { padding: 0 8px; height: var(--row-h); border-bottom: 1px solid var(--panel-line); vertical-align: middle; }
+  .files__check { width: 40px; }
+  .files__check input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent-ink); display: block; }
+  .files__icon { width: 48px; }
+  .files__size { width: 110px; text-align: right; color: var(--text-muted); white-space: nowrap; }
+  th.files__size { text-align: right; }
+  .files__date { width: 160px; color: var(--text-muted); white-space: nowrap; }
+  .files__menu { width: 48px; }
+  .files__name { min-width: 0; }
+  .files__link {
+    text-decoration: none; font-weight: 500;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .files__link:hover { text-decoration: underline; }
+  .files__row[data-type="folder"] .files__link { font-weight: 600; }
+  .files__meta { display: none; font-size: var(--fs-xs); color: var(--text-muted); }
+  .files__sort { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+  .files__sort .icon { width: 14px; height: 14px; }
+  .files__row:hover td { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+  .files__row[data-state~="selected"] td { background: var(--row-select); }
+  .files__row[data-state~="cursor"] td { box-shadow: inset 0 1px 0 var(--cursor), inset 0 -1px 0 var(--cursor); }
+  .files__row[data-state~="cursor"] td:first-child { box-shadow: inset 3px 0 0 var(--cursor), inset 0 1px 0 var(--cursor), inset 0 -1px 0 var(--cursor); }
+  .files__row[data-state~="cursor"] td:last-child { box-shadow: inset -1px 0 0 var(--cursor), inset 0 1px 0 var(--cursor), inset 0 -1px 0 var(--cursor); }
+
+  .ficon {
+    display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--radius-s);
+    color: var(--t-file);
+  }
+  .ficon .icon { width: 22px; height: 22px; }
+  .ficon[data-type="folder"] { color: var(--t-folder); }
+  .ficon[data-type="image"] { color: var(--t-image); }
+  .ficon[data-type="video"] { color: var(--t-video); }
+  .ficon[data-type="audio"] { color: var(--t-audio); }
+  .ficon[data-type="pdf"] { color: var(--t-pdf); }
+  .ficon[data-type="text"] { color: var(--t-text); }
+  .ficon[data-type="doc"] { color: var(--t-doc); }
+  .ficon[data-type="sheet"] { color: var(--t-sheet); }
+  .ficon[data-type="archive"] { color: var(--t-archive); }
+  .ficon[data-type="code"] { color: var(--t-code); }
+  .ficon[data-type="model"] { color: var(--t-model); }
+  .ficon[data-type="gcode"] { color: var(--t-gcode); }
+  .ficon[data-type="vector"] { color: var(--t-vector); }
+  .ficon[data-type="disk"] { color: var(--t-disk); }
+  .thumb { width: 32px; height: 32px; object-fit: contain; border-radius: var(--radius-s); background: var(--surface-3); }
+
+  .sharebadge {
+    display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+    margin-left: 6px; padding: 1px 8px 1px 6px; border-radius: var(--radius-pill);
+    font-size: var(--fs-xs); font-weight: 600;
+    color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 14%, color-mix(in srgb, var(--sunk) 35%, transparent));
+  }
+  .sharebadge .icon { width: 13px; height: 13px; filter: none; }
+
+  /* ---------- status bar: item count, or the selection and its actions ----------
+     Sticks to the bottom of the window while the list is longer than the screen. */
+  .status {
+    position: sticky; z-index: 5; bottom: var(--float);
+    display: flex; align-items: center; min-height: calc(var(--btn-h) + 12px);
+    margin-top: 12px; padding: 5px;
+    background: var(--bar-bg); border: 1px solid var(--bar-line); border-radius: var(--radius-l);
+    box-shadow: var(--bar-shadow);
+    font-size: var(--fs-sm); color: var(--text-muted);
+  }
+  .status[data-state="idle"] { min-height: 0; padding: 6px 8px 6px 12px; }
+  .status__group { display: none; flex: 1 1 auto; min-width: 0; align-items: center; }
+  .status[data-state="idle"] .status__group--idle,
+  .status[data-state="select"] .status__group--select { display: flex; }
+  .status__group--idle { flex-wrap: wrap; gap: 4px 16px; }
+  .status__item--keys { margin-left: auto; }
+  .status__group--select { gap: 6px; color: var(--text); }
+  .status__count { white-space: nowrap; padding: 0 6px 0 8px; }
+  .status__size { color: var(--text-muted); }
+  .status__actions { display: flex; gap: 4px; flex-wrap: wrap; flex: 0 1 auto; min-width: 0; }
+  .status__actions { --btn-px: 12px; }
+  .status__actions .btn { background: none; border-color: transparent; }
+  .status__actions .btn:hover { background: var(--surface-3); }
+  .status__more, .lbl-short { display: none; }
+  .status__close { margin-left: auto; }
+
+  /* ---------- download queue: separate downloads and "save to folder" ----------
+     Outside .browser: a backdrop-filter there would pin a fixed child to the panel.
+     --dock is the height of the bar it sits on (approximate in the prototype). */
+  .queue {
+    --dock: calc(var(--float) + var(--btn-h) + 14px);
+    position: fixed; z-index: 20; left: 50%; bottom: calc(var(--dock) + 10px); transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px; width: max-content; max-width: calc(100vw - 2 * var(--float));
+    padding: 5px 5px 5px 12px; font-size: var(--fs-sm);
+    background: var(--menu-bg); border: 1px solid var(--bar-line); border-radius: var(--radius-l);
+    box-shadow: 0 12px 32px color-mix(in srgb, var(--shade) 45%, transparent);
+  }
+  .queue > .icon { color: var(--accent-ink); }
+  .queue__text { white-space: nowrap; }
+  .queue__bar { width: 90px; }
+  .queue__stop { width: 32px; min-height: 32px; }
+
+  .tabbar { display: none; }
+
+  /* ---------- gate pages (share password; sign-in keeps .gate__brand and .langswitch) ---------- */
+  .page--gate { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .gate {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+    min-height: 100dvh; padding: 32px var(--gutter);
+  }
+  .gate__brand {
+    font-size: var(--fs-lg); padding: 6px 16px 6px 12px; border-radius: var(--radius-pill);
+    background: var(--bar-bg);
+  }
+  .gate__brand .brand__mark { width: 30px; height: 30px; }
+  .gate__card {
+    width: 100%; max-width: 400px; padding: 28px 24px 24px;
+    border-radius: var(--radius-l);
+  }
+  .gate__emblem {
+    display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 16px;
+    border-radius: 50%; background: var(--surface-3); color: var(--accent-ink);
+  }
+  .gate__emblem .icon { width: 22px; height: 22px; }
+  .gate__title {
+    font-family: var(--font-display); font-weight: var(--display-weight);
+    letter-spacing: var(--display-tracking); font-size: var(--fs-lg); line-height: 1.2; margin-bottom: 6px;
+  }
+  .gate__text { color: var(--text-muted); margin-bottom: 20px; }
+  .gate__form { display: grid; gap: 16px; }
+  .gate__submit { min-height: 48px; font-size: var(--fs-body); }
+
+  .field { display: grid; gap: 6px; }
+  .field__label { font-weight: 600; font-size: var(--fs-sm); }
+  .field__control {
+    display: flex; align-items: center; border-radius: var(--radius-m);
+    background: var(--field-bg); border: 1px solid var(--line-strong);
+  }
+  .field__control:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .field__input {
+    flex: 1; width: 0; min-width: 0; min-height: 46px; padding: 0 12px; border: 0; background: none; outline: none;
+    font-size: 1rem; letter-spacing: 0.04em;
+  }
+  .field__reveal { margin-right: 4px; width: 40px; min-height: 40px; }
+  .field__error { display: none; font-size: var(--fs-sm); color: var(--danger); }
+  .field[data-state="error"] .field__control { border-color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
+  .field[data-state="error"] .field__error { display: block; }
+
+  .langswitch { display: flex; gap: 4px; font-size: var(--fs-sm); }
+  .langswitch__item {
+    padding: 6px 10px; border-radius: var(--radius-pill); text-decoration: none; color: var(--text);
+    background: var(--bar-bg);
+  }
+  .langswitch__item[aria-current="true"] { font-weight: 700; box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+  /* ---------- tablet and up ---------- */
+  @media (min-width: 1024px) {
+    .layout { grid-template-columns: var(--sidenav-w) minmax(0, 1fr); }
+    .sidenav { display: block; }
+    .browser { padding: 20px 24px; }
+  }
+  @media (min-width: 720px) {
+    .appbar { flex-wrap: nowrap; }
+    .crumbs__list { overflow: hidden; }
+  }
+  @media (min-width: 720px) and (max-width: 1023px) {
+    .appbar .appbar__menu { display: inline-flex; }
+    .appbar__label { display: none; }
+    .actionbar, .status { --btn-px: 10px; }
+    /* Fold inner screen and small tablets: the selection fits one row. Copy and Rename go
+       into "More" and the download button uses its short label, as on the phone; the size
+       stays in the download menu's hint. */
+    .status__overflow, .status__size, .status__actions .dl__caret, .lbl-long { display: none; }
+    .status__more { display: inline-flex; }
+    .lbl-short { display: inline; }
+  }
+
+  /* ---------- phone ---------- */
+  @media (max-width: 719px) {
+    :root { --gutter: 12px; --row-h: 60px; --float: 8px; --tabbar-h: 62px; }
+    .appbar { padding-block: 8px; padding-inline: 12px 6px; }
+    .crumbs { order: 10; flex-basis: 100%; overflow-x: auto; scrollbar-width: none; }
+    .crumbs__link { padding-block: 8px; }
+    .appbar__label, .account__name, .appbar__link--admin { display: none; }
+    .crumbs__item { flex: none; }
+    .crumbs__item:not(:nth-last-child(-n+2)) { display: none; }
+    .crumbs__item:last-child { flex: 0 1 auto; min-width: 0; }
+    .crumbs__item:nth-last-child(2):not(:first-child)::before { content: "‹"; padding: 0 6px 0 0; }
+    .appbar__link { padding: 0; width: var(--tap); min-height: var(--tap); justify-content: center; }
+    .account { padding: 0; width: var(--tap); min-height: var(--tap); justify-content: center; }
+
+    /* one bar in the thumb zone: it follows the list and sticks above the tab bar. Folder
+       actions while nothing is selected, the selection actions once something is; the
+       item count lives in the title summary, so the idle status bar is not shown. */
+    .browser { display: flex; flex-direction: column; padding: 16px 10px calc(var(--tabbar-h) + var(--float) * 2); }
+    .browser__pane { display: flex; flex-direction: column; }
+    .browser__title { font-size: var(--fs-lg); }
+    .browser__tools { flex: 1 1 100%; margin-left: 0; }
+    .filter { min-height: var(--tap); }
+    .seg__item { min-height: 40px; width: 40px; }
+    .actionbar, .status {
+      position: sticky; z-index: 5; bottom: calc(var(--tabbar-h) + var(--float) * 2);
+      margin: 12px 0 0; padding: 6px; box-shadow: 0 10px 30px color-mix(in srgb, var(--shade) 40%, transparent);
+    }
+    .actionbar { order: 10; flex-wrap: nowrap; gap: 4px; --btn-px: 12px; }
+    .status[data-state="idle"] { display: none; }
+    .browser:has(.status[data-state="select"]) .actionbar { display: none; }
+    .actionbar .btn { min-height: var(--tap); }
+    .actionbar__upload { flex: 1 1 auto; min-width: 0; }
+    .actionbar__upload .btn__label { overflow: hidden; text-overflow: ellipsis; }
+    .actionbar__newfolder { width: var(--tap); padding: 0; flex: none; }
+    .actionbar__newfolder .btn__label, .actionbar__verb { display: none; }
+    .actionbar__download { display: none; }
+    .browser__download { display: inline-flex; flex: none; }
+    .browser__download .btn { width: var(--tap); min-height: var(--tap); }
+    .actionbar__paste .btn { gap: 6px; }
+    .actionbar__paste .btn--icon { width: 36px; padding: 0; }
+    .status__group--select { gap: 2px; flex-wrap: wrap; }
+    .status__count { flex: 1; }
+    .status__actions { order: 3; flex-basis: 100%; flex-wrap: nowrap; justify-content: space-between; }
+    .status__actions > * { flex: 1 1 0; min-width: 0; }
+    .status__actions .btn { flex-direction: column; gap: 2px; width: 100%; padding: 4px 2px; min-height: 52px; min-width: 0; font-size: 0.6875rem; font-weight: 500; }
+    .status__actions .btn__label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    .status__actions .dl__caret, .status__overflow, .lbl-long { display: none; }
+    .status__more { display: inline-flex; }
+    .lbl-short { display: inline; }
+    .queue { --dock: calc(var(--tabbar-h) + var(--float) * 2 + var(--tap) + 14px); }
+    body:has(.status[data-state="select"]) .queue { --dock: calc(var(--tabbar-h) + var(--float) * 2 + 112px); }
+
+    .files { table-layout: auto; }
+    .files thead { display: none; }
+    .files__name { width: 100%; padding-right: 0; }
+    .files__size, .files__date { display: none; }
+    .files__icon { width: 52px; padding-left: 4px; }
+    .files__menu { width: 48px; }
+    .files__menu .btn--icon { width: var(--tap); min-height: var(--tap); }
+    .files__check { display: none; width: 40px; }
+    .browser:has([data-state~="selected"]) .files__check { display: table-cell; }
+    .files__meta { display: block; margin-top: 2px; }
+    .ficon, .thumb { width: 40px; height: 40px; }
+    .ficon .icon { width: 24px; height: 24px; }
+
+    .tabbar {
+      display: flex; position: fixed; z-index: 15; left: var(--float); right: var(--float);
+      bottom: calc(var(--float) + env(safe-area-inset-bottom)); padding: 4px;
+      background: var(--bar-bg); border: 1px solid var(--bar-line); border-radius: var(--radius-l);
+      box-shadow: 0 10px 30px color-mix(in srgb, var(--shade) 40%, transparent);
+      -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    }
+    .tabbar__item {
+      flex: 1; display: grid; justify-items: center; align-content: center; gap: 2px; padding: 6px 4px;
+      text-decoration: none; color: var(--text-muted); font-size: var(--fs-xs); min-height: 52px;
+      border-radius: var(--radius-m);
+    }
+    .tabbar__item[aria-current="page"] { color: var(--accent-ink); background: var(--surface-3); }
+
+    .gate { padding-block: 24px; }
+    .gate__card { padding: 24px 18px 20px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  }
+}
+
+/* Clear glass: nothing keeps a fill. Panels, bars, fields, menus, the breadcrumb box, the
+   tab bar and primary buttons become outlines; emblems, avatars, file-type tiles and share
+   badges become colored icons or text. Only state marks (selected rows, cursor, current
+   item) keep a tint. Own layer, so it wins over every skin. */
+@layer glass {
+  /* panel opacity, per user and skin (html[data-opacity], 1–5); absent = the skin's own
+     value, which is the one checked for contrast. Frosted only: clear has no fill. */
+  [data-opacity="1"] { --glass-alpha: 0.1; }
+  [data-opacity="2"] { --glass-alpha: 0.3; }
+  [data-opacity="3"] { --glass-alpha: 0.5; }
+  [data-opacity="4"] { --glass-alpha: 0.7; }
+  [data-opacity="5"] { --glass-alpha: 0.9; }
+
+  [data-glass="clear"] :is(.actionbar, .status, .menu, .queue, .filter, .seg, .field__control, .crumbs, .tabbar, .gate__brand, .langswitch__item) {
+    background: transparent; border-color: var(--clear-line);
+  }
+  [data-glass="clear"] :is(.actionbar, .status, .menu, .queue, .tabbar) { box-shadow: none; }
+  [data-glass="clear"] .status[data-state="select"] { border-color: color-mix(in srgb, var(--accent-ink) 75%, transparent); }
+  /* bars and popups that float over the scrolling list: blur without tint keeps their
+     labels apart from the rows underneath. A bar blurs through a ::before layer, not
+     itself: an element with a backdrop-filter is a backdrop root, and the menu that opens
+     out of it would then blur only the bar instead of the rows. */
+  [data-glass="clear"] :is(.menu, .queue) { -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  [data-glass="clear"] .status { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  [data-glass="clear"] .status::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  }
+  [data-glass="clear"] .menu__item:hover { background: color-mix(in srgb, var(--wash) 12%, transparent); }
+  [data-glass="clear"] .btn:not(.btn--primary) { background: transparent; }
+  [data-glass="clear"] .btn:not(.btn--primary):hover { background: color-mix(in srgb, var(--wash) 12%, transparent); }
+
+  /* primary buttons: accent outline and label, a faint tint only on hover */
+  [data-glass="clear"] .btn--primary {
+    --pc: var(--clear-primary, var(--accent-ink));
+    background: transparent; border-width: 1.5px; border-style: solid; border-color: var(--pc);
+    color: var(--pc); box-shadow: none; filter: none; text-shadow: var(--ink-shadow);
+  }
+  [data-glass="clear"] .btn--primary:hover { background: color-mix(in srgb, var(--pc) 16%, transparent); border-color: var(--pc); }
+  [data-glass="clear"] .btn--primary .icon { color: inherit; filter: var(--icon-shadow); }
+
+  /* marks without a fill: lock emblem, avatar, file-type tiles, thumbnail frames, badges */
+  [data-glass="clear"] .gate__emblem {
+    width: auto; height: auto; place-items: start; background: none; box-shadow: none; clip-path: none;
+    color: var(--clear-primary, var(--accent-ink));
+  }
+  [data-glass="clear"] .gate__emblem .icon { width: 28px; height: 28px; filter: var(--icon-shadow); }
+  [data-glass="clear"] .account__avatar {
+    background: none; box-shadow: inset 0 0 0 1.5px var(--clear-line); color: var(--text); text-shadow: var(--ink-shadow);
+  }
+  [data-glass="clear"] :is(.ficon, .thumb) { background: transparent; box-shadow: none; }
+  [data-glass="clear"] .sharebadge {
+    background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 65%, transparent);
+    text-shadow: var(--ink-shadow);
+  }
+  [data-glass="clear"] .sharebadge .icon { filter: var(--icon-shadow); }
+
+  [data-glass="clear"] :is(.tree__link, .sidenav__link)[aria-current],
+  [data-glass="clear"] .tabbar__item[aria-current="page"] { background: transparent; color: var(--accent-ink); }
+  [data-glass="clear"] :is(.space, .tree__tag, .crumbs__link) { background: transparent; }
+  [data-glass="clear"] .seg__item[aria-current="true"] { background: transparent; color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent-ink); }
+  [data-glass="clear"] .seg__item[aria-current="true"] .icon { filter: var(--icon-shadow); }
+  @media (max-width: 719px) {
+    /* on the phone the action bar and the tab bar float over the list too */
+    [data-glass="clear"] .tabbar { -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+    [data-glass="clear"] .actionbar::before {
+      content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+      -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    }
+  }
+}

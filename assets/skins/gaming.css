@@ -1,0 +1,175 @@
+/* Skin: gaming — a HUD. Chamfered floating panels with corner marks, segmented meter,
+   cyan for selection, amber target brackets for the cursor, magenta for shares.
+   One family: Chakra Petch. Nothing from Minecraft: no pixels, blocks or inventory slots.
+   Dark and light. */
+@layer skin {
+  [data-skin="gaming"] {
+    --font-body: "Chakra Petch", system-ui, sans-serif;
+    --display-weight: 600;
+    --display-tracking: 0.01em;
+    --fs-body: 0.9375rem;
+    --fs-xl: 2rem;
+    --radius-s: 0; --radius-m: 0; --radius-l: 0; --radius-pill: 0;
+    --float: 12px;
+    --row-h: 42px;
+    --appbar-h: 56px;
+    --icon-stroke: 1.6;
+    --icon-cap: square;
+    --icon-join: miter;
+    --cut: 12px;
+    --bg: light-dark(#e6ecf7, #070a14);
+    --surface: light-dark(#f4f7fd, #0b1020);
+    --surface-2: light-dark(#e7eefb, #121a33);
+    --surface-3: light-dark(#d6e1f6, #1a2547);
+    --line: light-dark(#bccbea, #1e2b52);
+    --line-strong: light-dark(#7d97cc, #2f4a86);
+    --text: light-dark(#081230, #e4ecff);
+    --text-muted: light-dark(#34466f, #9fb0d6);
+    --accent: light-dark(#10c4ea, #33e0ff);
+    --accent-hover: light-dark(#3fd3f2, #7aebff);
+    --on-accent: #001a22;
+    --accent-ink: light-dark(#005f78, #33e0ff);
+    --accent-2: light-dark(#a9126b, #ff5dbe);
+    /* the HUD corner marks on panels */
+    --mark: light-dark(#0899bd, #33e0ff);
+    --select: light-dark(rgb(16 196 234 / 0.16), rgb(51 224 255 / 0.14));
+    --cursor: light-dark(#7c4e00, #ffc23d);
+    --focus: light-dark(#081230, #ffffff);
+    --backdrop-color: light-dark(#e6ecf7, #070a14);
+    --glass-tint: light-dark(rgb(244 247 253), rgb(9 13 28)); --glass-alpha: 0.68;
+    --glass-blur: 10px; --glass-sat: 1.2; --glass-k: 0.62;
+    --glass-line: light-dark(#9fb4de, #24356a);
+    --clear-line: light-dark(rgb(0 95 120 / 0.5), rgb(51 224 255 / 0.45));
+    --bar-bg: light-dark(rgb(244 247 253 / 0.94), rgb(7 10 20 / 0.94));
+    --bar-line: var(--line-strong);
+  }
+  [data-skin="gaming"] body { font-weight: 500; }
+
+  /* chamfered panel: the line is an inset shadow, the corner marks are gradients */
+  [data-skin="gaming"] .appbar,
+  [data-skin="gaming"] .sidenav,
+  [data-skin="gaming"] .browser,
+  [data-skin="gaming"] .gate__card {
+    position: relative; border: 0;
+    clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+    background:
+      linear-gradient(var(--mark), var(--mark)) left top / 28px 2px no-repeat,
+      linear-gradient(var(--mark), var(--mark)) right bottom / 28px 2px no-repeat,
+      var(--panel-bg);
+    box-shadow: inset 0 0 0 1px var(--panel-line);
+  }
+  /* the chamfer's clip-path makes the panel a backdrop root anyway; its bars are opaque */
+  [data-skin="gaming"] .browser { -webkit-backdrop-filter: var(--panel-filter); backdrop-filter: var(--panel-filter); }
+  [data-skin="gaming"] .browser::before { display: none; }
+  [data-skin="gaming"] .appbar { --cut: 10px; }
+  [data-skin="gaming"] .brand { font-size: 1.125rem; letter-spacing: 0.08em; text-transform: lowercase; }
+  [data-skin="gaming"] .brand__mark { color: var(--accent-ink); filter: drop-shadow(0 0 6px light-dark(rgb(16 196 234 / 0.35), rgb(51 224 255 / 0.6))); }
+  [data-skin="gaming"] .crumbs__item + .crumbs__item::before { content: "//"; color: var(--accent-ink); opacity: 0.8; }
+  [data-skin="gaming"] .account__avatar { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--accent-ink); }
+
+  [data-skin="gaming"] .sidenav__title,
+  [data-skin="gaming"] .files th {
+    text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.6875rem; color: var(--accent-ink);
+  }
+  [data-skin="gaming"] .tree__children { display: none; }
+  [data-skin="gaming"] .tree__link[aria-current] { background: var(--row-select); box-shadow: inset 3px 0 0 var(--accent-ink); }
+  [data-skin="gaming"] .tree__link[aria-current] .icon { color: var(--accent-ink); }
+  [data-skin="gaming"] .tree__tag { color: var(--accent-2); }
+  [data-skin="gaming"] .sidenav__links { border-top-color: var(--line); }
+  [data-skin="gaming"] .bar { height: 10px; border-radius: 0; mask: repeating-linear-gradient(90deg, #000 0 8px, transparent 8px 10px); }
+  [data-skin="gaming"] .bar__fill { fill: var(--accent-ink); }
+  [data-skin="gaming"] .bar__track { fill: var(--surface-3); }
+  [data-skin="gaming"] .space__vol { color: var(--accent-ink); }
+
+  [data-skin="gaming"] .browser__head { padding-bottom: 12px; border-bottom: 1px solid var(--panel-line); margin-bottom: 14px; }
+  [data-skin="gaming"] .browser__summary { color: var(--accent-ink); }
+
+  [data-skin="gaming"] .btn {
+    font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-size: 0.75rem;
+    background: color-mix(in srgb, var(--accent) 6%, transparent); border-color: var(--line-strong);
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  }
+  [data-skin="gaming"] .btn:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: var(--accent-ink); }
+  [data-skin="gaming"] .btn--primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  [data-skin="gaming"] .btn--primary:hover { background: var(--accent-hover); }
+  [data-skin="gaming"] .btn--icon { background: none; border-color: transparent; clip-path: none; }
+  [data-skin="gaming"] .filter { border-color: var(--line-strong); }
+  [data-skin="gaming"] .filter__key { border-color: var(--accent-ink); color: var(--accent-ink); }
+  [data-skin="gaming"] .seg { border-color: var(--line-strong); }
+  [data-skin="gaming"] .seg__item[aria-current="true"] { background: var(--select); color: var(--accent-ink); }
+
+  [data-skin="gaming"] :is(.actionbar, .status) {
+    border: 0; box-shadow: inset 0 0 0 1px var(--bar-line);
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  }
+  [data-skin="gaming"] .status[data-state="idle"] { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.6875rem; }
+  [data-skin="gaming"] .status[data-state="select"] { box-shadow: inset 0 0 0 1px var(--cursor), inset 3px 0 0 var(--cursor); }
+  [data-skin="gaming"] .status__count { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.75rem; color: var(--text-muted); }
+  [data-skin="gaming"] .status__count strong { color: var(--cursor); font-size: 1.375rem; margin-right: 4px; vertical-align: -2px; }
+  [data-skin="gaming"] .status__actions .btn { clip-path: none; }
+  [data-skin="gaming"] .status__actions .btn--danger { color: var(--danger); }
+  [data-skin="gaming"] .menu { box-shadow: inset 0 0 0 1px var(--line-strong), 0 16px 40px color-mix(in srgb, var(--shade) 50%, transparent); border: 0; }
+  [data-skin="gaming"] .menu__label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.75rem; }
+  [data-skin="gaming"] .menu__item:hover { background: var(--select); }
+  [data-skin="gaming"] .menu__item:hover .icon { color: var(--accent-ink); }
+  [data-skin="gaming"] .actionbar__paste .btn:first-child { color: var(--cursor); border-color: var(--cursor); background: color-mix(in srgb, var(--cursor) 10%, transparent); }
+
+  [data-skin="gaming"] .files th { border-bottom: 1px solid var(--line-strong); }
+  [data-skin="gaming"] .files td { border-bottom: 1px solid color-mix(in srgb, var(--panel-line) 70%, transparent); }
+  [data-skin="gaming"] .files__link { font-weight: 500; }
+  [data-skin="gaming"] .files__row:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  [data-skin="gaming"] .files__row[data-state~="selected"] td { background: var(--row-select); }
+  [data-skin="gaming"] .files__row[data-state~="selected"] td:first-child { box-shadow: inset 3px 0 0 var(--accent-ink); }
+  /* cursor: amber target brackets at both ends of the row */
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td,
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:first-child,
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:last-child { box-shadow: none; background: color-mix(in srgb, var(--cursor) 8%, transparent); }
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:first-child,
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:last-child { position: relative; }
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:first-child::before,
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:last-child::after {
+    content: ""; position: absolute; top: 3px; bottom: 3px; width: 8px;
+    border: 2px solid var(--cursor);
+  }
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:first-child::before { left: 0; border-right: 0; }
+  [data-skin="gaming"] .files__row[data-state~="cursor"] td:last-child::after { right: 0; border-left: 0; }
+  [data-skin="gaming"] .files__check input { accent-color: var(--accent-ink); }
+  [data-skin="gaming"] .ficon { background: color-mix(in srgb, currentColor 12%, color-mix(in srgb, var(--sunk) 30%, transparent)); box-shadow: inset 2px 0 0 currentColor; }
+  [data-skin="gaming"] .thumb { background: color-mix(in srgb, var(--accent) 6%, transparent); box-shadow: inset 0 0 0 1px var(--line-strong); }
+  [data-skin="gaming"] .sharebadge {
+    text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.625rem;
+    color: var(--accent-2); background: light-dark(rgb(255 232 244 / 0.8), rgb(40 6 26 / 0.7)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 60%, transparent);
+  }
+  [data-skin="gaming"] kbd { border-color: var(--accent-ink); color: var(--accent-ink); }
+
+  [data-skin="gaming"] .gate__card { padding: 30px 26px 26px; }
+  [data-skin="gaming"] .gate__emblem {
+    border-radius: 0; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent-ink);
+    clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); width: 52px; height: 46px;
+  }
+  [data-skin="gaming"] .gate__title { text-transform: uppercase; letter-spacing: 0.06em; font-size: 1.5rem; }
+  [data-skin="gaming"] .field__label { text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.6875rem; color: var(--accent-ink); }
+  [data-skin="gaming"] .field__control { border-color: var(--line-strong); }
+  [data-skin="gaming"] .field__input { letter-spacing: 0.08em; }
+  [data-skin="gaming"] .gate__submit { font-size: 0.875rem; }
+
+  @media (max-width: 719px) {
+    [data-skin="gaming"] { --fs-xl: 1.5rem; --row-h: 58px; --float: 8px; }
+    [data-skin="gaming"] .browser { padding: 16px 10px calc(var(--tabbar-h) + var(--float) * 2); }
+    [data-skin="gaming"] .browser__title { font-size: var(--fs-xl); }
+    [data-skin="gaming"] .tabbar { border: 0; border-radius: 0; box-shadow: inset 0 0 0 1px var(--line-strong), 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+      clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); }
+    [data-skin="gaming"] .tabbar__item { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.625rem; }
+    [data-skin="gaming"] .tabbar__item[aria-current="page"] { color: var(--accent-ink); box-shadow: inset 0 2px 0 var(--accent-ink); background: var(--select); }
+    [data-skin="gaming"] .status__actions .btn { font-size: 0.625rem; }
+  }
+}
+
+/* clear glass: the HUD outlines are inset shadows, so they come back here */
+@layer glass {
+  [data-skin="gaming"][data-glass="clear"] :is(.actionbar, .status, .menu) { box-shadow: inset 0 0 0 1px var(--clear-line); }
+  [data-skin="gaming"][data-glass="clear"] .status[data-state="select"] { box-shadow: inset 0 0 0 1px var(--cursor), inset 3px 0 0 var(--cursor); }
+  [data-skin="gaming"][data-glass="clear"] .tabbar { box-shadow: inset 0 0 0 1px var(--clear-line); }
+  [data-skin="gaming"][data-glass="clear"] .tabbar__item[aria-current="page"] { box-shadow: inset 0 2px 0 var(--accent-ink); }
+  [data-skin="gaming"][data-glass="clear"] .tree__link[aria-current] { box-shadow: inset 3px 0 0 var(--accent-ink); }
+}
