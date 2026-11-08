@@ -210,8 +210,12 @@ pub struct DatasetOut {
     pub pool: String,
     pub used: u64,
     pub avail: u64,
-    /// 0 = none.
+    /// 0 = none. Limits `used`.
     pub quota: u64,
+    /// 0 = none. Limits `referenced`.
+    pub refquota: u64,
+    /// The dataset's own data, without snapshots and children.
+    pub referenced: u64,
     pub snapshots: u64,
     pub snap_used: u64,
     pub newest_snapshot: Option<i64>,
@@ -492,6 +496,8 @@ pub fn build(
             used: d.ds.used,
             avail: d.ds.avail,
             quota: d.ds.quota,
+            refquota: d.ds.refquota,
+            referenced: d.ds.referenced,
             snapshots: d.ds.snapshots,
             snap_used: d.ds.snap_used,
             newest_snapshot: d.ds.newest_snapshot,

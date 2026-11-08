@@ -15,8 +15,10 @@ Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy toolin
 13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A, B and
 C done (slices 17–19). UI integration (step 7) in slices on `main`: slices 20–22 (D, E, F)
 done: everything the design has delivered so far (browser, gate pages, skins) is live; the
-other screens wait for the design session's mocks (`design/pages/`). Next: NAS setup
-(step 4), staging (8), and the next UI slices as the design delivers screens.
+other screens wait for the design session's mocks (`design/pages/`). NAS setup (step 4)
+and the account import (6) ran on 2026-11-07; staging (8) runs on the NAS since then. Next:
+Telegram (5, needs Tibor's bot), Tibor's own staging checks (web UI, WebDAV/rclone, public
+write, shares from the UI), and the next UI slices as the design delivers screens.
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed
@@ -93,8 +95,8 @@ other screens wait for the design session's mocks (`design/pages/`). Next: NAS s
   refresh in `assets/dashboard.js`), `/.cc/admin/alerts` (active, channels + test button,
   history); verdict line on the admin landing page; weekly digest at `alerts.digest`.
   Fixtures: anonymized zpool/zfs output from the NAS, smartctl NVMe from another host,
-  ATA hand-written (no SATA disk had smartctl yet). Not yet run as root against real
-  disks: `collect` needs smartmontools on the NAS (setup step 4).
+  ATA hand-written (no SATA disk had smartctl yet). On the NAS since 2026-11-07: `collect`
+  readings match `smartctl -A`.
 - Slice 9 done: preferences + appearance (`src/appearance/`, `web/account.rs`).
   `/.cc/account`: language, theme, skin, shortcuts, rotation (POST fields optional + `next`,
   for quick switches). Background editor `/.cc/account/backgrounds?skin=`: per skin default
@@ -153,7 +155,8 @@ other screens wait for the design session's mocks (`design/pages/`). Next: NAS s
   `agent:<key>` in audit (`mcp_<tool>`, every call), trash and temps. CLI `chestcraft agent
   add|list|role|disable|enable|token|revoke` (service stopped). Dashboard app section +
   status API: `agent_calls_24h`, last call per agent. Verified with the Python MCP SDK 2.3
-  against a local `serve`; Claude Code + Hermes against staging :3926 still to do.
+  against a local `serve`, and every tool with a plain JSON-RPC client against staging
+  :3926 (2026-11-08); Claude Code + Hermes still to do.
 - Slice 13 done: deploy (`docs/install.md`). `deploy/release.sh`: fmt, clippy `-D
   warnings`, tests, C-free static musl build (`CHESTCRAFT_VERSION` = `<pkg>+<git rev>`),
   tarball in `target/dist/` (binary, install.sh, units, example config, smartd.conf,
@@ -176,8 +179,9 @@ other screens wait for the design session's mocks (`design/pages/`). Next: NAS s
   never created and must be on another file system than `state_dir` (an unmounted
   dataset's folder sits on the system disk), else the backup fails and `check` warns. Outcome in `settings.backup` → dashboard app line,
   status API `app.backup`, alert `backup:failed`. `deploy/smartd.conf`: self-tests only.
-  Not verified under the real sandbox yet: ffmpeg/curl/zpool with MemoryDenyWriteExecute +
-  the syscall filter (staging).
+  Verified on staging (2026-11-08): ffmpeg, zpool and zfs under MemoryDenyWriteExecute +
+  the syscall filter, reload (re-exec), the nightly backup. curl (channels) not yet: no
+  channel configured.
 - Slice 14 done: admin socket (`src/cli.rs`, `web/adminsock.rs`). `user`, `agent`,
   `api-token` and the new `backup` (now) are clap+serde enums in the lib (`AdminCmd`,
   flattened into main's CLI); `cli::run` writes into `Out` (stdout, stderr, code). The CLI
@@ -288,6 +292,13 @@ other screens wait for the design session's mocks (`design/pages/`). Next: NAS s
   Enter → first match; viewer h/l/q and ←/→/Esc (`data-js="viewer-*"`). Shortcut overview
   dialog (`keys_help`, key names localized: Strg, Entf, …). Checked in headless Firefox
   with real key input (both maps, paste/clash/rename/picker flows).
+- Staging check 1 (2026-11-08, step 8): status API numbers match `zpool`, `zfs list` and
+  `smartctl`; MCP on the Sandbox (scope, writes, keep-both, cross-filesystem copy, trash +
+  restore, previews of PNG/MP4/SVG, share → visitor unlock, download, zip, `?tree`, revoke →
+  410); anonymous public volume (thumbnails, `dl-slots`, writes refused). Fix: dataset quotas
+  count `refquota` too (`Dataset::quota_use`: `used`/`quota` and `referenced`/`refquota`,
+  the fuller one wins; dashboard, alert `ds:<name>:quota`, status API adds `refquota` and
+  `referenced`).
 - Open: A thumbnail that fails to load needs a JS
   fallback to the type icon (UI integration). For the design session (not in its NOTES
   yet): tablet nav (the `appbar__menu` drawer; 720–1023 px has no nav besides crumbs and the

@@ -88,6 +88,8 @@ or removed; anything else gets a new version and URL.
   ],
   "datasets": [
     { "name": "tank/data", "pool": "tank", "used": 0, "avail": 0, "quota": 0,  // 0 = none
+      "refquota": 0,           // 0 = none; limits "referenced", while "quota" limits "used"
+      "referenced": 0,         // the dataset's own data, without snapshots and children
       "snapshots": 30, "snap_used": 0, "newest_snapshot": 1762444800,
       "volumes": ["Data"],     // chestcraft volumes on it
       "trash": 0 }             // bytes in chestcraft's trash there

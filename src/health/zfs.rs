@@ -12,7 +12,7 @@ pub const LIST_ARGS: &[&str] = &[
     "-t",
     "filesystem,volume",
     "-o",
-    "name,used,available,quota,mountpoint,usedbysnapshots,type",
+    "name,used,available,quota,refquota,referenced,mountpoint,usedbysnapshots,type",
 ];
 pub const SNAPSHOT_ARGS: &[&str] = &[
     "list",
@@ -32,8 +32,12 @@ pub struct Dataset {
     pub kind: String,
     pub used: u64,
     pub avail: u64,
-    /// 0 = none.
+    /// 0 = none. Limits `used` (the dataset's data, its snapshots and its children).
     pub quota: u64,
+    /// 0 = none. Limits `referenced`.
+    pub refquota: u64,
+    /// Space the dataset's own data takes, without snapshots and children.
+    pub referenced: u64,
     /// None for `none`, `legacy` and volumes.
     pub mountpoint: Option<String>,
     /// Space only snapshots hold.
@@ -44,9 +48,22 @@ pub struct Dataset {
 }
 
 impl Dataset {
-    /// Percent of the quota in use.
+    /// The limit closest to full, as (percent in use, limit): `quota` counts `used`,
+    /// `refquota` counts `referenced`. None without either.
+    pub fn quota_use(&self) -> Option<(u64, u64)> {
+        let pct = |n: u64, limit: u64| (limit > 0).then(|| (n.saturating_mul(100) / limit, limit));
+        match (
+            pct(self.used, self.quota),
+            pct(self.referenced, self.refquota),
+        ) {
+            (Some(q), Some(r)) => Some(if r.0 > q.0 { r } else { q }),
+            (q, r) => q.or(r),
+        }
+    }
+
+    /// Percent of the fuller quota in use.
     pub fn quota_percent(&self) -> Option<u64> {
-        (self.quota > 0).then(|| self.used.saturating_mul(100) / self.quota)
+        self.quota_use().map(|(pct, _)| pct)
     }
 }
 
@@ -99,6 +116,8 @@ pub fn parse(list_json: &[u8], snapshot_json: &[u8]) -> Result<Vec<Dataset>, Str
                 used: num(prop(d, "used")).unwrap_or(0),
                 avail: num(prop(d, "available")).unwrap_or(0),
                 quota: num(prop(d, "quota")).unwrap_or(0),
+                refquota: num(prop(d, "refquota")).unwrap_or(0),
+                referenced: num(prop(d, "referenced")).unwrap_or(0),
                 mountpoint,
                 snap_used: num(prop(d, "usedbysnapshots")).unwrap_or(0),
                 snapshots,
@@ -133,6 +152,15 @@ mod tests {
         assert_eq!(docs.newest_snapshot, Some(1_793_955_600));
         let t = ds.iter().find(|d| d.name == "tank/transfer").unwrap();
         assert_eq!(t.quota_percent(), Some(80));
+        assert_eq!(t.quota_use(), Some((80, 600_000_000_000)));
+        // refquota counts the dataset's own data (79.8 % of 3 TiB), not its snapshots.
+        let video = ds.iter().find(|d| d.name == "tank/media/video").unwrap();
+        assert_eq!(video.quota, 0);
+        assert_eq!(video.referenced, 2_632_478_081_552);
+        assert_eq!(video.quota_use(), Some((79, 3_298_534_883_328)));
+        let backups = ds.iter().find(|d| d.name == "tank/backups").unwrap();
+        assert_eq!(backups.quota_use().map(|(_, l)| l), Some(1_924_145_348_608));
+        assert_eq!(ds[0].quota_use(), None);
         assert_eq!(t.snapshots, 0);
         assert_eq!(t.newest_snapshot, None);
         assert!(ds.iter().all(|d| d.avail > 0));
