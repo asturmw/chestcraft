@@ -173,10 +173,13 @@ impl Notifier {
         if let Some(t) = &cfg.alerts.telegram {
             channels.push(Channel {
                 kind: Kind::Telegram,
-                problem: secrets
-                    .telegram_token
-                    .is_none()
-                    .then(|| "telegram_token is missing from the secrets file".to_string()),
+                problem: secrets.telegram_token.is_none().then(|| {
+                    // systemd copies the credential at start; a reload doesn't see a
+                    // token added since.
+                    "telegram_token is missing from the secrets file (the service reads \
+                         it at start: restart it after adding the token)"
+                        .to_string()
+                }),
                 target: Target::Telegram {
                     chat_id: t.chat_id,
                     token: secrets.telegram_token.clone(),
