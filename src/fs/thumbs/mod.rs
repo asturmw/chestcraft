@@ -36,7 +36,7 @@ pub const GRID_PX: u32 = 480;
 /// Longest edge of the viewer's picture; the original loads on "full size".
 pub const VIEW_PX: u32 = 2048;
 /// Bumped when a renderer changes, so old cache entries are no longer found.
-const RENDER_VERSION: u32 = 1;
+const RENDER_VERSION: u32 = 2;
 
 pub const FFMPEG: &str = "/usr/bin/ffmpeg";
 

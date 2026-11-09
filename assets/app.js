@@ -1,6 +1,7 @@
 // chestcraft page basics, on every page: menus (popovers) placed next to the button that
 // opened them, arrow keys inside menus, the password reveal button, dialog cancel buttons,
-// the type icon for thumbnails that fail to load.
+// the type icon for thumbnails that fail to load, the sidebar drawer on narrow screens and
+// a message shown after a reload.
 // Hooks are data-js attributes and ARIA roles; JS never relies on classes (ui-handoff §5).
 (() => {
   'use strict';
@@ -148,7 +149,57 @@
     if (img.complete && img.naturalWidth === 0) thumbFailed(img);
   }
 
+  // Below 1024 px the sidebar is a drawer: the app bar's menu button opens it; Escape, a
+  // click outside it or the button again close it.
+  const navBtn = document.querySelector('[data-js="nav-toggle"]');
+  const nav = navBtn && document.getElementById(navBtn.getAttribute('aria-controls'));
+  if (nav) {
+    const setNav = (open) => {
+      if (open) nav.dataset.state = 'open';
+      else delete nav.dataset.state;
+      navBtn.setAttribute('aria-expanded', String(open));
+    };
+    navBtn.addEventListener('click', () => {
+      const open = nav.dataset.state !== 'open';
+      setNav(open);
+      if (open) {
+        const here = nav.querySelector('[aria-current="page"]') || nav.querySelector('a');
+        if (here) here.focus({ preventScroll: true });
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && nav.dataset.state === 'open') { setNav(false); navBtn.focus(); }
+    });
+    document.addEventListener('click', (e) => {
+      if (nav.dataset.state === 'open' && !nav.contains(e.target) && !navBtn.contains(e.target)) setNav(false);
+    });
+    addEventListener('resize', () => { if (innerWidth >= 1024 && nav.dataset.state === 'open') setNav(false); });
+  }
+
+  // A message for after a reload (an upload or a paste that changed the listing), shown in
+  // the queue toast for a few seconds.
+  const FLASH = 'cc-flash';
+  try {
+    const text = sessionStorage.getItem(FLASH);
+    const queue = document.querySelector('[data-js="queue"]');
+    if (text) {
+      sessionStorage.removeItem(FLASH);
+      if (queue) {
+        queue.querySelector('[data-js="queue-text"]').textContent = text;
+        const fill = queue.querySelector('[data-js="queue-fill"]');
+        if (fill) fill.setAttribute('width', '100');
+        queue.hidden = false;
+        setTimeout(() => { if (queue.querySelector('[data-js="queue-text"]').textContent === text) queue.hidden = true; }, 6000);
+      }
+    }
+  } catch (e) { /* storage off: no message */ }
+
   window.cc = Object.assign(window.cc || {}, {
+    // Reload the page and show `text` after it.
+    reloadWith(text) {
+      try { if (text) sessionStorage.setItem(FLASH, text); } catch (e) { /* no message then */ }
+      location.reload();
+    },
     // Open a menu next to `anchor` (for menus a script fills, like a row's actions).
     openMenu(menu, anchor) {
       menu.ccAnchor = anchor;

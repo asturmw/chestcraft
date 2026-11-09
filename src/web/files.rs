@@ -13,6 +13,8 @@
 //! GET  <folder>/?dirs                    its folders (no dot-names), for the move/copy dialogs
 //!   200 {"dirs":["a","b"],"write":true,"move":true}   rights in <folder> itself
 //! GET  /?dirs                            the readable volumes, same shape
+//! GET  <folder>/?du[&hidden=1]           the folder's size, for its row in the parent
+//!   200 {"bytes":123,"files":4,"dirs":1,"complete":true}   (see web::du)
 //! GET  /.cc/dl-slots
 //!   200 {"max":4,"free":2}   anonymous: the per-IP download limit and its free slots
 //!   200 {"max":null,"active":1}  signed in: no limit; downloads running from this IP
@@ -41,12 +43,14 @@ use crate::fs::trash;
 use crate::fs::tree::{self, TreeSpec};
 use crate::fs::volume::{Entry, Kind, Meta, Space, VolumeRoot};
 use crate::fs::zipstream::{self, ZipSpec};
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use futures_util::StreamExt;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use serde_json::json;
 use std::io::{self, SeekFrom};
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
@@ -352,6 +356,10 @@ pub async fn handle(
                     _ => fail(&ctx, Fail::Internal),
                 };
             }
+            if q.has("du") {
+                let include_hidden = principal.is_admin() && q.get("hidden") == Some("1");
+                return du_response(&st, &ctx, vol, rel, include_hidden).await;
+            }
             if q.has("tree") {
                 let guard = match download_guard(&st, &principal, &client) {
                     Ok(g) => g,
@@ -483,6 +491,14 @@ pub async fn handle(
 
 /// `?dirs`: folder names for the move and copy dialogs, with what the visitor may do in
 /// the folder itself (`write`: copy here; `move`: move here within the volume).
+/// The listing's scripts ask for JSON (`Accept: application/json`) where a form would get a page.
+fn wants_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("application/json"))
+}
+
 fn dirs_response(dirs: Vec<String>, perms: Perms) -> Response {
     (
         [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
@@ -1112,6 +1128,24 @@ fn check_selection(only: &[String], include_hidden: bool) -> Result<(), Fail> {
 
 /// The recursive listing of a folder (or of the selected `only` names in it) as JSON
 /// lines, streamed; `guard` holds the visitor's download slot until it ends.
+/// The folder's size for its row in the parent's listing (see `web::du`).
+pub async fn du_response(
+    st: &Shared,
+    ctx: &Ctx<'_>,
+    vol: Arc<VolumeRoot>,
+    rel: RelPath,
+    include_hidden: bool,
+) -> Response {
+    match st.folder_sizes.get(vol, rel, include_hidden).await {
+        Ok(u) => ([(header::CACHE_CONTROL, "no-store")], Json(u)).into_response(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => fail(ctx, Fail::NotFound),
+        Err(e) => {
+            tracing::warn!("folder size: {e}");
+            fail(ctx, Fail::Internal)
+        }
+    }
+}
+
 pub fn tree_response(
     vol: Arc<VolumeRoot>,
     rel: RelPath,
@@ -1277,28 +1311,24 @@ async fn folder_post(
     };
     match op {
         "mkdir" => {
+            // The listing's script sends the form itself and wants JSON back, so it can show
+            // the problem in the dialog: 200 {"ok":true} or 4xx {"message":"…"}.
+            let json = wants_json(headers);
+            let problem = |status: StatusCode, msg: &str| {
+                if json {
+                    (status, Json(json!({ "message": msg }))).into_response()
+                } else {
+                    problems(ctx, status, msg, &[], &folder.href)
+                }
+            };
             let name = form.get("name").unwrap_or_default().trim().to_string();
             let target = match validate_new_name(&name).map(|()| folder.rel.join(&name)) {
                 Ok(Ok(t)) => t,
-                _ => {
-                    return problems(
-                        ctx,
-                        StatusCode::BAD_REQUEST,
-                        ctx.t("ops.invalid"),
-                        &[],
-                        &folder.href,
-                    );
-                }
+                _ => return problem(StatusCode::BAD_REQUEST, ctx.t("ops.invalid")),
             };
             let perms = perms_at(&target);
             if !perms.contains(Perms::WRITE) {
-                return problems(
-                    ctx,
-                    StatusCode::FORBIDDEN,
-                    ctx.t("ops.forbidden"),
-                    &[],
-                    &folder.href,
-                );
+                return problem(StatusCode::FORBIDDEN, ctx.t("ops.forbidden"));
             }
             let made = {
                 let (vol, rel, name) = (folder.vol.clone(), folder.rel.clone(), name.clone());
@@ -1314,11 +1344,15 @@ async fn folder_post(
                         &format!("{}/{}", folder.vol.name(), target.as_str()),
                         "",
                     );
-                    Redirect::to(&folder.href).into_response()
+                    if json {
+                        Json(json!({ "ok": true })).into_response()
+                    } else {
+                        Redirect::to(&folder.href).into_response()
+                    }
                 }
                 Ok(Err(e)) => {
                     let (status, _, msg) = api::message(ctx, &e, &name);
-                    problems(ctx, status, &msg, &[], &folder.href)
+                    problem(status, &msg)
                 }
                 Err(_) => fail(ctx, Fail::Internal),
             }

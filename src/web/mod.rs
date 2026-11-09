@@ -9,6 +9,7 @@ mod auth;
 mod charts;
 mod client;
 mod dashboard;
+mod du;
 mod files;
 mod guest;
 mod headers;
@@ -69,6 +70,8 @@ pub struct AppState {
     pub thumbs: crate::fs::thumbs::Thumbs,
     /// New thumbnails per IP for anonymous visitors.
     pub thumb_limiter: governor::DefaultKeyedRateLimiter<std::net::IpAddr>,
+    /// Folder sizes for listings (`?du`).
+    pub folder_sizes: du::FolderSizes,
     /// Health snapshots, active alerts, chart history.
     pub health: monitor::Monitor,
     /// Telegram / ntfy.
@@ -114,6 +117,7 @@ impl AppState {
             config_file: None,
             thumbs: crate::fs::thumbs::Thumbs::new(&cfg),
             thumb_limiter: preview::anon_limiter(),
+            folder_sizes: du::FolderSizes::default(),
             health: monitor::Monitor::default(),
             notifier,
             cfg: Arc::new(cfg),

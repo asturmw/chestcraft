@@ -322,6 +322,12 @@ pub fn langswitch(ctx: &Ctx, here: &str) -> Markup {
 fn appbar(ctx: &Ctx, crumbs: &[Crumb]) -> Markup {
     html! {
         header class="appbar" {
+            @if ctx.nav.is_some() {
+                button class="appbar__menu btn btn--icon" type="button" data-js="nav-toggle"
+                    aria-controls="sidenav" aria-expanded="false" aria-label=(ctx.t("nav.open_menu")) {
+                    (icon("menu"))
+                }
+            }
             @if ctx.brand {
                 a class="brand" href="/" {
                     (icon_c("chest", "brand__mark"))
@@ -429,7 +435,7 @@ fn tree(nodes: &[TreeNode]) -> Markup {
 
 fn sidenav(ctx: &Ctx, nav: &Nav) -> Markup {
     html! {
-        nav class="sidenav" aria-label=(ctx.t("nav.volumes")) {
+        nav class="sidenav" id="sidenav" aria-label=(ctx.t("nav.volumes")) {
             h2 class="sidenav__title" { (ctx.t("nav.volumes")) }
             ul class="tree" { (tree(&nav.tree)) }
             @if let Some(sp) = &nav.space {
@@ -726,7 +732,13 @@ pub fn upload_ui(ctx: &Ctx, u: &UploadUi, bar: bool) -> Markup {
             data-t-skipped=(ctx.t("upload.state_skipped"))
             data-t-clash=(ctx.t("upload.state_clash"))
             data-t-saved-as=(ctx.t("upload.saved_as"))
-            data-t-reload=(ctx.t("upload.reload")) {
+            data-t-reload=(ctx.t("upload.reload"))
+            data-t-progress=(ctx.t("upload.progress")) data-t-rate=(ctx.t("upload.rate"))
+            data-t-left=(ctx.t("upload.left"))
+            data-t-uploaded-one=(ctx.t("upload.uploaded_one"))
+            data-t-uploaded-other=(ctx.t("upload.uploaded_other"))
+            data-t-unfinished=(ctx.t("upload.unfinished")) data-t-discard=(ctx.t("upload.discard"))
+            data-decimal=(ctx.t("format.decimal")) {
             label class="upload__pick" {
                 span class="upload__pick-label" { (ctx.t("browser.upload_files")) }
                 input class="upload__input" type="file" multiple data-js="upload-files";
@@ -901,7 +913,7 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             data-t-delete-name=(ctx.t("browser.delete_title_name"))
             data-t-dl-file=(ctx.t("browser.download")) data-t-dl-folder=(ctx.t("browser.dl_zip"))
             data-t-share=(ctx.t("browser.share")) data-t-delete=(ctx.t("browser.delete"))
-            data-decimal=(ctx.t("format.decimal"))
+            data-decimal=(ctx.t("format.decimal")) data-t-failed=(ctx.t("ops.failed"))
             data-slots=(v.slots_href) data-folder=(v.title) data-hidden=[v.showing_hidden.then_some("1")]
             data-t-each-one=(ctx.t("browser.dl_each_hint_one")) data-t-each-other=(ctx.t("browser.dl_each_hint_other"))
             data-t-many=(ctx.t("browser.dl_many_title"))
@@ -1140,12 +1152,13 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                             input type="hidden" name="csrf" value=(csrf);
                         }
                         input type="hidden" name="op" value="mkdir";
-                        div class="field" {
+                        div class="field" data-js="new-folder-field" {
                             label class="field__label" for="new-folder-name" { (ctx.t("browser.folder_name_label")) }
                             div class="field__control" {
                                 input class="field__input" id="new-folder-name" type="text" name="name" required
-                                    maxlength="255" autocomplete="off";
+                                    maxlength="255" autocomplete="off" aria-describedby="new-folder-error";
                             }
+                            p class="field__error" id="new-folder-error" data-js="new-folder-error" role="alert" {}
                         }
                         div class="dialog__actions" {
                             button class="btn" type="button" data-js="dialog-cancel" { (ctx.t("common.cancel")) }
@@ -1361,7 +1374,7 @@ fn file_row(ctx: &Ctx, r: &Row) -> Markup {
                 }
             }
             td class="files__name" {
-                a class="files__link" href=(r.href) { (r.name) }
+                a class="files__link" href=(r.href) data-js="row-link" { (r.name) }
                 @if let Some(title) = &r.shared {
                     " "
                     span class="sharebadge" title=(title) {
@@ -1371,7 +1384,7 @@ fn file_row(ctx: &Ctx, r: &Row) -> Markup {
                 }
                 span class="files__meta" { (r.meta) }
             }
-            td class="files__size" { (r.size) }
+            td class="files__size" data-js=[r.is_dir.then_some("du")] { (r.size) }
             td class="files__date" { time datetime=(r.modified_iso) { (r.modified) } }
             td class="files__menu" {
                 button class="btn btn--icon" type="button" data-js="row-menu-open" aria-haspopup="menu"

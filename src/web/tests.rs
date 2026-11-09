@@ -1252,6 +1252,60 @@ async fn listing_offers_changes_only_to_those_who_may() {
     assert!(!t.contains("upload.js") && !t.contains("name=\"csrf\""));
 }
 
+/// The listing's script asks for folder sizes (`?du`) and sends the new-folder form with
+/// `Accept: application/json`, so a taken name shows in the dialog.
+#[tokio::test]
+async fn folder_sizes_and_new_folder_json() {
+    let e = env();
+    e.put("medien/Urlaub/a.jpg", &[0u8; 300]);
+    e.put("medien/Urlaub/Tag 1/b.jpg", &[0u8; 50]);
+    e.put("medien/Urlaub/.dot", &[0u8; 7]);
+    let json = |r: Res| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+    let fam = e.session("jana", "familie").await;
+    let c = [("cookie", fam.cookie.as_str())];
+    let r = e.get_h("/Medien/Urlaub/?du", &c).await;
+    assert_eq!(
+        (r.status, r.header("cache-control")),
+        (StatusCode::OK, "no-store")
+    );
+    assert_eq!(
+        json(r),
+        serde_json::json!({"bytes": 350, "files": 2, "dirs": 1, "complete": true})
+    );
+    // hidden=1 counts dot-names for admins only.
+    let r = e.get_h("/Medien/Urlaub/?du&hidden=1", &c).await;
+    assert_eq!(json(r)["bytes"], 350);
+    // No rights, no size; public volumes answer anonymous visitors.
+    assert_ne!(e.get("/Medien/Urlaub/?du").await.status, StatusCode::OK);
+    assert_eq!(e.get("/Share/?du").await.status, StatusCode::OK);
+    // Folder rows carry the hook the script fills.
+    let t = e.get_h("/Medien/", &c).await.text();
+    assert!(t.contains(r#"data-js="du""#), "{t}");
+
+    let mkdir = |name: &'static str| {
+        let body = form(&[("csrf", fam.csrf.as_str()), ("op", "mkdir"), ("name", name)]);
+        let headers = [
+            FORM,
+            ("cookie", fam.cookie.as_str()),
+            ("accept", "application/json"),
+        ];
+        let e = &e;
+        async move {
+            e.send_body("POST", "/Medien/", "127.0.0.1", &headers, body)
+                .await
+        }
+    };
+    let r = mkdir("Neu").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(json(r), serde_json::json!({"ok": true}));
+    let r = mkdir("Neu").await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert!(json(r)["message"].as_str().unwrap().contains("Neu"));
+    let r = mkdir(".chestcraft-x").await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(json(r)["message"].is_string());
+}
+
 #[tokio::test]
 async fn new_folder_delete_restore_and_empty() {
     let e = env();
@@ -3078,7 +3132,7 @@ async fn folder_pages_use_the_app_shell_and_the_browser_markup() {
         r#"<div class="actionbar" role="toolbar""#,
         r#"<table class="files" data-js="files">"#,
         // A folder's size column counts its items; hidden files don't count.
-        r#"<td class="files__size">2 items</td>"#,
+        r#"<td class="files__size" data-js="du">2 items</td>"#,
         // Files' total: the folder's own files only.
         r#"<p class="browser__summary">3 items, 1.5 kB</p>"#,
         r#"class="sharebadge" title="Active share, runs out on "#,

@@ -6,7 +6,7 @@
 //! The rules are the zip's (`fs::zipstream`): the walk opens each folder relative to its
 //! parent with `O_NOFOLLOW`, leaves out symlinks, devices and FIFOs, never shows internal
 //! names, and dot-names only with `include_hidden`. `only` limits the top level to a
-//! selection.
+//! selection. [`usage`] adds a folder up with the same rules (folder sizes in listings).
 
 use crate::fs::path::RelPath;
 use crate::fs::volume::{Meta, VolumeRoot};
@@ -84,6 +84,84 @@ fn walk<W: Write>(
             FileType::RegularFile => {
                 line(out, &path, false, &Meta::from_stat(&st))?;
                 *count += 1;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// What a folder holds, added up by [`usage`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Usage {
+    /// Sum of the files' sizes (what a download of the folder would be).
+    pub bytes: u64,
+    pub files: u64,
+    pub dirs: u64,
+    /// False when the walk stopped at `limits` (too many entries or out of time): then the
+    /// folder holds at least this much.
+    pub complete: bool,
+}
+
+/// Where [`usage`] stops, so a huge folder can't keep a request busy.
+pub struct UsageLimits {
+    pub max_entries: u64,
+    pub deadline: std::time::Instant,
+}
+
+/// Add up the files under `base`, with the tree's walk rules (no symlinks, no internal
+/// names, dot-names only with `include_hidden`). Unreadable subfolders are left out.
+pub fn usage(
+    vol: &VolumeRoot,
+    base: &RelPath,
+    include_hidden: bool,
+    limits: &UsageLimits,
+) -> io::Result<Usage> {
+    let dirfd = vol.open_dir(base)?;
+    let mut u = Usage {
+        complete: true,
+        ..Usage::default()
+    };
+    add_up(&dirfd, include_hidden, limits, &mut u)?;
+    Ok(u)
+}
+
+fn add_up(
+    dirfd: &OwnedFd,
+    include_hidden: bool,
+    limits: &UsageLimits,
+    u: &mut Usage,
+) -> io::Result<()> {
+    for name in listed_names(dirfd, include_hidden, None)? {
+        if u.files + u.dirs >= limits.max_entries
+            || ((u.files + u.dirs).is_multiple_of(256)
+                && std::time::Instant::now() >= limits.deadline)
+        {
+            u.complete = false;
+            return Ok(());
+        }
+        let Ok(st) = statat(dirfd, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) else {
+            continue;
+        };
+        match FileType::from_raw_mode(st.st_mode as _) {
+            FileType::Directory => {
+                u.dirs += 1;
+                let Ok(sub) = openat(
+                    dirfd,
+                    name.as_str(),
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                ) else {
+                    continue;
+                };
+                add_up(&sub, include_hidden, limits, u)?;
+                if !u.complete {
+                    return Ok(());
+                }
+            }
+            FileType::RegularFile => {
+                u.files += 1;
+                u.bytes += st.st_size as u64;
             }
             _ => {}
         }
@@ -183,5 +261,44 @@ mod tests {
                 "Urlaub/Tag 10"
             ]
         );
+    }
+
+    #[test]
+    fn usage_adds_up_like_the_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::create_dir_all(root.join(".chestcraft-trash")).unwrap();
+        std::fs::write(root.join("a/one"), vec![0u8; 100]).unwrap();
+        std::fs::write(root.join("a/b/two"), vec![0u8; 20]).unwrap();
+        std::fs::write(root.join("a/.dot"), vec![0u8; 3]).unwrap();
+        std::fs::write(root.join(".chestcraft-trash/gone"), vec![0u8; 1000]).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", root.join("a/link")).unwrap();
+        let v = vol(root);
+        let far = UsageLimits {
+            max_entries: 1000,
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        };
+        let u = usage(&v, &RelPath::default(), false, &far).unwrap();
+        assert_eq!(
+            u,
+            Usage {
+                bytes: 120,
+                files: 2,
+                dirs: 2,
+                complete: true
+            }
+        );
+        let u = usage(&v, &RelPath::default(), true, &far).unwrap();
+        assert_eq!((u.bytes, u.files), (123, 3));
+        let a = RelPath::parse("a").unwrap();
+        assert_eq!(usage(&v, &a, false, &far).unwrap().bytes, 120);
+        let tight = UsageLimits {
+            max_entries: 2,
+            ..far
+        };
+        let u = usage(&v, &RelPath::default(), false, &tight).unwrap();
+        assert!(!u.complete);
+        assert!(u.files + u.dirs <= 2);
     }
 }
