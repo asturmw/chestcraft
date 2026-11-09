@@ -35,6 +35,7 @@ shares_tab = "Freigaben"
 trash = "Papierkorb"
 account = "Konto"
 account_menu = "Kontomenü"
+open_menu = "Ablagen anzeigen"
 admin = "Verwaltung"
 # Markierungen neben einer Ablage im Ordnerbaum.
 tag_public = "öffentlich"
@@ -271,6 +272,16 @@ keep_both = "Beide behalten"
 replace = "Ersetzen (die vorhandene Datei kommt in den Papierkorb)"
 skip = "Überspringen"
 apply_all = "Bei den anderen {count} Konflikten genauso"
+# Upload-Leiste: {sent} und {total} wie „312 MB“, {rate} wie „85 MB“, {time} wie „2 min“.
+progress = "{sent} von {total}"
+rate = "{rate}/s"
+left = "noch {time}"
+# Erscheint, nachdem die Seite mit den neuen Dateien neu geladen ist.
+uploaded_one = "{count} Datei hochgeladen"
+uploaded_other = "{count} Dateien hochgeladen"
+# Ein Upload, der stehen geblieben ist (Tab geschlossen, Verbindung weg); {percent} ist eine ganze Zahl.
+unfinished = "Bei {percent} % angehalten. Füge die Datei noch einmal hinzu, dann geht es dort weiter."
+discard = "Verwerfen"
 
 [trash]
 title = "Papierkorb"

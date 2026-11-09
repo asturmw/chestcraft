@@ -38,6 +38,12 @@ a.menu__item { text-decoration: none; }
   border: 1px solid var(--line-strong); background: var(--field-bg); color: var(--text); font: inherit;
 }
 .panel textarea { width: 100%; min-height: 80px; }
+/* These forms put .field__input straight into the field, without the design's
+   .field__control wrapper; app.css's width: 0 (meant for that flex wrapper) collapsed it. */
+.panel :not(.field__control) > .field__input:not([type="color"], [type="checkbox"], [type="radio"]) {
+  width: 100%; max-width: 32rem; min-width: 0;
+}
+.panel :not(.field__control) > textarea.field__input { max-width: none; }
 .panel button:not(.btn, .menu__item) {
   min-height: 36px; padding: 0 14px; border-radius: var(--radius-m); cursor: pointer;
   border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 600;
@@ -62,7 +68,13 @@ a.menu__item { text-decoration: none; }
 /* Upload tray (inside the browser pane). */
 .upload-tray { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius-m); background: var(--bar-bg); border: 1px solid var(--bar-line); font-size: var(--fs-sm); }
 .upload-tray__title { font-size: var(--fs-sm); }
-.upload-tray__list { max-height: 30vh; overflow: auto; }
+.upload-tray__list { max-height: 30vh; overflow: auto; display: grid; gap: 6px; margin-top: 6px; }
+.upload-tray__summary { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.upload-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.upload-item__name { flex: 1 1 14rem; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.upload-item__progress { flex: 0 1 160px; height: 6px; }
+.upload-item__state { color: var(--text-muted); }
+.upload-item__discard { min-height: 30px; }
 
 /* Dialogs (new folder, delete, name clash). */
 .dialog, .name-clash {
@@ -96,3 +108,68 @@ a.menu__item { text-decoration: none; }
 .keys__table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .keys__table th { text-align: right; padding: 3px 12px 3px 0; white-space: nowrap; width: 1%; font-weight: 400; }
 .keys__group { font-size: var(--fs-sm); margin-top: 4px; }
+
+/* Grid view (?layout=grid) until the design delivers it: the table's rows become tiles. */
+.browser[data-view="grid"] .files { display: block; table-layout: auto; }
+.browser[data-view="grid"] .files caption,
+.browser[data-view="grid"] .files thead { display: none; }
+.browser[data-view="grid"] .files tbody {
+  display: grid; gap: 10px; padding-top: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.browser[data-view="grid"] .files__row {
+  position: relative; display: grid; grid-template-rows: auto auto; align-content: start;
+  border-radius: var(--radius-m); border: 1px solid var(--panel-line); overflow: hidden;
+}
+.browser[data-view="grid"] .files__row td { display: block; height: auto; border: 0; padding: 0; background: none; box-shadow: none; }
+.browser[data-view="grid"] .files__row:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+.browser[data-view="grid"] .files__row[data-state~="selected"] { background: var(--row-select); border-color: var(--accent-ink); }
+.browser[data-view="grid"] .files__row[data-state~="cursor"] { outline: 2px solid var(--cursor); outline-offset: -2px; }
+.browser[data-view="grid"] .files__icon {
+  width: auto; aspect-ratio: 1; display: grid !important; place-items: center;
+  background: color-mix(in srgb, var(--surface-3) 60%, transparent);
+}
+.browser[data-view="grid"] .files__icon .thumb { width: 100%; height: 100%; object-fit: cover; border-radius: 0; background: none; }
+.browser[data-view="grid"] .files__row[data-type="vector"] .thumb,
+.browser[data-view="grid"] .files__row[data-type="model"] .thumb,
+.browser[data-view="grid"] .files__row[data-type="gcode"] .thumb { object-fit: contain; padding: 8px; }
+.browser[data-view="grid"] .files__icon .ficon { width: 56px; height: 56px; }
+.browser[data-view="grid"] .files__icon .ficon .icon { width: 40px; height: 40px; }
+.browser[data-view="grid"] .files__row .files__name { padding: 8px 10px 2px; font-size: var(--fs-sm); }
+.browser[data-view="grid"] .files__row .files__size { padding: 0 10px 8px; text-align: left; font-size: var(--fs-xs); }
+.browser[data-view="grid"] .files__date { display: none !important; }
+.browser[data-view="grid"] .files__check {
+  position: absolute; top: 6px; left: 6px; z-index: 1; width: auto;
+  display: block !important; opacity: 0; transition: opacity .12s;
+}
+.browser[data-view="grid"] .files__row:is(:hover, :focus-within, [data-state~="selected"]) .files__check,
+.browser[data-view="grid"]:has([data-state~="selected"]) .files__check { opacity: 1; }
+.browser[data-view="grid"] .files__menu { position: absolute; top: 4px; right: 4px; width: auto; z-index: 1; }
+.browser[data-view="grid"] .files__menu .btn { background: color-mix(in srgb, var(--surface) 80%, transparent); }
+@media (hover: none) { .browser[data-view="grid"] .files__check { opacity: 1; } }
+
+/* Below 1024 px the sidebar opens as a drawer from the app bar's menu button. */
+@media (max-width: 1023px) {
+  .sidenav[data-state="open"] {
+    display: block; position: fixed; z-index: 40;
+    top: calc(var(--appbar-h) + 2 * var(--float) + env(safe-area-inset-top, 0px)); bottom: var(--float); left: var(--float);
+    width: min(var(--sidenav-w), calc(100vw - 2 * var(--float))); overflow: auto;
+    background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none;
+    box-shadow: var(--pop-shadow), 0 0 0 100vmax color-mix(in srgb, var(--shade) 35%, transparent);
+  }
+}
+
+/* Background editor: picture sets as rows of small previews, so the upload form below
+   stays in reach. */
+.panel .bg-sets { list-style: none; padding: 0; display: grid; gap: 10px; }
+.panel .bg-set {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px; border: 1px solid var(--panel-line); border-radius: var(--radius-m);
+}
+.panel .bg-set[data-state="selected"] { border-color: var(--accent-ink); background: var(--row-select); }
+.panel .bg-set__pick { flex: 1 1 100%; margin: 0; font-weight: 600; }
+.panel .bg-set__picture { margin: 0; display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--text-muted); }
+.panel .bg-set__picture img { height: 72px; width: auto; max-width: 160px; object-fit: cover; border-radius: var(--radius-s); }
+.panel .bg-set__delete { margin-left: auto; }
+.panel fieldset { border: 1px solid var(--panel-line); border-radius: var(--radius-m); padding: 10px 14px; margin-block: 12px; min-width: 0; }
+.panel legend { padding: 0 6px; font-weight: 600; }

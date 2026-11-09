@@ -20,7 +20,26 @@
   const T = {
     queued: ds.tQueued, uploading: ds.tUploading, done: ds.tDone, failed: ds.tFailed,
     skipped: ds.tSkipped, clash: ds.tClash, savedAs: ds.tSavedAs, reload: ds.tReload,
+    progress: ds.tProgress, rate: ds.tRate, left: ds.tLeft, unfinished: ds.tUnfinished,
+    discard: ds.tDiscard, uploadedOne: ds.tUploadedOne, uploadedOther: ds.tUploadedOther,
   };
+  const fill = (tpl, args) => (tpl || '').replace(/\{(\w+)\}/g, (m, k) => (k in args ? String(args[k]) : m));
+  // Same as the server's sizes (SI units, the language's decimal mark).
+  function sizeText(bytes) {
+    const units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB'];
+    if (bytes < 1000) return `${Math.round(bytes)} B`;
+    let v = bytes;
+    let u = 0;
+    while (v >= 1000 && u < units.length - 1) { v /= 1000; u += 1; }
+    const t = v < 100 ? v.toFixed(1) : v.toFixed(0);
+    return `${t.replace('.', ds.decimal || '.')} ${units[u]}`;
+  }
+  function timeText(secs) {
+    const s = Math.max(1, Math.round(secs));
+    if (s < 60) return `${s} s`;
+    if (s < 3600) return `${Math.round(s / 60)} min`;
+    return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+  }
   // Files started (a .part exists on the server) but not finished.
   const MAX_ACTIVE = 8;
   const STORE = 'cc-upload:';
@@ -35,6 +54,11 @@
   let ended = 0;
   let totalBytes = 0;
   let sentBytes = 0;
+  // Upload speed: bytes per second, smoothed over one-second samples. Chunks a resumed
+  // upload already had don't count.
+  let rate = 0;
+  let rateAt = 0;
+  let rateBytes = 0;
   let clashForAll = null;
   let dialogChain = Promise.resolve();
 
@@ -68,12 +92,59 @@
 
   const uploadUrl = (item, tail) => `${base}/upload/${encodeURIComponent(item.id)}${tail || ''}`;
 
+  function sampleRate() {
+    const now = performance.now();
+    if (!rateAt) { rateAt = now; rateBytes = sentBytes; return; }
+    const dt = (now - rateAt) / 1000;
+    if (dt < 1) return;
+    const r = Math.max(0, (sentBytes - rateBytes) / dt);
+    rate = rate ? rate * 0.6 + r * 0.4 : r;
+    rateAt = now;
+    rateBytes = sentBytes;
+  }
+
   function updateSummary() {
     const pct = totalBytes ? Math.floor((sentBytes / totalBytes) * 100) : 100;
-    summary.textContent = `${ended} / ${items.length} · ${Math.min(pct, 100)} %`;
     const busy = ended < items.length;
+    const parts = [`${ended} / ${items.length}`, `${fill(T.progress, { sent: sizeText(sentBytes), total: sizeText(totalBytes) })} (${Math.min(pct, 100)} %)`];
+    if (busy) {
+      sampleRate();
+      if (rate > 0) {
+        parts.push(fill(T.rate, { rate: sizeText(rate) }));
+        const left = (totalBytes - sentBytes) / rate;
+        if (left > 0 && Number.isFinite(left)) parts.push(fill(T.left, { time: timeText(left) }));
+      }
+    } else {
+      rate = 0;
+      rateAt = 0;
+    }
+    summary.textContent = parts.join(' · ');
     tray.dataset.state = busy ? 'active' : 'done';
-    if (!busy && !tray.querySelector('[data-js="upload-reload"]')) {
+    if (!busy) whenAllEnded();
+  }
+  // The speed keeps moving while chunks are on their way.
+  setInterval(() => { if (ended < items.length) updateSummary(); }, 1000);
+
+  // Everything ended: without failures the listing reloads with the new files (and says
+  // how many arrived); otherwise the tray stays, with a button to show the new files.
+  let reloadTimer = null;
+  function whenAllEnded() {
+    if (!items.length) return;
+    const failed = items.some((i) => i.li.dataset.state === 'failed');
+    const done = items.filter((i) => i.li.dataset.state === 'done').length;
+    if (!failed && done) {
+      if (reloadTimer) return;
+      const count = items.length;
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        if (ended !== items.length || items.length !== count) return;
+        const text = fill(done === 1 ? T.uploadedOne : T.uploadedOther, { count: done });
+        if (window.cc && window.cc.reloadWith) window.cc.reloadWith(text);
+        else window.location.reload();
+      }, 700);
+      return;
+    }
+    if (!tray.querySelector('[data-js="upload-reload"]')) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'upload-tray__reload';
@@ -90,9 +161,10 @@
     updateSummary();
   }
 
-  function addSent(item, n) {
+  function addSent(item, n, resumed) {
     item.sent += n;
     sentBytes += n;
+    if (resumed) rateBytes += n;
     item.prog.value = Math.min(item.sent, item.prog.max);
   }
 
@@ -204,7 +276,9 @@
   async function start(item) {
     item.key = [vol, dir, item.name, item.file.size, item.file.lastModified].join('|');
     let status = null;
-    const saved = store.get(item.key);
+    const saved = savedId(store.get(item.key));
+    const notice = notices.get(item.key);
+    if (notice) { notices.delete(item.key); notice.remove(); }
     if (saved) {
       item.id = saved;
       const r = await api('GET', uploadUrl(item));
@@ -220,7 +294,7 @@
       const r = await api('POST', `${base}/upload`, body);
       if (r.status === 201) {
         status = r.data;
-        store.set(item.key, status.id);
+        store.set(item.key, JSON.stringify({ id: status.id, vol, dir, name: item.name, size: item.file.size }));
       } else if (r.ok && r.data && r.data.skipped) {
         end(item, 'skipped');
         return;
@@ -238,7 +312,7 @@
     const have = new Set(status.have);
     for (let n = 0; n < status.chunks; n += 1) {
       if (have.has(n)) {
-        addSent(item, chunkEnd(item, n) - n * item.chunk);
+        addSent(item, chunkEnd(item, n) - n * item.chunk, true);
       } else {
         chunks.push({ item, n });
         item.pending += 1;
@@ -376,6 +450,66 @@
     for (const e of entries) queue.push(addItem(e.file, e.name, batch));
     starter();
   }
+
+  // --- uploads that stopped -------------------------------------------------------------
+  // A closed tab or a lost connection leaves a started upload on the server. The browser
+  // can't reach the file again by itself, so the tray lists it: adding the same file again
+  // continues it (start() finds its id), Discard drops it.
+
+  // Stored values: {"id","vol","dir","name","size"} as JSON, or a bare id (older pages).
+  function savedId(v) {
+    if (!v) return null;
+    try { const o = JSON.parse(v); if (o && typeof o.id === 'string') return o.id; } catch (e) { /* bare id */ }
+    return v;
+  }
+  const notices = new Map();
+  async function showStopped() {
+    let keys = [];
+    try { keys = Object.keys(localStorage).filter((k) => k.startsWith(STORE)); } catch (e) { return; }
+    for (const full of keys) {
+      const key = full.slice(STORE.length);
+      let o = null;
+      try { o = JSON.parse(localStorage.getItem(full)); } catch (e) { o = null; }
+      if (!o || typeof o.id !== 'string' || o.vol !== vol || o.dir !== dir) continue;
+      const r = await api('GET', `${base}/upload/${encodeURIComponent(o.id)}`);
+      if (!r.ok || !r.data) {
+        if (r.status >= 400 && r.status < 500) store.del(key);
+        continue;
+      }
+      if (items.some((i) => i.key === key)) continue;
+      const d = r.data;
+      const have = (d.have || []).reduce((n, c) => n + Math.min(d.chunk, d.size - c * d.chunk), 0);
+      const li = document.createElement('li');
+      li.className = 'upload-item';
+      li.dataset.state = 'stopped';
+      const label = document.createElement('span');
+      label.className = 'upload-item__name';
+      label.textContent = o.name;
+      const prog = document.createElement('progress');
+      prog.className = 'upload-item__progress';
+      prog.max = Math.max(d.size, 1);
+      prog.value = have;
+      const stateEl = document.createElement('span');
+      stateEl.className = 'upload-item__state';
+      stateEl.textContent = fill(T.unfinished, { percent: Math.floor((have / Math.max(d.size, 1)) * 100) });
+      const drop = document.createElement('button');
+      drop.type = 'button';
+      drop.className = 'btn upload-item__discard';
+      drop.textContent = T.discard;
+      drop.addEventListener('click', async () => {
+        await api('DELETE', `${base}/upload/${encodeURIComponent(o.id)}`);
+        store.del(key);
+        notices.delete(key);
+        li.remove();
+        if (!list.children.length && !items.length) tray.hidden = true;
+      });
+      li.append(label, prog, stateEl, drop);
+      list.append(li);
+      notices.set(key, li);
+      tray.hidden = false;
+    }
+  }
+  showStopped();
 
   // --- choosing files ----------------------------------------------------------------
 

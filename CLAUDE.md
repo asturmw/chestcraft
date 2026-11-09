@@ -307,10 +307,27 @@ public write, shares from the UI), and the next UI slices as the design delivers
   asks for the picture again after 5/15/45 s (jittered); on success the picture comes back.
   Checked in headless Firefox (burst used up → icons, back after the retry; broken JPEG
   stays an icon; viewer).
+- Staging feedback 1 (2026-11-09; Tibor's checklist `deploy/site/staging-acceptance.html`
+  + notes): provisional forms collapsed (`.field__input` without `.field__control` has
+  `width: 0` in app.css; `provisional.css` widens it in `.panel`), which hid the language,
+  shortcut and background-upload fields. Grid view CSS (provisional, `data-view="grid"`).
+  Below 1024 px the app bar's `appbar__menu` opens the sidebar as a drawer (`app.js`,
+  `data-js="nav-toggle"`, `#sidenav[data-state=open]`). Folder sizes: `GET <folder>/?du`
+  (`web/du.rs`, `fs::tree::usage`: tree walk rules, 2 walks at a time, ≤ 2 M entries /
+  15 s → `complete: false`, cached 5 min by inode + mtime), filled in by `browser.js`
+  (item count stays as tooltip; also for shares). Files: a click on the name selects, a
+  double click opens (taps, Enter and the key maps still open). New folder sends JSON
+  (`Accept: application/json` → `{"ok"}` / `{"message"}`), a taken name shows in the
+  dialog. Upload tray: "312 MB of 734 MB (42 %) · 85 MB/s · 2 min left"; without failures
+  the listing reloads and says how many arrived (`cc.reloadWith` in `app.js`, shared with
+  `ops.js`); stopped uploads (localStorage now holds JSON with vol/dir/name) are listed on
+  page load with their percentage and Discard; adding the same file again continues. SVG
+  thumbnails are cropped to the drawing (+3 %) unless it fills > 80 % of the canvas;
+  `RENDER_VERSION` 2. STEP files have no thumbnail (no pure-Rust STEP tessellator).
 - Open: For the design session (not in its NOTES yet): tablet nav (the `appbar__menu`
-  drawer; 720–1023 px has no nav besides crumbs and the account menu), the account menu, a
+  drawer, provisional now), the account menu, a
   folder-upload entry (only drag and drop now), an `i-arrow-down` icon for descending sort,
-  `a.menu__item` (links in menus), dialogs, upload tray, banners, pager, grid view CSS,
+  `a.menu__item` (links in menus), dialogs, upload tray, banners, pager, grid view (provisional now),
   share of several items (Share shows for exactly one), the rename/picker/clash/shortcut
   dialogs; at 1280 px the selection bar wraps to two rows while Rename shows (one item
   selected); "keep both" on the server names `x (1).ext`, save-to-folder (design)

@@ -175,7 +175,8 @@ async fn models_gcode_and_svg() {
         br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><circle cx="25" cy="25" r="20"/></svg>"#,
     );
     let th = t.thumb(&svg, Size::View).await.unwrap().unwrap();
-    assert_eq!((th.mime, dims(&th)), ("image/png", (VIEW_PX, VIEW_PX / 2)));
+    // The circle fills a third of the canvas: cropped to it, so square.
+    assert_eq!((th.mime, dims(&th)), ("image/png", (VIEW_PX, VIEW_PX)));
 }
 
 fn has_ffmpeg() -> bool {

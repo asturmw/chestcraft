@@ -97,7 +97,7 @@ as the user that owns `state_dir`.
 | Admin accounts page, audit log, app passwords + sessions on the account page | `web/users.rs` |
 | CLI state commands, admin socket | `cli.rs`, `web/adminsock.rs` |
 | Nightly state backup | `backup.rs` (run from `web/jobs.rs`) |
-| Folder listing, downloads, zip, tree listing, download slots | `web/files.rs`, `fs/zipstream.rs`, `fs/tree.rs`, `fs/sort.rs` |
+| Folder listing, downloads, zip, tree listing, download slots, folder sizes | `web/files.rs`, `fs/zipstream.rs`, `fs/tree.rs`, `fs/sort.rs`, `web/du.rs` |
 | Uploads (chunked, resumable) | `fs/upload.rs`, `web/api.rs`, `assets/upload.js` |
 | Move/copy/new file, no-overwrite renames | `fs/transfer.rs`, `fs/ops.rs`, `fs/names.rs`; JSON API for the UI `web/ops.rs` |
 | Trash | `fs/trash.rs`, `web/trash.rs` |
@@ -112,7 +112,7 @@ as the user that owns `state_dir`.
 | External programs (absolute paths) | `tools.rs`, `health/cmd.rs` |
 | UI strings | `i18n/en.toml`, `i18n/de.toml`, `src/i18n.rs` |
 | App shell (app bar, sidebar tree, tab bar), browser view, gate pages | `web/views.rs`, `web/nav.rs` |
-| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs, thumbnail fallback), `browser.js` (selection, filter, row menu), `download.js` (save to folder, separately, queue), `ops.js` (clipboard, rename, move/copy picker), `keys.js` (Vim/Standard maps), `upload.js`, `provisional.css` (screens not designed yet) |
+| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs, thumbnail fallback, sidebar drawer, message after reload), `browser.js` (selection, filter, row menu, new folder, folder sizes), `download.js` (save to folder, separately, queue), `ops.js` (clipboard, rename, move/copy picker), `keys.js` (Vim/Standard maps), `upload.js`, `provisional.css` (screens not designed yet, grid view, drawer) |
 | Deploy | `deploy/release.sh`, `deploy/install.sh`, `deploy/units/` |
 
 ## Rules a change must keep

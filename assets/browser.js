@@ -46,8 +46,10 @@
     const sel = selected();
     for (const r of rows) setState(r, 'selected', pick(r).checked);
     if (status) status.dataset.state = sel.length ? 'select' : 'idle';
-    const bytes = sel.reduce((n, r) => n + (r.dataset.dir ? 0 : Number(r.dataset.size) || 0), 0);
-    const files = sel.some((r) => !r.dataset.dir);
+    // Folders count once their size is known (?du below).
+    const sized = (r) => !r.dataset.dir || r.dataset.du === '1';
+    const bytes = sel.reduce((n, r) => n + (sized(r) ? Number(r.dataset.size) || 0 : 0), 0);
+    const files = sel.some(sized);
     const count = $('sel-count');
     if (count) count.textContent = String(sel.length);
     const size = $('sel-size');
@@ -115,12 +117,32 @@
     r.addEventListener('touchend', cancel);
     r.addEventListener('touchmove', cancel, { passive: true });
     r.addEventListener('contextmenu', (e) => { if (held) e.preventDefault(); });
-    // A click on the row outside its links and buttons toggles it.
+    // A click on the row outside its links and buttons toggles it; a double click opens it
+    // (its second click doesn't toggle back).
     r.addEventListener('click', (e) => {
       if (held) { held = false; e.preventDefault(); return; }
       if (e.target.closest('a, button, input, label')) return;
+      if (e.detail > 1) return;
       toggle(r, e.shiftKey);
     });
+    const link = r.querySelector('[data-js="row-link"]');
+    let pointer = 'mouse';
+    r.addEventListener('pointerdown', (e) => { pointer = e.pointerType; });
+    r.addEventListener('dblclick', (e) => {
+      if (!link || pointer === 'touch' || e.target.closest('button, input, label')) return;
+      e.preventDefault();
+      location.href = link.href;
+    });
+    // A file's name selects it like a click on its row; a double click opens it. Taps
+    // still open (phones select by holding), and so do Enter and the keyboard maps (their
+    // clicks have no pointer); Ctrl/⌘/Alt clicks and the middle button stay the browser's.
+    if (link && !r.dataset.dir) {
+      link.addEventListener('click', (e) => {
+        if (e.detail === 0 || pointer === 'touch' || e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        if (e.detail === 1) toggle(r, e.shiftKey);
+      });
+    }
   }
 
   if (all) {
@@ -187,11 +209,40 @@
   const nfDialog = $('new-folder-dialog');
   const nf = $('new-folder');
   if (nf && nfDialog) {
+    const nfForm = nfDialog.querySelector('form');
+    const input = nfDialog.querySelector('input[name="name"]');
+    const field = $('new-folder-field', nfDialog);
+    const error = $('new-folder-error', nfDialog);
+    const clearError = () => { delete field.dataset.state; error.textContent = ''; };
     nf.addEventListener('click', () => {
+      clearError();
       nfDialog.showModal();
-      const input = nfDialog.querySelector('input[name="name"]');
       input.value = '';
       input.focus();
+    });
+    input.addEventListener('input', clearError);
+    // Sent from here, so a taken or invalid name shows in the dialog instead of a page.
+    nfForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      let res = null;
+      try {
+        res = await fetch(nfForm.action, {
+          method: 'POST',
+          headers: { accept: 'application/json' },
+          body: new URLSearchParams(new FormData(nfForm)),
+        });
+      } catch (err) { res = null; }
+      if (res && res.ok) {
+        nfDialog.close();
+        location.reload();
+        return;
+      }
+      let msg = '';
+      try { msg = (await res.json()).message || ''; } catch (err) { msg = ''; }
+      field.dataset.state = 'error';
+      error.textContent = msg || ds.tFailed || '';
+      input.focus();
+      input.select();
     });
   }
 
@@ -241,6 +292,31 @@
   // A page restored from the back/forward cache keeps its checkboxes.
   addEventListener('pageshow', update);
   update();
+
+  // Folder sizes: the server adds each folder up (?du), two at a time; the item count it
+  // rendered stays as the cell's tooltip.
+  const duRows = rows.filter((r) => r.dataset.dir && $('du', r));
+  const duHidden = ds.hidden === '1' ? '&hidden=1' : '';
+  let duNext = 0;
+  async function duWorker() {
+    while (duNext < duRows.length) {
+      const r = duRows[duNext];
+      duNext += 1;
+      let d = null;
+      try {
+        const res = await fetch(`${encodeURIComponent(r.dataset.name)}/?du${duHidden}`, { headers: { accept: 'application/json' } });
+        if (res.ok) d = await res.json();
+      } catch (e) { d = null; }
+      if (!d || typeof d.bytes !== 'number') continue;
+      const cell = $('du', r);
+      cell.title = cell.textContent.trim();
+      cell.textContent = `${d.complete ? '' : '≥ '}${sizeText(d.bytes)}`;
+      r.dataset.size = String(d.bytes);
+      r.dataset.du = '1';
+      if (pick(r).checked) update();
+    }
+  }
+  if (duRows.length) { duWorker(); duWorker(); }
   window.cc = Object.assign(window.cc || {}, {
     browser: { rows, selected, selectOnly, update, sizeText, items, setState, toggle, askDelete, submit, pick },
   });

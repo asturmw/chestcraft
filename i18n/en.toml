@@ -37,6 +37,7 @@ shares_tab = "Shares"
 trash = "Trash"
 account = "Account"
 account_menu = "Account menu"
+open_menu = "Open the folder list"
 admin = "Admin"
 # Tags next to a volume in the folder tree.
 tag_public = "public"
@@ -276,6 +277,16 @@ replace = "Replace (the existing file goes to the trash)"
 skip = "Skip"
 # {count} is filled in by the upload script.
 apply_all = "Do this for the other {count} clashes too"
+# Upload tray: {sent} and {total} like "312 MB", {rate} like "85 MB", {time} like "2 min".
+progress = "{sent} of {total}"
+rate = "{rate}/s"
+left = "{time} left"
+# Shown after the page reloads with the new files.
+uploaded_one = "{count} file uploaded"
+uploaded_other = "{count} files uploaded"
+# An upload that stopped (tab closed, connection lost); {percent} is a whole number.
+unfinished = "Stopped at {percent} %. Add this file again to continue where it stopped."
+discard = "Discard"
 
 [trash]
 title = "Trash"

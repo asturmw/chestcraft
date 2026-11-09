@@ -404,6 +404,9 @@ async fn content(
                 let suffix = uri.query().map(|qs| format!("?{qs}")).unwrap_or_default();
                 return Redirect::permanent(&format!("{raw_path}/{suffix}")).into_response();
             }
+            if *method != Method::POST && q.has("du") {
+                return files::du_response(st, &ctx, vol, abs, false).await;
+            }
             let (op, only) = if *method == Method::POST {
                 let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM).await else {
                     return fail(&ctx, Fail::BadRequest);

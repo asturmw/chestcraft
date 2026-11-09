@@ -17,7 +17,6 @@
   const join = (d, n) => (d ? `${d}/${n}` : n);
   const enc = (path) => path.split('/').map(encodeURIComponent).join('/');
   const STORE = 'cc-clipboard';
-  const FLASH = 'cc-flash';
 
   async function api(op, body) {
     let r;
@@ -45,12 +44,6 @@
     queue.querySelector('[data-js="queue-fill"]').setAttribute('width', String(part === undefined ? 100 : Math.round(part * 100)));
     queue.querySelector('[data-js="queue-stop"]').setAttribute('aria-label', ds.tQueueClose);
   }
-  // A message from before the reload.
-  try {
-    const flash = sessionStorage.getItem(FLASH);
-    if (flash) { sessionStorage.removeItem(FLASH); toast(flash); }
-  } catch (e) { /* storage off */ }
-
   // --- the clipboard -----------------------------------------------------------------
 
   function load() {
@@ -150,8 +143,7 @@
     let text = `${fill(ds.tQueueCount, { done: res.changed, total: res.done })} ${verb}`;
     if (res.fails.length) text += ` · ${res.fails[0]}${res.fails.length > 1 ? ` (+${res.fails.length - 1})` : ''}`;
     if (res.changed) {
-      try { sessionStorage.setItem(FLASH, text); } catch (e) { /* no flash then */ }
-      location.reload();
+      window.cc.reloadWith(text);
     } else {
       toast(text);
     }

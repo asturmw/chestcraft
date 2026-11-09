@@ -37,10 +37,10 @@ pub fn render_bytes(data: &[u8], px: u32) -> Result<RgbaImage> {
     };
     let tree = usvg::Tree::from_data(data, &opt).map_err(|e| unusable(format!("svg: {e}")))?;
     let size = tree.size();
-    let (w, h) = (size.width(), size.height());
-    if !(w > 0.0 && h > 0.0) {
+    if !(size.width() > 0.0 && size.height() > 0.0) {
         return Err(unusable("svg without size"));
     }
+    let (x, y, w, h) = content_box(&tree, size.width(), size.height());
     // Vector art: scale to the requested size either way.
     let scale = px as f32 / w.max(h);
     let (pw, ph) = (
@@ -50,7 +50,7 @@ pub fn render_bytes(data: &[u8], px: u32) -> Result<RgbaImage> {
     let mut pixmap = tiny_skia::Pixmap::new(pw, ph).ok_or_else(|| unusable("svg size"))?;
     resvg::render(
         &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
+        tiny_skia::Transform::from_row(scale, 0.0, 0.0, scale, -x * scale, -y * scale),
         &mut pixmap.as_mut(),
     );
     let mut img = RgbaImage::new(pw, ph);
@@ -61,6 +61,22 @@ pub fn render_bytes(data: &[u8], px: u32) -> Result<RgbaImage> {
     Ok(img)
 }
 
+/// The part of the canvas that has something on it, with a small margin: drawings for
+/// cutting or printing often sit small in a corner of a whole A4 page, which would leave the
+/// thumbnail nearly empty. The whole canvas when nothing is drawn or it is mostly filled.
+fn content_box(tree: &usvg::Tree, w: f32, h: f32) -> (f32, f32, f32, f32) {
+    let b = tree.root().abs_stroke_bounding_box();
+    let (x0, y0) = (b.left().max(0.0), b.top().max(0.0));
+    let (x1, y1) = (b.right().min(w), b.bottom().min(h));
+    if !(x1 > x0 && y1 > y0) || (x1 - x0) * (y1 - y0) > 0.8 * w * h {
+        return (0.0, 0.0, w, h);
+    }
+    let pad = (x1 - x0).max(y1 - y0) * 0.03;
+    let (x0, y0) = ((x0 - pad).max(0.0), (y0 - pad).max(0.0));
+    let (x1, y1) = ((x1 + pad).min(w), (y1 + pad).min(h));
+    (x0, y0, x1 - x0, y1 - y0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,10 +85,28 @@ mod tests {
     fn renders_and_scales_vector_art() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
             <rect x="0" y="0" width="20" height="20" fill="#ff0000"/></svg>"##;
+        // Half the canvas is drawn: cropped to the drawing and a small margin.
         let img = render_bytes(svg, 200).unwrap();
-        assert_eq!((img.width(), img.height()), (200, 100));
+        assert_eq!((img.width(), img.height()), (200, 194));
+        assert_eq!(img.get_pixel(100, 97).0, [255, 0, 0, 255]);
+        // Mostly drawn: the whole canvas, the empty strip stays.
+        let wide = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+            <rect x="0" y="0" width="36" height="20" fill="#ff0000"/></svg>"##;
+        let img = render_bytes(wide, 200).unwrap();
+        assert_eq!(img.dimensions(), (200, 100));
         assert_eq!(img.get_pixel(10, 50).0, [255, 0, 0, 255]);
-        assert_eq!(img.get_pixel(190, 50).0[3], 0);
+        assert_eq!(img.get_pixel(195, 50).0[3], 0);
+    }
+
+    #[test]
+    fn crops_small_drawings_on_a_big_page() {
+        // A4 in points with a 60 × 30 drawing near the top left.
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="595" height="842">
+            <rect x="20" y="40" width="60" height="30" fill="#00ff00"/></svg>"##;
+        let img = render_bytes(svg, 200).unwrap();
+        assert_eq!(img.width(), 200);
+        assert!((100..=120).contains(&img.height()), "{}", img.height());
+        assert_eq!(img.get_pixel(100, img.height() / 2).0, [0, 255, 0, 255]);
     }
 
     #[test]
