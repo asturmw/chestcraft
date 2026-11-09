@@ -1352,9 +1352,10 @@ fn file_row(ctx: &Ctx, r: &Row) -> Markup {
                 input type="checkbox" name="n" value=(r.name) form="sel" data-js="pick"
                     aria-label=(ctx.tf("browser.select_item", &[("name", &r.name)]));
             }
-            td class="files__icon" {
+            td class="files__icon" data-js=[r.thumb.is_some().then_some("thumb-box")] {
                 @if let Some(src) = &r.thumb {
-                    img class="thumb" src=(src) alt="" width="40" height="40" loading="lazy" decoding="async";
+                    img class="thumb" src=(src) alt="" width="40" height="40" loading="lazy" decoding="async" data-js="thumb";
+                    template data-js="thumb-fallback" { (file_icon(r.ftype)) }
                 } @else {
                     (file_icon(r.ftype))
                 }
@@ -1701,6 +1702,12 @@ impl ViewerBody {
             ViewerBody::None => "none",
         }
     }
+
+    /// The stage is a thumbnail that can fail to load (then the page script shows the
+    /// "no preview" stage instead).
+    pub fn thumb(&self) -> bool {
+        matches!(self, ViewerBody::Image { .. } | ViewerBody::Rendered { .. })
+    }
 }
 
 pub struct ViewerView {
@@ -1732,16 +1739,16 @@ pub fn viewer_stage(
     download: &str,
 ) -> Markup {
     html! {
-        div class="viewer__stage" data-state=(body.state()) {
+        div class="viewer__stage" data-state=(body.state()) data-js=[body.thumb().then_some("thumb-box")] {
             @match body {
                 ViewerBody::Image { src, full } => {
                     a class="viewer__picture" href=(full) {
-                        img class="viewer__image" src=(src) alt=(name);
+                        img class="viewer__image" src=(src) alt=(name) data-js="thumb";
                     }
                     a class="viewer__full-size" href=(full) { (ctx.t("viewer.full_size")) }
                 }
                 ViewerBody::Rendered { src } => {
-                    img class="viewer__image" src=(src) alt=(name);
+                    img class="viewer__image" src=(src) alt=(name) data-js="thumb";
                 }
                 ViewerBody::Video { src, poster } => {
                     video class="viewer__video" src=(src) poster=(poster) controls preload="metadata" {}
@@ -1767,12 +1774,25 @@ pub fn viewer_stage(
                     }
                 }
                 ViewerBody::None => {
-                    (file_icon(ftype))
-                    p class="viewer__none" { (ctx.t("viewer.no_preview")) }
-                    a class="viewer__download-big" href=(download) download { (ctx.t("viewer.download")) }
+                    (no_preview(ctx, ftype, download))
+                }
+            }
+            @if body.thumb() {
+                // Swapped in by app.js when the thumbnail fails to load.
+                template data-js="thumb-fallback" data-state="none" {
+                    (no_preview(ctx, ftype, download))
                 }
             }
         }
+    }
+}
+
+/// Type icon, "no preview" and a download link: the stage of a file without a preview.
+fn no_preview(ctx: &Ctx, ftype: &str, download: &str) -> Markup {
+    html! {
+        (file_icon(ftype))
+        p class="viewer__none" { (ctx.t("viewer.no_preview")) }
+        a class="viewer__download-big" href=(download) download { (ctx.t("viewer.download")) }
     }
 }
 

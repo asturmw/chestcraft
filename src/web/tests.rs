@@ -3177,8 +3177,15 @@ async fn listings_link_files_to_the_viewer_with_thumbnails_or_icons() {
         t.contains(r#"class="thumb" src="IMG_2041.jpg?thumb&amp;v="#),
         "{t}"
     );
+    // A thumbnail that fails to load gives way to the type icon (app.js).
     assert!(
-        t.contains(r#"data-type="model""#) && t.contains(r#"class="ficon" data-type="model""#),
+        t.contains(r#"<td class="files__icon" data-js="thumb-box"><img class="thumb""#)
+            && t.contains(r#"data-js="thumb"><template data-js="thumb-fallback"><span class="ficon" data-type="image">"#),
+        "{t}"
+    );
+    assert!(
+        t.contains(r#"data-type="model""#)
+            && t.contains(r#"<td class="files__icon"><span class="ficon" data-type="model""#),
         "{t}"
     );
     assert!(t.contains(r#"data-view="list""#), "{t}");
@@ -3313,6 +3320,14 @@ async fn viewer_shows_pictures_text_and_markdown_safely() {
         .text();
     assert!(t.contains(r#"data-state="image""#), "{t}");
     assert!(t.contains("IMG_2041.jpg?thumb=view&amp;v="), "{t}");
+    // If the picture fails to load, app.js shows the "no preview" stage instead.
+    assert!(
+        t.contains(r#"data-state="image" data-js="thumb-box""#)
+            && t.contains(
+                r#"<template data-js="thumb-fallback" data-state="none"><span class="ficon""#
+            ),
+        "{t}"
+    );
     assert!(
         t.contains(r#"href="/Medien/Urlaub%20Gardasee/IMG_2040.jpg?view""#),
         "{t}"
