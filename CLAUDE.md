@@ -11,14 +11,15 @@ Project map, build/run, rules and common changes (for every agent):
 
 ## Status
 
-Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice
-13). Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A, B and
-C done (slices 17–19). UI integration (step 7) in slices on `main`: slices 20–22 (D, E, F)
-done: everything the design has delivered so far (browser, gate pages, skins) is live; the
-other screens wait for the design session's mocks (`design/pages/`). NAS setup (step 4)
-and the account import (6) ran on 2026-11-07; staging (8) runs on the NAS since then. Next:
-Telegram (5, needs Tibor's bot), Tibor's own staging checks (web UI, WebDAV/rclone, public
-write, shares from the UI), and the next UI slices as the design delivers screens.
+Plan steps 1–3 done (step 3 = the backend slices below) plus the deploy tooling (slice 13).
+Backend brief 2026-11-07 (`deploy/site/backend-brief-2026-11-07.md`): slices A, B and C done
+(slices 17–19). UI integration (step 7) in slices on `main`: slices 20–22 (D, E, F) done:
+everything the design has delivered so far (browser, gate pages, skins) is live; the other
+screens wait for the design session's mocks (`design/pages/`). NAS setup (step 4) and the
+account import (6) ran on 2026-11-07; staging (8) runs on the NAS since then. Telegram (5)
+is set up there since 2026-11-09 (test message sent; the token reaches the service only at
+start, so a restart, not a reload). Next: Tibor's own staging checks (web UI, WebDAV/rclone,
+public write, shares from the UI), and the next UI slices as the design delivers screens.
 - Slice 1 done: config schema + validation (`chestcraft check`), `RelPath`, permissions.
 - Slice 2 done: `chestcraft serve` with landing page, folder listings (natural sort,
   paging, hidden files for admin), downloads (Range, ETag, sandboxed active types), streamed

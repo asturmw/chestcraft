@@ -48,10 +48,11 @@ On the server, as root:
    it needs the service stopped).
 7. **Disks:** install smartmontools and use `smartd.conf` from the release as
    `/etc/smartd.conf` (self-test schedule only; chestcraft sends the alerts).
-8. **Alerts:** put the bot token into `secrets.toml` (`telegram_token = "…"`), run
-   `chestcraft telegram-setup` as root, then set `alerts.telegram.chat_id` and reload.
-   ntfy: `[alerts.ntfy]` in the config, an access token as `ntfy_token` if the server
-   needs one.
+8. **Alerts:** put the bot token into `secrets.toml` (`telegram_token = "…"`), open the
+   bot in Telegram and press Start (the bot sees no chat before that), run `chestcraft
+   telegram-setup` as root (it sends a test message), then set `alerts.telegram.chat_id`
+   and restart. ntfy: `[alerts.ntfy]` in the config, an access token as `ntfy_token` if
+   the server needs one.
 
 ## Updates
 
@@ -74,6 +75,9 @@ writable for the service: run `install.sh` again, or write
 `chestcraft check --systemd > /etc/systemd/system/chestcraft.service.d/10-paths.conf`,
 then `systemctl daemon-reload && systemctl restart chestcraft`. The server warns at start
 about a writable volume it can't write to.
+
+`secrets.toml` reaches the service through `LoadCredential=`, which systemd copies when the
+service starts: after changing a token, restart instead of reload.
 
 ## Staging
 
