@@ -299,17 +299,23 @@ write, shares from the UI), and the next UI slices as the design delivers screen
   count `refquota` too (`Dataset::quota_use`: `used`/`quota` and `referenced`/`refquota`,
   the fuller one wins; dashboard, alert `ds:<name>:quota`, status API adds `refquota` and
   `referenced`).
-- Open: A thumbnail that fails to load needs a JS
-  fallback to the type icon (UI integration). For the design session (not in its NOTES
-  yet): tablet nav (the `appbar__menu` drawer; 720–1023 px has no nav besides crumbs and the
-  account menu), the account menu, a folder-upload entry (only drag and drop now), an
-  `i-arrow-down` icon for descending sort, `a.menu__item` (links in menus), dialogs, upload
-  tray, banners, pager, grid view CSS, share of several items (Share shows for exactly
-  one), the rename/picker/clash/shortcut dialogs; at 1280 px the selection bar wraps to two
-  rows while Rename shows (one item selected); "keep both" on the server names `x (1).ext`,
-  save-to-folder (design) `x (2).ext`. The dashboard/alerts, volumes/API-token, accounts/agents, audit and account-access
-  markup is provisional until the design session delivers those screens; the agents part
-  (Addendum 2 "UI") needs a note in its handoff.
+- Thumbnail fallback (2026-11-09): a thumbnail that fails to load (404, or 429 for an
+  anonymous visitor past the render burst) gives way to a server-rendered `<template
+  data-js="thumb-fallback">` in its `data-js="thumb-box"`: the type icon in listings, the
+  "no preview" stage in the viewer (`data-state="none"`). `assets/app.js` swaps it in and
+  asks for the picture again after 5/15/45 s (jittered); on success the picture comes back.
+  Checked in headless Firefox (burst used up → icons, back after the retry; broken JPEG
+  stays an icon; viewer).
+- Open: For the design session (not in its NOTES yet): tablet nav (the `appbar__menu`
+  drawer; 720–1023 px has no nav besides crumbs and the account menu), the account menu, a
+  folder-upload entry (only drag and drop now), an `i-arrow-down` icon for descending sort,
+  `a.menu__item` (links in menus), dialogs, upload tray, banners, pager, grid view CSS,
+  share of several items (Share shows for exactly one), the rename/picker/clash/shortcut
+  dialogs; at 1280 px the selection bar wraps to two rows while Rename shows (one item
+  selected); "keep both" on the server names `x (1).ext`, save-to-folder (design)
+  `x (2).ext`. The dashboard/alerts, volumes/API-token, accounts/agents, audit and
+  account-access markup is provisional until the design session delivers those screens; the
+  agents part (Addendum 2 "UI") needs a note in its handoff.
 
 The refined UI brief added backend work (skins, backgrounds, per-user settings, ntfy, STL/
 3MF/G-code thumbnails, universal hardware discovery): see the addendum in

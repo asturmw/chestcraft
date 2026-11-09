@@ -1,5 +1,6 @@
 // chestcraft page basics, on every page: menus (popovers) placed next to the button that
-// opened them, arrow keys inside menus, the password reveal button, dialog cancel buttons.
+// opened them, arrow keys inside menus, the password reveal button, dialog cancel buttons,
+// the type icon for thumbnails that fail to load.
 // Hooks are data-js attributes and ARIA roles; JS never relies on classes (ui-handoff §5).
 (() => {
   'use strict';
@@ -98,6 +99,54 @@
     const btn = e.target.closest && e.target.closest('[data-js="dialog-cancel"]');
     if (btn) btn.closest('dialog').close('cancel');
   });
+
+  // A thumbnail that fails to load (no preview possible: 404; too many new renders for an
+  // anonymous visitor: 429) gives way to the fallback the server put in its box: the type
+  // icon in listings, the "no preview" stage in the viewer. The picture is asked for again
+  // a few times, so thumbnails of a busy server still arrive; a failure the server cached
+  // answers fast and stays.
+  const RETRY_S = [5, 15, 45];
+  function thumbFailed(img) {
+    const box = img.closest('[data-js~="thumb-box"]');
+    const tpl = box && box.querySelector(':scope > template[data-js="thumb-fallback"]');
+    if (!tpl || box.ccKept) return;
+    box.ccKept = { nodes: [...box.childNodes], state: box.dataset.state };
+    box.replaceChildren(tpl.content.cloneNode(true), tpl);
+    if (tpl.dataset.state) box.dataset.state = tpl.dataset.state;
+    // A picture that failed again after coming back stays an icon.
+    if (!img.ccBack) retryThumb(box, img, img.currentSrc || img.src, 0);
+  }
+  function retryThumb(box, img, src, n) {
+    if (n >= RETRY_S.length) return;
+    const wait = RETRY_S[n] * 1000 * (1 + Math.random() / 2);
+    setTimeout(() => {
+      const probe = new Image();
+      probe.addEventListener('load', () => {
+        const kept = box.ccKept;
+        box.ccKept = null;
+        box.replaceChildren(...kept.nodes);
+        if (kept.state === undefined) delete box.dataset.state;
+        else box.dataset.state = kept.state;
+        img.ccBack = true;
+        img.src = src;
+      });
+      probe.addEventListener('error', () => retryThumb(box, img, src, n + 1));
+      probe.src = src;
+    }, wait);
+  }
+  document.addEventListener(
+    'error',
+    (e) => {
+      if (e.target instanceof HTMLImageElement && e.target.matches('[data-js~="thumb"]')) {
+        thumbFailed(e.target);
+      }
+    },
+    true,
+  );
+  // Pictures that failed before this script ran.
+  for (const img of document.querySelectorAll('img[data-js~="thumb"]')) {
+    if (img.complete && img.naturalWidth === 0) thumbFailed(img);
+  }
 
   window.cc = Object.assign(window.cc || {}, {
     // Open a menu next to `anchor` (for menus a script fills, like a row's actions).
