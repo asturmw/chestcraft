@@ -315,10 +315,10 @@ public write, shares from the UI), and the next UI slices as the design delivers
   `data-js="nav-toggle"`, `#sidenav[data-state=open]`). Folder sizes: `GET <folder>/?du`
   (`web/du.rs`, `fs::tree::usage`: tree walk rules, 2 walks at a time, ≤ 2 M entries /
   15 s → `complete: false`, cached 5 min by inode + mtime), filled in by `browser.js`
-  (item count stays as tooltip; also for shares). Files: a click on the name selects, a
-  double click opens (taps, Enter and the key maps still open). New folder sends JSON
-  (`Accept: application/json` → `{"ok"}` / `{"message"}`), a taken name shows in the
-  dialog. Upload tray: "312 MB of 734 MB (42 %) · 85 MB/s · 2 min left"; without failures
+  (item count stays as tooltip; also for shares). Files and folders: a click on the name
+  selects, a double click opens (taps, Enter and the key maps still open; folders too since
+  2026-11-10). New folder sends JSON (`Accept: application/json` → `{"ok"}` /
+  `{"message"}`), a taken name shows in the dialog. Upload tray: "312 MB of 734 MB (42 %) · 85 MB/s · 2 min left"; without failures
   the listing reloads and says how many arrived (`cc.reloadWith` in `app.js`, shared with
   `ops.js`); stopped uploads (localStorage now holds JSON with vol/dir/name) are listed on
   page load with their percentage and Discard; adding the same file again continues. SVG

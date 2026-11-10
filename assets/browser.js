@@ -133,12 +133,19 @@
       e.preventDefault();
       location.href = link.href;
     });
-    // A file's name selects it like a click on its row; a double click opens it. Taps
-    // still open (phones select by holding), and so do Enter and the keyboard maps (their
-    // clicks have no pointer); Ctrl/⌘/Alt clicks and the middle button stay the browser's.
-    if (link && !r.dataset.dir) {
+    // A name (file or folder) selects its row like a click on the row; a double click opens
+    // it. Taps still open (phones select by holding), and so do Enter and the keyboard maps
+    // (their clicks have no pointer); Ctrl/⌘/Alt clicks and the middle button stay the
+    // browser's. Firefox gives the click that Enter fires on a link `detail` 1 like a mouse
+    // click, so the link remembers the key.
+    if (link) {
+      let viaKey = false;
+      link.addEventListener('keydown', (e) => { viaKey = e.key === 'Enter'; });
+      link.addEventListener('pointerdown', () => { viaKey = false; });
       link.addEventListener('click', (e) => {
-        if (e.detail === 0 || pointer === 'touch' || e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+        const key = viaKey;
+        viaKey = false;
+        if (key || e.detail === 0 || pointer === 'touch' || e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
         e.preventDefault();
         if (e.detail === 1) toggle(r, e.shiftKey);
       });
