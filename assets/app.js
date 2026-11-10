@@ -1,7 +1,7 @@
 // chestcraft page basics, on every page: menus (popovers) placed next to the button that
 // opened them, arrow keys inside menus, the password reveal button, dialog cancel buttons,
-// the type icon for thumbnails that fail to load, the sidebar drawer on narrow screens and
-// a message shown after a reload.
+// the type icon for thumbnails that fail to load, the sidebar drawer on narrow screens, the
+// look switches in the app bar and a message shown after a reload.
 // Hooks are data-js attributes and ARIA roles; JS never relies on classes (ui-handoff §5).
 (() => {
   'use strict';
@@ -37,8 +37,9 @@
     s.overflowY = 'auto';
   }
 
+  const ITEM = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]';
   const items = (menu) =>
-    [...menu.querySelectorAll('[role="menuitem"]')].filter((el) => !el.hidden && !el.disabled);
+    [...menu.querySelectorAll(ITEM)].filter((el) => !el.hidden && !el.disabled && el.offsetParent !== null);
 
   document.addEventListener('beforetoggle', (e) => {
     const menu = e.target;
@@ -51,7 +52,8 @@
     const btn = anchorOf(menu);
     if (btn) btn.setAttribute('aria-expanded', String(e.newState === 'open'));
     if (e.newState === 'open') {
-      const first = items(menu)[0];
+      const list = items(menu);
+      const first = list.find((el) => el.getAttribute('aria-checked') === 'true') || list[0];
       if (first) first.focus({ preventScroll: true });
     }
   }, true);
@@ -78,7 +80,7 @@
   addEventListener('scroll', closeMenus, { passive: true });
   // A menu item that runs something closes its menu.
   document.addEventListener('click', (e) => {
-    const item = e.target.closest && e.target.closest('[role="menuitem"]');
+    const item = e.target.closest && e.target.closest(ITEM);
     const menu = item && item.closest('[role="menu"]');
     if (menu && menu.matches(':popover-open')) menu.hidePopover();
   });
@@ -175,6 +177,40 @@
     });
     addEventListener('resize', () => { if (innerWidth >= 1024 && nav.dataset.state === 'open') setNav(false); });
   }
+
+  // Look switches (theme, glass, skin) in the app bar: show the new theme or glass at
+  // once, save in the background, then reload, which keeps the scroll position (a plain
+  // form post would land at the top). Without script the form posts and the server sends
+  // this page again.
+  document.addEventListener('submit', async (e) => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || form.dataset.js !== 'look') return;
+    e.preventDefault();
+    const btn = e.submitter;
+    const html = document.documentElement;
+    if (btn && btn.name === 'theme') html.dataset.theme = btn.value;
+    if (btn && btn.name === 'glass') html.dataset.glass = btn.value;
+    let ok = false;
+    try {
+      const res = await fetch(form.action, {
+        method: 'POST',
+        body: new URLSearchParams(new FormData(form, btn)),
+        credentials: 'same-origin',
+        redirect: 'manual',
+      });
+      ok = res.type === 'opaqueredirect' || res.ok;
+    } catch (err) { /* offline: the plain post below says so */ }
+    if (ok) { location.reload(); return; }
+    // Let the server answer in full (an expired session, a refused change).
+    if (btn) {
+      const keep = document.createElement('input');
+      keep.type = 'hidden';
+      keep.name = btn.name;
+      keep.value = btn.value;
+      form.append(keep);
+    }
+    HTMLFormElement.prototype.submit.call(form);
+  });
 
   // A message for after a reload (an upload or a paste that changed the listing), shown in
   // the queue toast for a few seconds.

@@ -1,0 +1,303 @@
+/* chestcraft — admin dashboard, provisional (not from the design session): the dashboard
+   and its charts until the design delivers that screen. Linked by the dashboard page only.
+   Every color comes from the skin's tokens, so each skin, theme and glass mode draws the
+   charts in its own palette:
+     --chart-a     the main series: the skin's accent hue at a fixed lightness per theme
+                   (skins' accents range from pale amber to deep indigo; fixed lightness
+                   keeps every skin readable and the two series apart);
+     --chart-b     the second series: a neutral from the muted text color, always nearer
+                   the surface than --chart-a, so it reads as the quieter one;
+     --ok, --warn, --danger  only for states and alert marks, never for a series.
+   Checked with the dataviz palette validator against each skin's surface, light and dark
+   (normal-vision and CVD separation of the pair, contrast of both marks).
+   Unlayered, like provisional.css: every rule is scoped to the dashboard's blocks. */
+
+.dashboard {
+  --chart-la: 0.48;
+  --chart-lb: 0.635;
+  --chart-a: color-mix(in oklab, var(--accent) 70%, var(--text));
+  --chart-b: var(--text-muted);
+  --chart-wash: color-mix(in srgb, var(--chart-a) 15%, transparent);
+  --chart-grid: color-mix(in srgb, var(--text) 9%, transparent);
+  --chart-axis: color-mix(in srgb, var(--text) 26%, transparent);
+  --chart-ring: var(--surface);
+  display: grid; gap: 26px; min-width: 0;
+}
+[data-theme="dark"] .dashboard { --chart-la: 0.84; --chart-lb: 0.6; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .dashboard { --chart-la: 0.84; --chart-lb: 0.6; }
+}
+@supports (color: oklch(from red l c h)) {
+  .dashboard {
+    --chart-a: oklch(from var(--accent) var(--chart-la) min(c, 0.15) h);
+    --chart-b: oklch(from var(--text-muted) var(--chart-lb) min(c, 0.03) h);
+  }
+}
+[data-glass="clear"] .dashboard { --chart-grid: color-mix(in srgb, var(--text) 18%, transparent); --chart-ring: var(--bg); }
+.dashboard[data-state="offline"] .activity, .dashboard[data-state="offline"] .dash-section { opacity: 0.6; }
+
+/* ---------- head: title, verdict, as-of ---------- */
+.dashboard__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
+.panel .dashboard__title { margin: 0; }
+.dashboard__head .verdict {
+  display: inline-flex; align-items: center; gap: 8px; margin: 0;
+  font-weight: 700; font-size: var(--fs-md);
+}
+.verdict::before {
+  content: ""; width: 10px; height: 10px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 22%, transparent);
+}
+.verdict[data-state="ok"] { color: var(--ok); }
+.verdict[data-state="warning"] { color: var(--warn); }
+.verdict[data-state="critical"] { color: var(--danger); }
+.verdict[data-state="stale"] { color: var(--text-muted); }
+.dashboard__head .as-of { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); }
+.dashboard__head .dashboard__alerts-link { margin-left: auto; font-size: var(--fs-sm); font-weight: 600; }
+.dashboard[data-state="offline"] .as-of { color: var(--warn); }
+
+/* ---------- active alerts, last day's events ---------- */
+.dashboard h2 { margin: 0 0 8px; }
+.panel .alert-list, .panel .event-list { list-style: none; padding: 0; display: grid; gap: 6px; margin: 0; }
+.alert {
+  --sev: var(--danger);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px;
+  padding: 8px 12px; border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--sev) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--sev);
+}
+.alert[data-severity="warning"] { --sev: var(--warn); }
+.alert[data-severity="info"] { --sev: var(--chart-b); }
+.alert__severity { font-weight: 700; color: var(--sev); font-size: var(--fs-sm); }
+.alert__title { font-weight: 600; }
+.alert__since { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); }
+.event { display: flex; gap: 12px; font-size: var(--fs-sm); }
+.event time { color: var(--text-muted); flex: none; }
+.event[data-severity="critical"] time { color: var(--danger); }
+.event[data-severity="warning"] time { color: var(--warn); }
+
+/* ---------- activity: four charts on one time grid ---------- */
+.activity { display: grid; gap: 16px; min-width: 0; }
+.activity__head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.panel .activity__title { margin: 0; font-size: var(--fs-lg); }
+.range {
+  display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--radius-m);
+  background: var(--field-bg); border: 1px solid var(--line-strong);
+}
+.panel .range__item {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px;
+  border-radius: calc(var(--radius-m) - 2px); color: var(--text-muted);
+  font-size: var(--fs-sm); font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+.panel .range__item:hover { color: var(--text); background: var(--surface-2); }
+.panel .range__item[aria-current="true"] { color: var(--text); background: var(--surface-3); }
+[data-glass="clear"] .range { background: transparent; border-color: var(--clear-line); }
+[data-glass="clear"] .panel .range__item[aria-current="true"] {
+  background: transparent; color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent-ink);
+}
+/* The moment the charts show: "Now", or the time under the crosshair. */
+.activity__at { display: flex; align-items: baseline; gap: 10px; margin: 0 0 0 auto; }
+.activity__when {
+  font-family: var(--font-num); font-size: var(--fs-lg); font-weight: 700;
+  line-height: 1.1; white-space: nowrap;
+}
+.activity__note { font-size: var(--fs-xs); color: var(--text-muted); }
+.activity[data-state="scrub"] .activity__note { visibility: hidden; }
+.activity__empty { color: var(--text-muted); }
+
+/* One column on phones, two on tablets, four in a row on wide screens (never 3 + 1). */
+.activity { container-type: inline-size; }
+.pulse-grid { display: grid; gap: 22px 32px; grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 540px) { .pulse-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (min-width: 1000px) { .pulse-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.pulse { margin: 0; min-width: 0; display: grid; gap: 6px; align-content: start; }
+.pulse__head { display: grid; gap: 2px; }
+.pulse__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pulse__title { font-size: var(--fs-sm); font-weight: 600; color: var(--text-muted); }
+.pulse__when { font-size: var(--fs-sm); font-weight: 700; }
+@container (min-width: 540px) { .pulse__when { display: none; } }
+.pulse__legend { display: grid; justify-items: start; gap: 0; }
+.pulse__series { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.pulse__key { align-self: center; flex: none; width: 14px; height: 3px; border-radius: 2px; background: var(--chart-a); }
+.pulse__key--b { height: 2px; background: var(--chart-b); }
+.pulse__num { font-weight: 700; font-size: var(--fs-md); font-variant-numeric: proportional-nums; }
+.pulse__series[data-slot="a"] .pulse__num { font-size: var(--fs-lg); }
+.pulse__num[data-state="empty"] { color: var(--text-muted); font-weight: 400; }
+.pulse__name { font-size: var(--fs-xs); color: var(--text-muted); }
+
+.pulse__plot {
+  position: relative; margin-top: 14px; border-radius: var(--radius-s);
+  touch-action: pan-y; cursor: crosshair; -webkit-user-select: none; user-select: none;
+}
+.pulse__plot:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.pulse__max {
+  position: absolute; left: 0; top: -2px; transform: translateY(-100%);
+  font-size: var(--fs-xs); line-height: 1; color: var(--text-muted); pointer-events: none;
+}
+.pulse__svg { display: block; width: 100%; height: 96px; overflow: visible; }
+.pulse__axis { display: block; width: 100%; height: 18px; overflow: visible; }
+.pulse__grid { stroke: var(--chart-grid); stroke-width: 1; shape-rendering: crispEdges; }
+.pulse__base { stroke: var(--chart-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.pulse__area--a { fill: var(--chart-wash); }
+.pulse__line { stroke-linejoin: round; stroke-linecap: round; }
+.pulse__line--a { stroke: var(--chart-a); stroke-width: 2; }
+.pulse__line--b { stroke: var(--chart-b); stroke-width: 1.5; }
+.pulse__tick { fill: var(--text-muted); font-size: 11px; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+/* Alerts and the nightly cleanup: a hairline through the chart, a flag at the top whose
+   tooltip says what happened. */
+.pulse__mark { stroke-width: 1; shape-rendering: crispEdges; }
+.pulse__mark--critical { stroke: color-mix(in srgb, var(--danger) 60%, transparent); }
+.pulse__mark--warning { stroke: color-mix(in srgb, var(--warn) 60%, transparent); }
+.pulse__mark--info, .pulse__mark--job { stroke: var(--chart-axis); }
+.pulse__flag { stroke: var(--chart-ring); stroke-width: 2; cursor: help; }
+.pulse__flag--critical { fill: var(--danger); }
+.pulse__flag--warning { fill: var(--warn); }
+.pulse__flag--info { fill: var(--chart-b); }
+.pulse__flag--job { fill: var(--chart-ring); stroke: var(--text-muted); stroke-width: 1.5; }
+.pulse__cross { stroke: var(--text); stroke-opacity: 0.5; stroke-width: 1; shape-rendering: crispEdges; }
+.pulse__dot { stroke: var(--chart-ring); stroke-width: 2; }
+.pulse__dot--a { fill: var(--chart-a); }
+.pulse__dot--b { fill: var(--chart-b); }
+/* Clear glass over a picture: halos keep thin lines and small labels readable. */
+[data-glass="clear"] .pulse__data, [data-glass="clear"] .chart { filter: var(--icon-shadow); }
+[data-glass="clear"] :is(.pulse__tick, .chart__label) {
+  stroke: light-dark(rgb(255 255 255 / 0.85), rgb(0 0 0 / 0.75)); stroke-width: 3px;
+  paint-order: stroke; stroke-linejoin: round;
+}
+
+/* ---------- sections below: pools, datasets, disks, md, host, app ---------- */
+.dash-section { border-top: 1px solid var(--chart-grid); min-width: 0; }
+.dash-section > summary {
+  display: flex; align-items: center; gap: 10px; padding: 14px 0 10px;
+  list-style: none; cursor: pointer;
+}
+.dash-section > summary::-webkit-details-marker { display: none; }
+.dash-section > summary::before {
+  content: ""; flex: none; width: 7px; height: 7px; margin: 0 2px;
+  border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted);
+  transform: rotate(-45deg); transition: transform 150ms var(--ease);
+}
+.dash-section[open] > summary::before { transform: rotate(45deg); }
+.panel .dash-section__title { margin: 0; font-size: var(--fs-lg); }
+.dash-section > :not(summary) { margin-bottom: 14px; }
+.dash-error { color: var(--danger); font-weight: 600; }
+.dash-error[data-state="stale"] { color: var(--warn); }
+.dash-note { color: var(--text-muted); font-size: var(--fs-sm); }
+
+/* States as small labels next to their thing. */
+:is(.pool__state, .vdev__state, .md-array__level) {
+  display: inline-block; padding: 1px 6px; border-radius: var(--radius-s);
+  font-size: var(--fs-xs); font-weight: 700; vertical-align: 1px;
+  color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+.pool[data-state="online"] > .pool__name > .pool__state, .vdev[data-state="online"] > .vdev__state {
+  color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.pool[data-state="degraded"] > .pool__name > .pool__state, .vdev[data-state="degraded"] > .vdev__state {
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+:is(.pool:is([data-state="faulted"], [data-state="unavail"], [data-state="suspended"]) > .pool__name > .pool__state,
+    .vdev:is([data-state="faulted"], [data-state="unavail"], [data-state="removed"], [data-state="offline"]) > .vdev__state) {
+  color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+.dashboard [data-state="running"] { color: var(--accent-ink); }
+.dashboard :is(.pool__data-errors, .disk__media-errors, .vdev__errors[data-state="errors"]) { color: var(--danger); font-weight: 600; }
+
+.pool { display: grid; gap: 6px; padding: 4px 0 18px; min-width: 0; }
+.panel .pool > :is(p, ul, figure) { margin: 0; }
+.pool + .pool { border-top: 1px solid var(--chart-grid); padding-top: 16px; }
+.panel .pool__name { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: var(--fs-md); }
+.pool__space { margin: 0; font-size: var(--fs-sm); }
+.pool__scan, .pool__expand { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); }
+.pool__scan[data-state="errors"] { color: var(--danger); }
+.pool__progress { width: 160px; vertical-align: middle; accent-color: var(--chart-a); }
+.panel .pool__group { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* Meters: the fill carries the state, the track is a lighter step of the same color. */
+.dashboard meter {
+  -webkit-appearance: none; appearance: none; display: block;
+  width: 100%; max-width: 640px; height: 8px; border: 0; border-radius: 4px;
+  background: color-mix(in srgb, var(--chart-a) 18%, transparent);
+}
+.dashboard meter::-webkit-meter-bar { height: 8px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--chart-a) 18%, transparent); }
+.dashboard meter::-webkit-meter-optimum-value { border-radius: 4px; background: var(--chart-a); }
+.dashboard meter::-webkit-meter-suboptimum-value { border-radius: 4px; background: var(--warn); }
+.dashboard meter::-webkit-meter-even-less-good-value { border-radius: 4px; background: var(--danger); }
+.dashboard meter::-moz-meter-bar { border-radius: 4px; background: var(--chart-a); }
+.dashboard meter:-moz-meter-sub-optimum::-moz-meter-bar { background: var(--warn); }
+.dashboard meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--danger); }
+/* Pool meters have thresholds: below the warning line the fill says "fine" (a skin's
+   accent can look like the warning color, Modern's amber does). */
+.dashboard .pool__meter::-webkit-meter-optimum-value { background: var(--ok); }
+.dashboard .pool__meter:-moz-meter-optimum::-moz-meter-bar { background: var(--ok); }
+
+/* The vdev tree: one line per device, children indented on a hairline. */
+.panel .vdev-tree { list-style: none; padding: 0; margin: 4px 0 0; font-size: var(--fs-sm); }
+.panel .vdev-tree .vdev-tree { margin: 2px 0 2px 7px; padding-left: 14px; border-left: 1px solid var(--chart-grid); }
+.vdev { padding: 1px 0; }
+.vdev__name { font-weight: 600; }
+.vdev__errors { font-size: var(--fs-xs); color: var(--text-muted); }
+
+/* Pool fill over 90 days with its thresholds and the projection. */
+.pool__chart { margin: 10px 0 0; max-width: 680px; display: grid; gap: 4px; }
+.chart { display: block; width: 100%; height: auto; overflow: visible; color: var(--text-muted); }
+.chart__grid { stroke: var(--chart-grid); stroke-opacity: 1; }
+.chart__label { fill: var(--text-muted); font-family: var(--font-num); }
+.chart__line { stroke: var(--chart-a); stroke-linejoin: round; }
+.chart__projection { stroke: var(--chart-a); stroke-opacity: 0.7; }
+.chart__threshold--warning { stroke: var(--warn); }
+.chart__threshold--critical { stroke: var(--danger); }
+.chart__now { stroke: var(--chart-axis); stroke-opacity: 1; }
+.pool__projection { font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* Tables. */
+.table-scroll { overflow-x: auto; }
+.panel :is(.dataset-table, .disk-table) { font-size: var(--fs-sm); margin: 0; }
+.panel :is(.dataset-table, .disk-table) th[scope="row"] { font-size: var(--fs-sm); color: var(--text); font-weight: 600; }
+.panel :is(.dataset-table, .disk-table) :is(th, td) { vertical-align: middle; }
+.panel :is(.dataset-table, .disk-table) .num { text-align: right; white-space: nowrap; }
+.disk__dev, .disk__serial { color: var(--text-muted); font-size: var(--fs-xs); font-weight: 400; }
+.disk__kind { display: block; color: var(--text-muted); font-size: var(--fs-xs); }
+.disk__smart[data-state="ok"] { color: var(--ok); font-weight: 600; }
+.disk__smart:is([data-state="critical"], [data-state="error"]) { color: var(--danger); font-weight: 700; }
+.disk__smart:is([data-state="standby"], [data-state="none"]) { color: var(--text-muted); }
+.disk__selftest [data-state="critical"] { color: var(--danger); font-weight: 600; }
+.disk__temp, .disk__sectors { white-space: nowrap; }
+.dashboard .sparkline {
+  display: inline-block; width: 72px; height: 18px; margin-left: 6px;
+  vertical-align: middle; overflow: visible; color: var(--chart-a);
+}
+.sparkline__line { stroke-width: 1.5; stroke-linejoin: round; }
+.dashboard .sparkline--realloc { color: var(--danger); }
+
+/* md arrays. */
+.md-array { display: grid; gap: 4px; padding-bottom: 12px; }
+.panel .md-array__name { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: var(--fs-md); }
+.md-array__state { margin: 0; font-size: var(--fs-sm); }
+.md-array[data-state="ok"] .md-array__state { color: var(--ok); }
+.md-array[data-state="degraded"] .md-array__state { color: var(--warn); font-weight: 600; }
+.md-array[data-state="inactive"] .md-array__state { color: var(--danger); font-weight: 600; }
+.panel .md-array__members { list-style: none; padding: 0; margin: 0; font-size: var(--fs-sm); }
+.md-array__members [data-state="faulty"] { color: var(--danger); }
+.md-array__members [data-state="spare"] { color: var(--text-muted); }
+
+/* Host and app: label, value. */
+.panel .stats { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 24px; align-items: center; margin: 0; }
+.stats dt { color: var(--text-muted); font-size: var(--fs-sm); }
+.stats dd { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.stats meter { max-width: 200px; }
+.stats [data-state="error"] { color: var(--danger); }
+.panel :is(.dash-agents, .dash-warnings) { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 4px; font-size: var(--fs-sm); }
+.dash-agents [data-state="off"] { color: var(--text-muted); }
+.dash-warnings [data-state="warning"] { color: var(--warn); }
+
+@media (max-width: 719px) {
+  .dashboard { gap: 20px; }
+  .dashboard__head .dashboard__alerts-link { margin-left: 0; flex-basis: 100%; }
+  .activity__at { margin-left: 0; flex-basis: 100%; }
+  .pulse__svg { height: 84px; }
+  .panel .stats { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .stats dd + dt { margin-top: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-section > summary::before { transition: none; }
+}

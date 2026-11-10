@@ -173,3 +173,39 @@ a.menu__item { text-decoration: none; }
 .panel .bg-set__delete { margin-left: auto; }
 .panel fieldset { border: 1px solid var(--panel-line); border-radius: var(--radius-m); padding: 10px 14px; margin-block: 12px; min-width: 0; }
 .panel legend { padding: 0 6px; font-weight: 600; }
+
+/* Look switches in the app bar (theme and glass toggles, skin menu) until the design
+   delivers them. In the app layer, unlike the rest of this file: they are built from the
+   design's .seg, .btn and .menu, so the skins and the clear-glass layer style them too.
+   From 1100 px the toggles sit in the bar and the menu holds the skins; below, only the
+   menu button shows (its icon alone on phones) and the menu holds all three. */
+@layer app {
+  .look { display: flex; align-items: center; gap: 6px; }
+  .look__seg .look__opt { width: auto; min-height: 30px; --btn-px: 10px; font-size: var(--fs-xs); }
+  .look__button { --btn-px: 10px; gap: 6px; }
+  .look__button .look__caret { width: 14px; height: 14px; }
+  .look__menu { min-width: 220px; }
+  .look__heading { margin: 6px 10px 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }
+  .look__group + .look__group, .look__more { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--bar-line); }
+  .look__menu .look__item { align-items: center; padding-block: 6px; }
+  .look__blank { width: 20px; flex: none; }
+  .look__item[aria-checked="true"] .icon { color: var(--accent-ink); }
+  /* "System" theme: no toggle is pressed; mark the one the system picks. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) .look__opt[value="dark"] { background: var(--surface-3); color: var(--text); }
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) .look__opt[value="light"] { background: var(--surface-3); color: var(--text); }
+  }
+  @media (min-width: 1100px) {
+    .look__menu :is(.look__group[data-look="theme"], .look__group[data-look="glass"]) { display: none; }
+    .look__menu .look__group[data-look="skin"] { margin-top: 0; padding-top: 0; border-top: 0; }
+  }
+  @media (max-width: 1099px) {
+    .look__seg { display: none; }
+  }
+  @media (max-width: 719px) {
+    .look__name, .look__button .look__caret { display: none; }
+    .look__button { width: var(--tap); min-height: var(--tap); padding: 0; }
+  }
+}

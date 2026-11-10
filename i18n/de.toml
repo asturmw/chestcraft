@@ -9,6 +9,8 @@ decimal = ","
 group = "."
 datetime = "{d2}.{m2}.{y}, {H}:{M}"
 date = "{d2}.{m2}.{y}"
+day = "{d}. {mon}"
+month = "{mon}"
 months = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."]
 
 [common]
@@ -27,6 +29,10 @@ show_password = "Passwort anzeigen"
 
 # App-Rahmen: Seitenleiste, Tab-Leiste (Handy), Kontomenü.
 [nav]
+# App bar: the look switches. {skin} is the skin's name.
+look = "Aussehen"
+look_button = "Aussehen: {skin}"
+look_more = "Hintergrund und mehr"
 volumes = "Ablagen"
 sections = "Bereiche"
 shares = "Meine Freigaben"
@@ -581,6 +587,33 @@ days_other = "{count} Tage"
 
 [dashboard]
 title = "Dashboard"
+activity = "Aktivität"
+range_label = "Zeitraum"
+range_24h = "24 Stunden"
+range_7d = "7 Tage"
+range_90d = "90 Tage"
+at_now = "Jetzt"
+resolution_5m = "Mittel über 5 Minuten"
+resolution_1h = "Stundenmittel"
+resolution_1d = "Tagesmittel"
+cpu_chart = "Prozessor"
+cpu_busy = "ausgelastet"
+cpu_wait = "wartet auf Platten"
+mem_chart = "Arbeitsspeicher"
+mem_used = "belegt"
+mem_arc = "ZFS-Cache"
+net_chart = "Netzwerk"
+net_rx = "empfangen"
+net_tx = "gesendet"
+io_chart = "Platten"
+io_read = "gelesen"
+io_write = "geschrieben"
+# {size} wie 2,4 MB
+rate = "{size}/s"
+pulse_summary = "{series} im Mittel {avg}, Spitze {peak}"
+pulse_label = "{chart}, letzte {range}: {summary}"
+pulse_empty = "Noch keine Aktivitätswerte. Der erste kommt eine Minute nach dem Serverstart."
+job_mark = "Tägliches Aufräumen und Sicherung ({time})"
 verdict_ok = "Alles in Ordnung"
 verdict_warning = "Braucht Aufmerksamkeit"
 verdict_critical = "Kritisch"

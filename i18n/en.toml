@@ -11,6 +11,8 @@ group = ","
 # {H} hour, {M} minute.
 datetime = "{d} {mon} {y}, {H}:{M}"
 date = "{d} {mon} {y}"
+day = "{d} {mon}"
+month = "{mon}"
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 [common]
@@ -29,6 +31,10 @@ show_password = "Show password"
 
 # App shell: sidebar, tab bar (phone), account menu.
 [nav]
+# App bar: the look switches. {skin} is the skin's name.
+look = "Look"
+look_button = "Look: {skin}"
+look_more = "Background and more"
 volumes = "Folders"
 sections = "Sections"
 shares = "My shares"
@@ -586,6 +592,33 @@ days_other = "{count} days"
 
 [dashboard]
 title = "Dashboard"
+activity = "Activity"
+range_label = "Time span"
+range_24h = "24 hours"
+range_7d = "7 days"
+range_90d = "90 days"
+at_now = "Now"
+resolution_5m = "5-minute averages"
+resolution_1h = "hourly averages"
+resolution_1d = "daily averages"
+cpu_chart = "Processor"
+cpu_busy = "busy"
+cpu_wait = "waiting for disks"
+mem_chart = "Memory"
+mem_used = "in use"
+mem_arc = "ZFS cache"
+net_chart = "Network"
+net_rx = "received"
+net_tx = "sent"
+io_chart = "Disks"
+io_read = "read"
+io_write = "written"
+# {size} like 2.4 MB
+rate = "{size}/s"
+pulse_summary = "{series} averaged {avg}, peak {peak}"
+pulse_label = "{chart}, last {range}: {summary}"
+pulse_empty = "No activity readings yet. The first one arrives a minute after the server starts."
+job_mark = "Daily cleanup and backup ({time})"
 verdict_ok = "All OK"
 verdict_warning = "Needs attention"
 verdict_critical = "Critical"

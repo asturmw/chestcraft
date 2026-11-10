@@ -9,7 +9,7 @@ use crate::config::WeeklyTime;
 use crate::health::alerts::{
     self, Active, Baseline, Change, Cooldowns, Event, LogEntry, Msg, Severity,
 };
-use crate::health::history::{self, Sample};
+use crate::health::history::{self, Activity, Sample};
 use crate::health::{self, Roots, Snapshot};
 use crate::i18n::Lang;
 use crate::notify::{Level, Message};
@@ -22,6 +22,8 @@ use std::time::Duration;
 
 const INTERVAL: Duration = Duration::from_secs(60);
 const LOG_KEEP_SECS: i64 = 365 * 86_400;
+/// How long the per-minute activity readings stay in memory.
+pub const RECENT_SECS: i64 = 86_400;
 /// After a start, `/healthz` says "starting" (not "db"/"monitor") this long while the first
 /// heartbeat and snapshot are still missing.
 pub const START_GRACE_SECS: i64 = 120;
@@ -61,6 +63,11 @@ pub struct Monitor {
     latest: RwLock<Option<Arc<Snapshot>>>,
     active: RwLock<BTreeMap<String, Active>>,
     history: RwLock<Arc<Vec<(i64, Sample)>>>,
+    /// The machine's activity per minute, last day, oldest first (not stored: after a
+    /// restart the dashboard falls back to the hourly means).
+    recent: RwLock<Arc<Vec<(i64, Activity)>>>,
+    /// The activity counters of the previous reading and when it was taken.
+    counters_prev: Mutex<Option<(i64, crate::health::host::Counters)>>,
     arc_prev: Mutex<Option<(u64, u64)>>,
     last_hour: Mutex<i64>,
     /// When the server started.
@@ -77,6 +84,8 @@ impl Default for Monitor {
             latest: RwLock::new(None),
             active: RwLock::new(BTreeMap::new()),
             history: RwLock::new(Arc::new(Vec::new())),
+            recent: RwLock::new(Arc::new(Vec::new())),
+            counters_prev: Mutex::new(None),
             arc_prev: Mutex::new(None),
             last_hour: Mutex::new(0),
             started: AtomicI64::new(super::now()),
@@ -115,6 +124,35 @@ impl Monitor {
 
     pub fn set_history(&self, h: Vec<(i64, Sample)>) {
         *self.history.write().unwrap() = Arc::new(h);
+    }
+
+    /// The activity per minute over the last day, oldest first.
+    pub fn recent(&self) -> Arc<Vec<(i64, Activity)>> {
+        self.recent.read().unwrap().clone()
+    }
+
+    /// Put per-minute readings in place (tests).
+    pub fn set_recent(&self, r: Vec<(i64, Activity)>) {
+        *self.recent.write().unwrap() = Arc::new(r);
+    }
+
+    /// Turn the snapshot's counters into a reading and keep it for a day.
+    fn record_activity(&self, snap: &Snapshot) {
+        let now = snap.taken;
+        let reading = {
+            let mut prev = self.counters_prev.lock().unwrap();
+            let r = Activity::reading(&snap.host, prev.as_ref().map(|(t, c)| (c, now - *t)));
+            *prev = Some((now, snap.host.counters));
+            r
+        };
+        let mut w = self.recent.write().unwrap();
+        let mut v: Vec<(i64, Activity)> = w
+            .iter()
+            .filter(|(t, _)| now - t < RECENT_SECS && *t < now)
+            .cloned()
+            .collect();
+        v.push((now, reading));
+        *w = Arc::new(v);
     }
 
     pub fn started(&self) -> i64 {
@@ -263,10 +301,26 @@ pub fn apply(st: &super::AppState, snap: &Snapshot) -> Result<Vec<Change>, crate
     }
     *st.health.active.write().unwrap() = active;
 
+    st.health.record_activity(snap);
     let hour = history::hour_of(now);
     let mut last = st.health.last_hour.lock().unwrap();
     if *last != hour {
-        let sample = Sample::from_snapshot(snap);
+        let mut sample = Sample::from_snapshot(snap);
+        let recent = st.health.recent();
+        sample.activity = Activity::mean(
+            recent
+                .iter()
+                .filter(|(t, _)| (hour - 3600..hour).contains(t))
+                .map(|(_, a)| a),
+        )
+        // After a restart within the hour, keep what the earlier run stored for it.
+        .or_else(|| {
+            st.health
+                .history()
+                .iter()
+                .find(|(t, _)| *t == hour)
+                .and_then(|(_, s)| s.activity)
+        });
         if !sample.is_empty() {
             st.db.put_history(hour, &sample)?;
             let mut h: Vec<(i64, Sample)> = st.health.history().as_ref().clone();

@@ -1,5 +1,6 @@
-//! The machine itself: uptime, load, memory, ZFS ARC, CPU temperature, root filesystem.
-//! Everything comes from /proc and /sys, readable without privileges.
+//! The machine itself: uptime, load, memory, ZFS ARC, CPU temperature, root filesystem,
+//! and the activity counters (CPU time, network and disk bytes) the dashboard turns into
+//! rates. Everything comes from /proc and /sys, readable without privileges.
 
 use serde::Serialize;
 use std::path::Path;
@@ -14,6 +15,21 @@ pub struct Host {
     pub arc: Option<Arc>,
     pub cpu_temp: Option<f64>,
     pub root_fs: Option<FsUse>,
+    /// Running totals; only the difference between two readings means something.
+    #[serde(skip)]
+    pub counters: Counters,
+}
+
+/// Running totals since boot, read every minute; the monitor turns two readings into
+/// rates (`history::Activity`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Counters {
+    /// The `cpu` line of /proc/stat: (busy, waiting for I/O, total) in clock ticks.
+    pub cpu: Option<(u64, u64, u64)>,
+    /// Physical network interfaces: (received, sent) bytes.
+    pub net: Option<(u64, u64)>,
+    /// The machine's disks: (read, written) bytes.
+    pub disk: Option<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
@@ -108,6 +124,81 @@ impl Arc {
     }
 }
 
+/// The `cpu` line of /proc/stat: (busy, iowait, total) ticks. Guest time is already part
+/// of user time, so it isn't added again.
+pub fn parse_stat(text: &str) -> Option<(u64, u64, u64)> {
+    let line = text.lines().find(|l| l.starts_with("cpu "))?;
+    let v: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .take(8)
+        .map(|f| f.parse().ok())
+        .collect::<Option<_>>()?;
+    if v.len() < 5 {
+        return None;
+    }
+    let total: u64 = v.iter().sum();
+    let (idle, iowait) = (v[3], v[4]);
+    Some((total - idle - iowait, iowait, total))
+}
+
+/// /proc/net/dev: (received, sent) bytes summed over the interfaces `keep` accepts. None
+/// when it accepts none.
+pub fn parse_net_dev(text: &str, keep: impl Fn(&str) -> bool) -> Option<(u64, u64)> {
+    let mut sum: Option<(u64, u64)> = None;
+    for line in text.lines() {
+        let Some((name, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        if !keep(name) {
+            continue;
+        }
+        let f: Vec<&str> = rest.split_whitespace().collect();
+        let (Some(rx), Some(tx)) = (
+            f.first().and_then(|v| v.parse::<u64>().ok()),
+            f.get(8).and_then(|v| v.parse::<u64>().ok()),
+        ) else {
+            continue;
+        };
+        let s = sum.get_or_insert((0, 0));
+        s.0 += rx;
+        s.1 += tx;
+    }
+    sum
+}
+
+/// /proc/diskstats: (read, written) bytes of the named block devices (sectors are 512
+/// bytes there, whatever the disk's own sector size). None when none of them is listed.
+pub fn parse_diskstats(text: &str, names: &[&str]) -> Option<(u64, u64)> {
+    let mut sum: Option<(u64, u64)> = None;
+    for line in text.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 10 || !names.contains(&f[2]) {
+            continue;
+        }
+        let (Ok(r), Ok(w)) = (f[5].parse::<u64>(), f[9].parse::<u64>()) else {
+            continue;
+        };
+        let s = sum.get_or_insert((0, 0));
+        s.0 += r * 512;
+        s.1 += w * 512;
+    }
+    sum
+}
+
+/// Network interfaces backed by hardware (`/sys/class/net/<if>/device`): bridges, bonds,
+/// VPNs and container links carry the same bytes again and are left out.
+fn physical_interface(sys: &Path, name: &str) -> bool {
+    name != "lo" && !name.contains('/') && sys.join("class/net").join(name).join("device").exists()
+}
+
+/// Bytes the given disks (block device names, `sda`, `nvme0n1`) read and wrote since boot.
+pub fn disk_bytes(proc: &Path, disks: &[&str]) -> Option<(u64, u64)> {
+    let text = std::fs::read_to_string(proc.join("diskstats")).ok()?;
+    parse_diskstats(&text, disks)
+}
+
 /// CPU sensors by hwmon driver name, best first, with the preferred label (None = first
 /// temperature of the device).
 const CPU_SENSORS: &[(&str, Option<&str>)] = &[
@@ -197,6 +288,13 @@ pub fn read(proc: &Path, sys: &Path, arc_prev: Option<(u64, u64)>) -> Host {
             .map(|a| a.since(arc_prev)),
         cpu_temp: cpu_temp(&read_hwmon(sys)),
         root_fs: fs_use(Path::new("/")),
+        counters: Counters {
+            cpu: file(&proc.join("stat")).and_then(|t| parse_stat(&t)),
+            net: file(&proc.join("net/dev"))
+                .and_then(|t| parse_net_dev(&t, |n| physical_interface(sys, n))),
+            // Filled in by `health::gather` once the disks are known.
+            disk: None,
+        },
     }
 }
 
@@ -259,9 +357,37 @@ mod tests {
     }
 
     #[test]
+    fn activity_counters() {
+        assert_eq!(
+            parse_stat("cpu  100 5 50 1000 20 3 2 1 0 0\ncpu0 1 2 3 4 5 6 7 8 0 0\n"),
+            Some((161, 20, 1181))
+        );
+        assert_eq!(parse_stat("intr 1 2 3\n"), None);
+        let dev = "Inter-|   Receive                                                |  Transmit\n \
+             face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    \
+             lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  \
+             eno1: 1000 10 0 0 0 0 0 0 300 5 0 0 0 0 0 0\n\
+             vmbr0: 900 9 0 0 0 0 0 0 250 4 0 0 0 0 0 0\n  \
+             eno2: 24 1 0 0 0 0 0 0 6 1 0 0 0 0 0 0\n";
+        assert_eq!(
+            parse_net_dev(dev, |n| n.starts_with("eno")),
+            Some((1024, 306))
+        );
+        assert_eq!(parse_net_dev(dev, |_| false), None);
+        let stats = "   8       0 sda 100 0 2048 50 200 0 4096 80 0 100 130\n   \
+             8       1 sda1 90 0 2000 40 190 0 4000 70 0 90 110\n 259       0 nvme0n1 10 0 8 1 20 0 16 2 0 3 3\n";
+        assert_eq!(
+            parse_diskstats(stats, &["sda", "nvme0n1"]),
+            Some(((2048 + 8) * 512, (4096 + 16) * 512))
+        );
+        assert_eq!(parse_diskstats(stats, &["sdb"]), None);
+    }
+
+    #[test]
     fn reads_this_machine() {
         let h = read(Path::new("/proc"), Path::new("/sys"), None);
         assert!(h.uptime_secs.is_some() && h.load.is_some() && h.mem_total.is_some());
+        assert!(h.counters.cpu.is_some());
         let fs = h.root_fs.unwrap();
         assert!(fs.total > 0 && fs.percent() <= 100);
     }

@@ -3631,6 +3631,166 @@ async fn dashboard_is_for_the_admin_and_shows_what_the_machine_has() {
     );
 }
 
+/// Per-minute readings and hourly samples, oldest first.
+type ActivityFixture = (
+    Vec<(i64, health::history::Activity)>,
+    Vec<(i64, health::history::Sample)>,
+);
+
+/// A day of per-minute activity and 90 days of hourly samples: a quiet machine that
+/// scrubs and backs up at night.
+fn synthetic_activity(now: i64) -> ActivityFixture {
+    use health::history::{Activity, Sample};
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut rnd = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % 10_000) as f64 / 10_000.0
+    };
+    let mut at = |t: i64| {
+        let hour = (t.rem_euclid(86_400)) as f64 / 3600.0;
+        let night = (-(hour - 4.0).powi(2) / 0.6).exp();
+        let evening = (-(hour - 20.5).powi(2) / 2.0).exp();
+        Activity {
+            cpu: Some(3.0 + 4.0 * rnd() + 45.0 * night + 12.0 * evening * rnd()),
+            iowait: Some(0.5 + 18.0 * night * rnd()),
+            mem: Some(9.5e9 + 1.2e9 * night + 3e8 * rnd()),
+            arc: Some(5.8e9 + 6e8 * night),
+            net_rx: Some(2e4 + 4e4 * rnd() + 2.2e7 * evening * rnd() + 8e6 * night),
+            net_tx: Some(1e4 + 2e4 * rnd() + 3e6 * evening * rnd()),
+            disk_read: Some(1e5 * rnd() + 1.8e8 * night + 2e7 * evening * rnd()),
+            disk_write: Some(5e4 * rnd() + 4e7 * night + 6e6 * evening * rnd()),
+        }
+    };
+    let minutes = (0..1440)
+        .rev()
+        .map(|k| (now - k * 60, at(now - k * 60)))
+        .collect();
+    let first = now - 1439 * 60;
+    let hours = (1..=90 * 24)
+        .rev()
+        .map(|k| first - first.rem_euclid(3600) - (k - 1) * 3600)
+        .map(|h| {
+            let mut s = Sample {
+                activity: Some(at(h - 1800)),
+                ..Sample::default()
+            };
+            let days = (h - (now - 90 * 86_400)) as f64 / 86_400.0;
+            s.pools.insert(
+                "tank".into(),
+                ((2.9e12 + days * 1.2e10) as u64, 4_000_000_000_000),
+            );
+            s.temps.insert(
+                "WD-WCC4N0000004".into(),
+                34 + (4.0 * at(h).cpu.unwrap() / 50.0) as i32,
+            );
+            (h, s)
+        })
+        .collect();
+    (minutes, hours)
+}
+
+#[tokio::test]
+async fn activity_charts_follow_the_range_and_mark_events() {
+    let mut e = env();
+    Arc::get_mut(&mut e.state).unwrap().skins = ["anime", "classic", "gaming", "modern", "sleek"]
+        .map(String::from)
+        .into();
+    let admin = e.session("Admin", "admin").await;
+    let t = now();
+    let (minutes, hours) = synthetic_activity(t);
+    let mut snap = degraded_snapshot(t);
+    snap.host.mem_total = Some(16_000_000_000);
+    snap.host.mem_available = Some(6_000_000_000);
+    tick_with(&e, snap);
+    e.state.health.set_recent(minutes);
+    e.state.health.set_history(hours);
+    let page = |q: &'static str| {
+        let (e, cookie) = (&e, admin.cookie.clone());
+        async move {
+            e.get_h(&format!("/.cc/admin/dashboard{q}"), &[("cookie", &cookie)])
+                .await
+                .text()
+        }
+    };
+    let day = page("").await;
+    for want in [
+        "dashboard.css",
+        "data-range=\"24h\"",
+        "data-n=\"288\"",
+        "data-kind=\"cpu\"",
+        "data-kind=\"memory\"",
+        "data-kind=\"network\"",
+        "data-kind=\"disks\"",
+        // Memory is drawn against the machine's total.
+        "data-max=\"16000000000\"",
+        "href=\"?range=24h\" aria-current=\"true\"",
+        "pulse__mark--job",
+        "Daily cleanup and backup (04:00)",
+        // The alert the degraded snapshot fired is marked on the time axis.
+        "pulse__flag--critical",
+        "Processor, last 24 hours: busy averaged",
+    ] {
+        assert!(day.contains(want), "{want} missing:\n{day}");
+    }
+    let cpu = day.split("data-kind=\"cpu\"").nth(1).unwrap();
+    let a = cpu
+        .split("data-a=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    assert_eq!(a.split(',').count(), 288);
+    assert!(a.split(',').all(|v| !v.is_empty()), "{a}");
+
+    let week = page("?range=7d").await;
+    assert!(
+        week.contains("data-n=\"168\"")
+            && week.contains("href=\"?range=7d\" aria-current=\"true\""),
+        "{week}"
+    );
+    // The nightly cleanup is marked on the day view only.
+    assert!(!week.contains("pulse__mark--job"));
+    let quarter = page("?range=90d").await;
+    assert!(quarter.contains("data-n=\"90\"") && quarter.contains("daily averages"));
+
+    // Before the first reading: the section says so instead of drawing empty charts.
+    let e2 = env();
+    let admin2 = e2.session("Admin", "admin").await;
+    tick_with(&e2, Snapshot::empty(t));
+    let t2 = e2
+        .get_h("/.cc/admin/dashboard", &[("cookie", &admin2.cookie)])
+        .await
+        .text();
+    assert!(t2.contains("activity__empty"), "{t2}");
+
+    // A machine that reads only some of it (no ZFS, no physical NIC): charts and series
+    // without readings stay out.
+    let only = health::history::Activity {
+        cpu: Some(12.0),
+        mem: Some(4e9),
+        ..Default::default()
+    };
+    e2.state
+        .health
+        .set_recent(vec![(t - 120, only), (t - 60, only)]);
+    let t3 = e2
+        .get_h("/.cc/admin/dashboard", &[("cookie", &admin2.cookie)])
+        .await
+        .text();
+    assert!(
+        t3.contains("data-kind=\"cpu\"")
+            && t3.contains("data-kind=\"memory\"")
+            && !t3.contains("data-kind=\"network\"")
+            && !t3.contains("ZFS cache")
+            && !t3.contains("waiting for disks")
+            && t3.contains(">12 %<"),
+        "{t3}"
+    );
+}
+
 #[tokio::test]
 async fn alerts_fire_once_resolve_and_show_on_the_alerts_page() {
     let e = env();
