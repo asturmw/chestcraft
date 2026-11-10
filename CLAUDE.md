@@ -324,7 +324,30 @@ public write, shares from the UI), and the next UI slices as the design delivers
   page load with their percentage and Discard; adding the same file again continues. SVG
   thumbnails are cropped to the drawing (+3 %) unless it fills > 80 % of the canvas;
   `RENDER_VERSION` 2. STEP files have no thumbnail (no pure-Rust STEP tessellator).
-- Open: For the design session (not in its NOTES yet): tablet nav (the `appbar__menu`
+- Dashboard graphs + look switches (2026-11-10, Tibor: "add graphs to admin page", theme/
+  glass/skin "a toggle right at the top"). Activity: `health/host.rs` reads CPU ticks
+  (/proc/stat), bytes of physical NICs (/proc/net/dev, `/sys/class/net/*/device`) and of the
+  snapshot's disks (/proc/diskstats) as `Counters` (`#[serde(skip)]`, not in the API);
+  `history::Activity::reading` turns two readings into CPU busy/iowait %, memory in use, ARC,
+  network rx/tx and disk read/write per second; `Monitor` keeps one per minute for a day in
+  memory, and each hourly sample stores the mean of the hour before it (`Sample.activity`,
+  old records load). `web/activity.rs`: section "Activity" on the dashboard, `?range=24h|7d|
+  90d` (5-min / hourly / daily means; after a restart the day falls back to hourly means),
+  four charts (processor, memory against total RAM, network, disks; main series = accent,
+  second = neutral) on one time grid, alert marks + the daily cleanup on the axis
+  (`charts::pulse`: stretched data layer with non-scaling strokes, grid/labels at
+  percentages, no inline styles). `assets/dashboard.js`: one crosshair through all four
+  (pointer, touch drag, arrow keys), values and time in the header (per chart in one
+  column). `assets/dashboard.css` (provisional, dashboard page only) styles the whole
+  dashboard from skin tokens; chart colors pin the accent's lightness per theme (relative
+  color syntax), checked with the dataviz validator for all skins in light and dark. App
+  bar (signed in): Dark|Light and Frosted|Clear toggles (`.seg`) + skin menu (radio items);
+  below 1100 px one menu holds all three. POST `/.cc/account` takes `glass` (stored for the
+  skin in use) and `back` (redirect to the Referer's path); `app.js` posts it and reloads
+  (keeps the scroll). Checked in headless Firefox: five skins × light/dark, clear glass,
+  1280/900/390 px, scrub, real clicks against a local `serve`.
+- Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
+  `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a
   folder-upload entry (only drag and drop now), an `i-arrow-down` icon for descending sort,
   `a.menu__item` (links in menus), dialogs, upload tray, banners, pager, grid view (provisional now),

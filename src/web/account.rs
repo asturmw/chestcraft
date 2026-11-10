@@ -38,7 +38,7 @@ fn skin_names(st: &AppState) -> Vec<String> {
 }
 
 /// Display name of a skin: `skin.<name>` from the language file, else the name.
-fn skin_label(ctx: &Ctx, skin: &str) -> String {
+pub(super) fn skin_label(ctx: &Ctx, skin: &str) -> String {
     let key = format!("skin.{skin}");
     if ctx.i18n.has(ctx.lang, &key) {
         return ctx.tf(&key, &[]);
@@ -493,8 +493,21 @@ fn change(
     }
 }
 
+/// The path (and query) of a `Referer`, for switches that return to the page they're on.
+/// Only the path is used, so a foreign referer can't send anyone elsewhere.
+fn referer_path(headers: &HeaderMap) -> Option<String> {
+    let r = headers.get(header::REFERER)?.to_str().ok()?;
+    let path = match r.split_once("://") {
+        Some((_, rest)) => &rest[rest.find('/')?..],
+        None => r,
+    };
+    let path = path.split('#').next().unwrap_or(path);
+    path.starts_with('/').then(|| super::auth::safe_next(path))
+}
+
 /// POST `/.cc/account`: save preferences. Every field is optional, so a quick switch can
-/// send just one (with `next` to return to its page).
+/// send just one (with `next` to return to its page, or `back` to return to the referring
+/// one: the app bar's look switches). `glass` applies to the skin in use after the save.
 pub async fn save_prefs(
     State(st): State<Shared>,
     Extension(principal): Extension<Principal>,
@@ -521,11 +534,20 @@ pub async fn save_prefs(
                 matches!(k, "standard" | "vim" | "off")
             })?,
             change(&form, "rotation", &[""], look::is_rotation)?,
+            match form.get("glass") {
+                None => None,
+                Some(g) => Some(Glass::parse(g).ok_or(())?),
+            },
         ))
     })();
-    let Ok((lang, theme, skin, keys, rotation)) = fields else {
+    let Ok((lang, theme, skin, keys, rotation, glass)) = fields else {
         return fail(&ctx, Fail::BadRequest);
     };
+    let default_skin = look::pick_skin(
+        &st.skins,
+        st.looks.appearance().default_skin.as_deref(),
+        None,
+    );
     let (st2, key) = (st.clone(), cu.key.clone());
     let saved = blocking(move || {
         st2.db.update_user(&key, |u| {
@@ -541,6 +563,12 @@ pub async fn save_prefs(
                     *slot = v;
                 }
             }
+            if let Some(g) = glass {
+                let skin = look::pick_skin(&st2.skins, s.skin.as_deref(), Some(&default_skin));
+                let mut panels = s.panels.get(&skin).cloned().unwrap_or_default();
+                panels.glass = Some(g);
+                put_panels(&mut s.panels, &skin, panels);
+            }
         })
     })
     .await;
@@ -551,6 +579,7 @@ pub async fn save_prefs(
         .get("next")
         .filter(|n| !n.is_empty())
         .map(super::auth::safe_next)
+        .or_else(|| form.get("back").and_then(|_| referer_path(&headers)))
         .unwrap_or_else(|| "/.cc/account?saved=1".into());
     Redirect::to(&next).into_response()
 }

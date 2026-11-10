@@ -1212,3 +1212,79 @@ async fn skin_pictures_follow_the_theme() {
         "{page}"
     );
 }
+
+#[tokio::test]
+async fn look_switches_in_the_app_bar_return_to_the_page() {
+    let mut e = env();
+    all_skins(&mut e);
+    let jana = e.session("jana", "familie").await;
+    let page = e.page_of(&jana, "/.cc/trash").await;
+    for want in [
+        "data-js=\"look\"",
+        "name=\"back\" value=\"1\"",
+        "name=\"glass\" value=\"frosted\" aria-pressed=\"true\" aria-current=\"true\"",
+        "name=\"theme\" value=\"dark\" aria-pressed=\"false\"",
+        "aria-label=\"Look: Modern\"",
+        "role=\"menuitemradio\" name=\"skin\" value=\"gaming\" aria-checked=\"false\"",
+    ] {
+        assert!(page.contains(want), "{want} missing:\n{page}");
+    }
+    // Visitors have no account to keep a choice in.
+    assert!(!e.get("/").await.text().contains("data-js=\"look\""));
+
+    let switch = |pairs: Vec<(&'static str, &'static str)>, referer: &'static str| {
+        let (e, jana) = (&e, &jana);
+        async move {
+            let mut all = vec![("csrf", jana.csrf.as_str()), ("back", "1")];
+            all.extend(pairs);
+            e.send_body(
+                "POST",
+                "/.cc/account",
+                "127.0.0.1",
+                &[FORM, ("cookie", &jana.cookie), ("referer", referer)],
+                form(&all),
+            )
+            .await
+        }
+    };
+    let r = switch(
+        vec![("glass", "clear")],
+        "http://127.0.0.1/.cc/trash?x=1#top",
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.header("location"), "/.cc/trash?x=1");
+    let page = e.page_of(&jana, "/.cc/trash").await;
+    assert!(
+        page.contains("data-skin=\"modern\" data-glass=\"clear\"")
+            && page.contains("name=\"glass\" value=\"clear\" aria-pressed=\"true\""),
+        "{page}"
+    );
+    // Glass belongs to the skin: another skin keeps its own (frosted by default).
+    let r = switch(vec![("skin", "gaming")], "http://127.0.0.1/").await;
+    assert_eq!(r.header("location"), "/");
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-skin=\"gaming\" data-glass=\"frosted\""),
+        "{page}"
+    );
+    let user = e.state.db.user("jana").unwrap().unwrap();
+    assert_eq!(
+        user.settings.panels.get("modern").and_then(|p| p.glass),
+        Some(crate::db::Glass::Clear)
+    );
+    switch(vec![("theme", "light")], "http://127.0.0.1/").await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        page.contains("data-theme=\"light\"")
+            && page.contains("name=\"theme\" value=\"light\" aria-pressed=\"true\""),
+        "{page}"
+    );
+    // Only the referer's path counts: no way off the site.
+    let r = switch(vec![("theme", "dark")], "https://elsewhere.example/landing").await;
+    assert_eq!(r.header("location"), "/landing");
+    let r = switch(vec![("theme", "dark")], "//elsewhere.example").await;
+    assert_eq!(r.header("location"), "/");
+    let r = switch(vec![("glass", "smoked")], "http://127.0.0.1/").await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}

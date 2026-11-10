@@ -1,8 +1,10 @@
 //! Admin dashboard (`/.cc/admin/dashboard`) and alerts page (`/.cc/admin/alerts`). Read
 //! only: no scrub, offline or replace buttons. Sections for hardware the machine doesn't
 //! have are left out. The dashboard reloads itself every 30 s with JS; without JS it is
-//! static and its "as of" label tells how old it is.
+//! static and its "as of" label tells how old it is. `?range=24h|7d|90d` picks the span of
+//! the activity charts (`web/activity.rs`).
 
+use super::activity::{self, Range};
 use super::auth::{audit, csrf_ok, forbidden, now};
 use super::charts::{self, FillChart};
 use super::files::{Fail, fail};
@@ -11,11 +13,11 @@ use super::{ClientInfo, Current, Shared, page_ctx};
 use crate::auth::perm::Principal;
 use crate::health::alerts::{self, Active, LogEntry, Severity};
 use crate::health::disks::{Disk, Kind, Role, SmartState};
-use crate::health::history::{self, Sample};
+use crate::health::history::{self, Activity, Sample};
 use crate::health::zpool::{Pool, Vdev};
 use crate::health::{DatasetInfo, Probe, SmartFile, Snapshot};
 use crate::notify::{Kind as ChannelKind, Level, Message};
-use axum::extract::{Extension, Form, State};
+use axum::extract::{Extension, Form, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use maud::{Markup, html};
@@ -71,9 +73,21 @@ pub struct DashData {
     /// One-shot events of the last 24 hours, newest first.
     pub recent: Vec<LogEntry>,
     pub history: std::sync::Arc<Vec<(i64, Sample)>>,
+    /// The machine's activity per minute, last day.
+    pub recent_activity: std::sync::Arc<Vec<(i64, Activity)>>,
+    /// Span of the activity charts.
+    pub range: Range,
+    /// The newest alert log entries (marks on the activity charts).
+    pub log: Vec<LogEntry>,
     pub thresholds: crate::config::Thresholds,
-    /// When the daily cleanup and the state backup run, "04:00".
-    pub daily_at: String,
+    /// When the daily cleanup and the state backup run.
+    pub daily_at: crate::config::TimeOfDay,
+}
+
+#[derive(Deserialize, Default)]
+pub struct DashQuery {
+    #[serde(default)]
+    range: String,
 }
 
 pub async fn page(
@@ -81,22 +95,26 @@ pub async fn page(
     Extension(principal): Extension<Principal>,
     Extension(current): Extension<Current>,
     headers: HeaderMap,
+    Query(q): Query<DashQuery>,
 ) -> Response {
     let mut ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     if !principal.is_admin() || current.is_none() {
         return fail(&ctx, Fail::NotFound);
     }
     ctx.scripts.push("dashboard.js");
+    ctx.styles.push(super::assets::url("dashboard.css"));
     let now = now();
-    let recent = {
+    let log: Vec<LogEntry> = {
         let st = st.clone();
         tokio::task::spawn_blocking(move || st.db.alert_log::<LogEntry>(300).unwrap_or_default())
             .await
             .unwrap_or_default()
-            .into_iter()
-            .filter(|e| e.what == "event" && now - e.time < DAY)
-            .collect()
     };
+    let recent = log
+        .iter()
+        .filter(|e| e.what == "event" && now - e.time < DAY)
+        .cloned()
+        .collect();
     let data = DashData {
         now,
         verdict: st.health.verdict(now),
@@ -104,8 +122,11 @@ pub async fn page(
         active: st.health.active(),
         recent,
         history: st.health.history(),
+        recent_activity: st.health.recent(),
+        range: Range::parse(&q.range),
+        log,
         thresholds: st.cfg.alerts.thresholds,
-        daily_at: st.cfg.trash.purge_at.to_string(),
+        daily_at: st.cfg.trash.purge_at,
     };
     dashboard_view(&ctx, &data).into_response()
 }
@@ -148,6 +169,15 @@ pub fn dashboard_view(ctx: &Ctx, d: &DashData) -> Markup {
                         }
                     }
                 }
+                (activity::section(ctx, &activity::Input {
+                    now: d.now,
+                    range: d.range,
+                    recent: &d.recent_activity,
+                    history: &d.history,
+                    mem_total: d.snap.as_ref().and_then(|s| s.host.mem_total),
+                    log: &d.log,
+                    daily_at: (d.daily_at.hour, d.daily_at.minute),
+                }))
                 @if let Some(s) = &d.snap {
                     (pools_section(ctx, s, d))
                     (datasets_section(ctx, s, d.now))
@@ -646,7 +676,7 @@ fn app_section(ctx: &Ctx, s: &Snapshot, d: &DashData) -> Markup {
         dl class="stats" {
             dt { (ctx.t("dashboard.backup")) }
             @match &a.backup {
-                None => dd { (ctx.tf("dashboard.backup_never", &[("time", &d.daily_at)])) },
+                None => dd { (ctx.tf("dashboard.backup_never", &[("time", &d.daily_at.to_string())])) },
                 Some(b) => @match &b.error {
                     Some(e) => dd data-state="error" {
                         (ctx.tf("dashboard.backup_failed", &[("time", &ctx.datetime(b.attempt)), ("error", e)]))

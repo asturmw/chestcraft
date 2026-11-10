@@ -255,6 +255,16 @@ impl I18n {
         self.format_time(lang, "format.date", unix_secs, tz)
     }
 
+    /// Day and month: "8 Nov" / "8. Nov.".
+    pub fn day(&self, lang: Lang, unix_secs: i64, tz: &jiff::tz::TimeZone) -> String {
+        self.format_time(lang, "format.day", unix_secs, tz)
+    }
+
+    /// The month's name.
+    pub fn month(&self, lang: Lang, unix_secs: i64, tz: &jiff::tz::TimeZone) -> String {
+        self.format_time(lang, "format.month", unix_secs, tz)
+    }
+
     fn format_time(
         &self,
         lang: Lang,

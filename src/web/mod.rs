@@ -2,6 +2,7 @@
 
 mod account;
 mod account_views;
+mod activity;
 mod adminsock;
 mod api;
 mod assets;
@@ -175,7 +176,7 @@ pub fn page_ctx<'a>(
         _ => "standard",
     };
     let look = account::look(st, current);
-    views::Ctx {
+    let mut ctx = views::Ctx {
         i18n: &st.i18n,
         lang,
         theme,
@@ -198,7 +199,16 @@ pub fn page_ctx<'a>(
         lang_switch: None,
         brand: true,
         nav: None,
+        skins: Vec::new(),
+    };
+    if current.is_some() {
+        ctx.skins = st
+            .skins
+            .iter()
+            .map(|k| (k.clone(), account::skin_label(&ctx, k)))
+            .collect();
     }
+    ctx
 }
 
 /// Value of one cookie from the `Cookie` header(s).

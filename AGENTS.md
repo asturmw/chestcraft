@@ -106,13 +106,13 @@ as the user that owns `state_dir`.
 | WebDAV | `dav/` |
 | Health sources | `health/` (zpool, zfs, mdstat, disks, smart, host, history) |
 | Alerts, channels | `health/alerts.rs`, `notify/` |
-| Dashboard, status API | `web/dashboard.rs`, `web/charts.rs`, `web/status.rs` |
+| Dashboard, activity charts, status API | `web/dashboard.rs`, `web/activity.rs`, `web/charts.rs`, `web/status.rs`; activity readings `health/host.rs` (counters) → `health/history.rs` (`Activity`) → `web/monitor.rs` (per minute, a day, in memory; hourly means in the samples) |
 | Preferences, skins, backgrounds | `appearance/`, `web/account.rs` |
 | copyparty account import | `import/` |
 | External programs (absolute paths) | `tools.rs`, `health/cmd.rs` |
 | UI strings | `i18n/en.toml`, `i18n/de.toml`, `src/i18n.rs` |
 | App shell (app bar, sidebar tree, tab bar), browser view, gate pages | `web/views.rs`, `web/nav.rs` |
-| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs, thumbnail fallback, sidebar drawer, message after reload), `browser.js` (selection, filter, row menu, new folder, folder sizes), `download.js` (save to folder, separately, queue), `ops.js` (clipboard, rename, move/copy picker), `keys.js` (Vim/Standard maps), `upload.js`, `provisional.css` (screens not designed yet, grid view, drawer) |
+| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs, thumbnail fallback, sidebar drawer, message after reload), `browser.js` (selection, filter, row menu, new folder, folder sizes), `download.js` (save to folder, separately, queue), `ops.js` (clipboard, rename, move/copy picker), `keys.js` (Vim/Standard maps), `upload.js`, `dashboard.js` (dashboard refresh, activity crosshair), `provisional.css` (screens not designed yet, grid view, drawer, the app bar's look switches), `dashboard.css` (the dashboard until the design delivers it) |
 | Deploy | `deploy/release.sh`, `deploy/install.sh`, `deploy/units/` |
 
 ## Rules a change must keep

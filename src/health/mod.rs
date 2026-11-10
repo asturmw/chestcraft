@@ -528,6 +528,9 @@ pub async fn gather(
             Probe::Absent => Probe::Absent,
             Probe::Failed(e) => Probe::Failed(e),
         };
+        let mut host = host::read(&roots.proc, &roots.sys, arc_prev);
+        let names: Vec<&str> = disks.iter().map(|d| d.name.as_str()).collect();
+        host.counters.disk = host::disk_bytes(&roots.proc, &names);
         Snapshot {
             taken: now,
             pools,
@@ -535,7 +538,7 @@ pub async fn gather(
             md,
             disks,
             smart,
-            host: host::read(&roots.proc, &roots.sys, arc_prev),
+            host,
             app: app_stats(&cfg2, &db2, &vols2, now),
         }
     })
