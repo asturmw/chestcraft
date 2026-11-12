@@ -388,9 +388,106 @@ async fn every_response_carries_the_security_headers() {
             .contains("default-src 'self'")
     );
     assert_eq!(r.header("x-frame-options"), "DENY");
+    assert!(r.header("permissions-policy").contains("camera=()"));
+    assert_eq!(r.header("cross-origin-opener-policy"), "same-origin");
+    assert_eq!(r.header("cross-origin-resource-policy"), "same-origin");
+    // HSTS only on HTTPS.
+    assert_eq!(r.header("strict-transport-security"), "");
     let r = e.get("/Share/hello.txt").await;
     assert_eq!(r.header("cache-control"), "private, no-cache");
     assert_eq!(r.header("content-security-policy"), "");
+    assert_eq!(r.header("cross-origin-resource-policy"), "same-origin");
+}
+
+#[tokio::test]
+async fn api_tokens_post_needs_admin_and_a_csrf_token() {
+    let e = env();
+    // Anonymous → 404 (no leak that the admin route exists).
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/admin/api-tokens",
+            "127.0.0.1",
+            &[FORM],
+            "op=add&label=sneaky".into(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+    // Signed-in non-admin with the right CSRF token → still 404.
+    let gast = e.session("gast", "gast").await;
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/admin/api-tokens",
+            "127.0.0.1",
+            &[FORM, ("cookie", &gast.cookie), ("x-csrf-token", &gast.csrf)],
+            form(&[("csrf", &gast.csrf), ("op", "add"), ("label", "sneaky")]),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+    // Admin without a CSRF field → 403. The admin exists but the request fails the check.
+    e.add_user("boss", "admin", PW, false);
+    let cookie = cookie_of(&e.login("boss", PW).await);
+    let page = e.get_h("/", &[("cookie", &cookie)]).await.text();
+    let csrf = csrf_of(&page);
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/admin/api-tokens",
+            "127.0.0.1",
+            &[FORM, ("cookie", &cookie)],
+            form(&[("op", "add"), ("label", "legit")]),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // Admin with the right CSRF field and the right Origin → the page is served.
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/admin/api-tokens",
+            "127.0.0.1",
+            &[FORM, ("cookie", &cookie)],
+            form(&[("csrf", &csrf), ("op", "add"), ("label", "legit")]),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.text().contains("ccs_"));
+}
+
+#[tokio::test]
+async fn hsts_only_on_https_through_a_trusted_proxy() {
+    let e = env();
+    // Plain HTTP request from the LAN: no HSTS.
+    let r = e.send("GET", "/", "127.0.0.1", &[]).await;
+    assert_eq!(r.header("strict-transport-security"), "");
+    // Through the tunnel (a trusted remote proxy) with HTTPS: HSTS is set.
+    let r = e
+        .send(
+            "GET",
+            "/",
+            "192.0.2.10",
+            &[
+                ("cf-connecting-ip", "203.0.113.42"),
+                ("x-forwarded-proto", "https"),
+            ],
+        )
+        .await;
+    assert!(
+        r.header("strict-transport-security")
+            .contains("max-age=31536000")
+    );
+    assert!(
+        r.header("strict-transport-security")
+            .contains("includeSubDomains")
+    );
+    // Untrusted peer forging the proto header: ignored, no HSTS.
+    let r = e
+        .send("GET", "/", "127.0.0.1", &[("x-forwarded-proto", "https")])
+        .await;
+    assert_eq!(r.header("strict-transport-security"), "");
 }
 
 #[tokio::test]

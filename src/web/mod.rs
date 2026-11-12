@@ -328,8 +328,10 @@ pub fn router(state: Shared) -> Router {
         // the API takes only its own tokens.
         .route("/healthz", get(status::healthz))
         .route("/api/v1/status", get(status::status))
-        .layer(middleware::from_fn_with_state(state.clone(), client::layer))
+        // `client::layer` must stay outermost: `headers::security` reads `ClientInfo` from
+        // the request to decide whether to set HSTS (HTTPS requests only).
         .layer(middleware::from_fn(headers::security))
+        .layer(middleware::from_fn_with_state(state.clone(), client::layer))
         .with_state(state)
 }
 
