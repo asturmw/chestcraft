@@ -346,6 +346,16 @@ public write, shares from the UI), and the next UI slices as the design delivers
   skin in use) and `back` (redirect to the Referer's path); `app.js` posts it and reloads
   (keeps the scroll). Checked in headless Firefox: five skins × light/dark, clear glass,
   1280/900/390 px, scrub, real clicks against a local `serve`.
+- UI review (2026-11-13; findings, Tibor's decisions Q1–Q42, the backend's ordered list and
+  the design requests: `deploy/site/ui-review-2026-11-13.md`; steps 1–3 block the cutover).
+  Step 1 done (bugs): the action bar carries `data-state="download-only"` when it holds no
+  upload, new folder or paste, and is hidden on phones then (read-only shares, public
+  volumes, read-only areas); the phone-only folder download icon is hidden from 720 px
+  (app.css orders `.dl` after `.browser__download`); a shell without a tab bar sets
+  `--tabbar-h: 0px`, and `main.panel` pages end above the tab bar; grid tiles are uniform
+  (square, cropped to cover; model/vector/G-code thumbnails contained; one-line name);
+  background editor: color inputs in `div.bg-colors`, presets as swatch buttons. All in
+  `provisional.css`.
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a

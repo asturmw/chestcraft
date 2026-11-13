@@ -65,6 +65,24 @@ a.menu__item { text-decoration: none; }
 .share-head { margin-bottom: 12px; color: var(--text-muted); font-size: var(--fs-sm); }
 .share-head__name { font-size: var(--fs-md); color: var(--text); }
 
+/* Folder download: the icon in the title row is the phone's copy of the menu. app.css
+   hides it (.browser__download) and shows it again with the .dl rule that follows (same
+   weight, later in the file), so from 720 px it stood next to "Download folder". */
+@media (min-width: 720px) {
+  .browser__download { display: none; }
+}
+
+/* Phone: the bars at the bottom of the window. */
+@media (max-width: 719px) {
+  /* An action bar that holds only the folder download (in the title row here) would float
+     over the list as an empty bar: read-only folders, shares and public volumes. */
+  .actionbar[data-state="download-only"] { display: none; }
+  /* Visitors have no tab bar: nothing to keep clear of, so the bars sit at the bottom. */
+  .shell:not(:has(> .tabbar)) { --tabbar-h: 0px; }
+  /* Undesigned screens end above the tab bar, like the browser does. */
+  .shell:has(> .tabbar) .panel { margin-bottom: calc(var(--tabbar-h) + var(--float)); }
+}
+
 /* Upload tray (inside the browser pane). */
 .upload-tray { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius-m); background: var(--bar-bg); border: 1px solid var(--bar-line); font-size: var(--fs-sm); }
 .upload-tray__title { font-size: var(--fs-sm); }
@@ -109,7 +127,9 @@ a.menu__item { text-decoration: none; }
 .keys__table th { text-align: right; padding: 3px 12px 3px 0; white-space: nowrap; width: 1%; font-weight: 400; }
 .keys__group { font-size: var(--fs-sm); margin-top: 4px; }
 
-/* Grid view (?layout=grid) until the design delivers it: the table's rows become tiles. */
+/* Grid view (?layout=grid) until the design delivers it: the table's rows become tiles of
+   one size. A square picture (cropped to cover) or the type icon, the name on one line,
+   the size below; the checkbox and the menu button sit on the picture's corners. */
 .browser[data-view="grid"] .files { display: block; table-layout: auto; }
 .browser[data-view="grid"] .files caption,
 .browser[data-view="grid"] .files thead { display: none; }
@@ -118,33 +138,46 @@ a.menu__item { text-decoration: none; }
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 .browser[data-view="grid"] .files__row {
-  position: relative; display: grid; grid-template-rows: auto auto; align-content: start;
-  border-radius: var(--radius-m); border: 1px solid var(--panel-line); overflow: hidden;
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start;
+  min-width: 0; border-radius: var(--radius-m); border: 1px solid var(--panel-line); overflow: hidden;
 }
-.browser[data-view="grid"] .files__row td { display: block; height: auto; border: 0; padding: 0; background: none; box-shadow: none; }
+.browser[data-view="grid"] .files__row td {
+  display: block; width: auto; min-width: 0; height: auto; border: 0; padding: 0; background: none; box-shadow: none;
+}
 .browser[data-view="grid"] .files__row:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
 .browser[data-view="grid"] .files__row[data-state~="selected"] { background: var(--row-select); border-color: var(--accent-ink); }
 .browser[data-view="grid"] .files__row[data-state~="cursor"] { outline: 2px solid var(--cursor); outline-offset: -2px; }
-.browser[data-view="grid"] .files__icon {
-  width: auto; aspect-ratio: 1; display: grid !important; place-items: center;
+/* The picture is taken out of the flow: a tall one can't stretch its tile. */
+.browser[data-view="grid"] .files__row .files__icon {
+  position: relative; aspect-ratio: 1; overflow: hidden; display: grid; place-items: center;
   background: color-mix(in srgb, var(--surface-3) 60%, transparent);
 }
-.browser[data-view="grid"] .files__icon .thumb { width: 100%; height: 100%; object-fit: cover; border-radius: 0; background: none; }
+.browser[data-view="grid"] .files__icon .thumb {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 0; background: none;
+}
 .browser[data-view="grid"] .files__row[data-type="vector"] .thumb,
 .browser[data-view="grid"] .files__row[data-type="model"] .thumb,
 .browser[data-view="grid"] .files__row[data-type="gcode"] .thumb { object-fit: contain; padding: 8px; }
 .browser[data-view="grid"] .files__icon .ficon { width: 56px; height: 56px; }
 .browser[data-view="grid"] .files__icon .ficon .icon { width: 40px; height: 40px; }
-.browser[data-view="grid"] .files__row .files__name { padding: 8px 10px 2px; font-size: var(--fs-sm); }
-.browser[data-view="grid"] .files__row .files__size { padding: 0 10px 8px; text-align: left; font-size: var(--fs-xs); }
-.browser[data-view="grid"] .files__date { display: none !important; }
-.browser[data-view="grid"] .files__check {
-  position: absolute; top: 6px; left: 6px; z-index: 1; width: auto;
-  display: block !important; opacity: 0; transition: opacity .12s;
+.browser[data-view="grid"] .files__row .files__name {
+  display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; font-size: var(--fs-sm);
+}
+.browser[data-view="grid"] .files__link { display: block; flex: 0 1 auto; min-width: 0; white-space: nowrap; text-overflow: ellipsis; }
+.browser[data-view="grid"] .sharebadge { flex: none; margin-left: 0; padding: 2px 5px; }
+.browser[data-view="grid"] .sharebadge__label,
+.browser[data-view="grid"] .files__meta { display: none; }
+.browser[data-view="grid"] .files__row .files__size {
+  box-sizing: content-box; min-height: 1.5em; padding: 0 10px 8px; overflow: hidden;
+  text-align: left; text-overflow: ellipsis; font-size: var(--fs-xs); line-height: 1.5;
+}
+.browser[data-view="grid"] .files__row .files__date { display: none; }
+.browser[data-view="grid"] .files__row .files__check {
+  position: absolute; top: 6px; left: 6px; z-index: 1; opacity: 0; transition: opacity .12s;
 }
 .browser[data-view="grid"] .files__row:is(:hover, :focus-within, [data-state~="selected"]) .files__check,
 .browser[data-view="grid"]:has([data-state~="selected"]) .files__check { opacity: 1; }
-.browser[data-view="grid"] .files__menu { position: absolute; top: 4px; right: 4px; width: auto; z-index: 1; }
+.browser[data-view="grid"] .files__row .files__menu { position: absolute; top: 4px; right: 4px; z-index: 1; }
 .browser[data-view="grid"] .files__menu .btn { background: color-mix(in srgb, var(--surface) 80%, transparent); }
 @media (hover: none) { .browser[data-view="grid"] .files__check { opacity: 1; } }
 
@@ -171,6 +204,22 @@ a.menu__item { text-decoration: none; }
 .panel .bg-set__picture { margin: 0; display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--text-muted); }
 .panel .bg-set__picture img { height: 72px; width: auto; max-width: 160px; object-fit: cover; border-radius: var(--radius-s); }
 .panel .bg-set__delete { margin-left: auto; }
+/* Gradient presets as a row of swatch buttons (/.cc/presets.css sets --preset on each),
+   and color fields of a size one can see and hit: .field__input alone has width 0. */
+.panel .bg-presets { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.panel button.bg-preset {
+  display: grid; gap: 6px; width: 132px; min-height: 0; padding: 6px 6px 8px;
+  font-size: var(--fs-sm); text-align: left;
+}
+.panel .bg-preset::before {
+  content: ""; height: 56px; border-radius: var(--radius-s);
+  background: var(--preset, var(--surface-3)); box-shadow: inset 0 0 0 1px var(--panel-line);
+}
+.panel .bg-colors { display: flex; flex-wrap: wrap; gap: 0 16px; }
+.panel input[type="color"].field__input {
+  flex: none; width: 72px; height: 40px; min-height: 0; padding: 3px; cursor: pointer;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-s); background: var(--field-bg);
+}
 .panel fieldset { border: 1px solid var(--panel-line); border-radius: var(--radius-m); padding: 10px 14px; margin-block: 12px; min-width: 0; }
 .panel legend { padding: 0 6px; font-weight: 600; }
 

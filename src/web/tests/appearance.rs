@@ -928,6 +928,20 @@ async fn presets_become_an_ordinary_gradient() {
         .collect();
     assert!(order.windows(2).all(|w| w[0] < w[1]), "{editor}");
     assert!(editor.contains("/.cc/presets.css?v="), "{editor}");
+    // What the swatch styles hang on: the preset buttons that presets.css colors, and the
+    // three color fields in one row.
+    assert!(
+        editor.contains(r#"<button class="bg-preset" type="submit" form="bg-preset" name="preset" value="neon" data-preset="neon""#),
+        "{editor}"
+    );
+    let colors = editor
+        .split_once(r#"<div class="bg-colors">"#)
+        .and_then(|(_, rest)| rest.split_once("</div>"))
+        .map(|(row, _)| {
+            row.matches(r#"<input class="field__input" type="color" name="c"#)
+                .count()
+        });
+    assert_eq!(colors, Some(3), "{editor}");
     let css = e.get("/.cc/presets.css").await;
     assert_eq!(css.header("content-type"), "text/css; charset=utf-8");
     assert!(

@@ -3261,6 +3261,86 @@ async fn folder_pages_use_the_app_shell_and_the_browser_markup() {
     );
 }
 
+/// The action bar says when it holds nothing but the folder download, so the stylesheet
+/// can take it away on phones (the download sits in the title row there) instead of
+/// floating an empty bar over the list: read-only accounts, anonymous visitors of a
+/// public volume, visitors of a view-only share. Every folder page carries the download
+/// menu twice, the title row's icon for phones and the action bar's button for the rest.
+#[tokio::test]
+async fn action_bar_without_folder_actions_is_marked_download_only() {
+    let e = env();
+    let bare = r#"<div class="actionbar" role="toolbar" aria-label="Folder actions" data-state="download-only"><div class="dl actionbar__download">"#;
+    let downloads = |t: &str| {
+        (
+            t.matches(r#"<div class="dl browser__download"><button class="btn btn--icon dl__toggle" type="button" aria-haspopup="menu" popovertarget="dl-folder-m""#).count(),
+            t.matches(r#"<div class="dl actionbar__download"><button class="btn btn--quiet dl__toggle" type="button" aria-haspopup="menu" popovertarget="dl-folder""#).count(),
+        )
+    };
+
+    // May upload and create folders: an ordinary bar.
+    let fam = e.session("jana", "familie").await;
+    let t = e.get_h("/Medien/", &[("cookie", &fam.cookie)]).await.text();
+    assert!(
+        t.contains(r#"<div class="actionbar" role="toolbar" aria-label="Folder actions"><button class="btn btn--primary actionbar__upload""#)
+            && t.contains("actionbar__newfolder")
+            && !t.contains("download-only"),
+        "{t}"
+    );
+    assert_eq!(downloads(&t), (1, 1), "{t}");
+
+    // Signed in, read only.
+    let leser = e.session("lena", "leser").await;
+    let t = e
+        .get_h("/Medien/", &[("cookie", &leser.cookie)])
+        .await
+        .text();
+    assert!(t.contains(bare), "{t}");
+    assert!(
+        !t.contains("actionbar__upload")
+            && !t.contains("actionbar__newfolder")
+            && !t.contains("actionbar__paste"),
+        "{t}"
+    );
+    assert_eq!(downloads(&t), (1, 1), "{t}");
+
+    // Anonymous on a public volume.
+    let t = e.get("/Share/").await.text();
+    assert!(t.contains(bare), "{t}");
+    assert_eq!(downloads(&t), (1, 1), "{t}");
+
+    // A visitor of a view-only folder share.
+    let teiler = e.session("tom", "teiler").await;
+    let (id, pw) = e
+        .create_share(&teiler, "Medien", "Urlaub Gardasee", &[])
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let t = e
+        .get_h(&format!("/s/{id}/"), &[("cookie", &cookie)])
+        .await
+        .text();
+    assert!(t.contains("IMG_2041.jpg") && t.contains(bare), "{t}");
+    assert_eq!(downloads(&t), (1, 1), "{t}");
+
+    // A share that takes uploads keeps its bar.
+    let (id, pw) = e
+        .create_share(
+            &teiler,
+            "Medien",
+            "Urlaub Gardasee",
+            &[("mode", "view_upload")],
+        )
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let t = e
+        .get_h(&format!("/s/{id}/"), &[("cookie", &cookie)])
+        .await
+        .text();
+    assert!(
+        t.contains("actionbar__upload") && !t.contains("download-only"),
+        "{t}"
+    );
+}
+
 /// `?dirs` lists folders for the move/copy dialog, with the rights in the folder itself;
 /// `/?dirs` the readable volumes. Folder pages of accounts carry the clipboard and the
 /// rename/move/copy controls; visitors' pages don't.
