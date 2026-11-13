@@ -983,6 +983,12 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
     } else {
         ctx.tn("browser.trash_note", u64::from(v.trash_days))
     };
+    // Upload, new folder or paste: what the action bar holds besides the folder download.
+    // Without any of them the bar has nothing to show on phones, where the download sits
+    // in the title row, so the stylesheet takes the bar away there.
+    let folder_actions = v.upload.is_some()
+        || v.public_upload_href.is_some()
+        || (v.can_write && (v.form_csrf.is_some() || v.ops_vol.is_some()));
     let main = html! {
         main class="browser" id="main" data-view=(v.layout) data-js="browser"
             data-share=[v.share_base.as_deref()] data-dir=(v.dir)
@@ -1043,7 +1049,8 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                         }
                     }
                 }
-                div class="actionbar" role="toolbar" aria-label=(ctx.t("browser.folder_actions")) {
+                div class="actionbar" role="toolbar" aria-label=(ctx.t("browser.folder_actions"))
+                    data-state=[(!folder_actions).then_some("download-only")] {
                     @if v.upload.is_some() {
                         button class="btn btn--primary actionbar__upload" type="button" data-js="upload-pick" {
                             (icon("upload"))

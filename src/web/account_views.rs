@@ -222,10 +222,12 @@ pub fn backgrounds(ctx: &Ctx, v: &BackgroundsView) -> Markup {
                             }
                         }
                     }
-                    @for (i, c) in v.colors.iter().enumerate() {
-                        label class="field" {
-                            span class="field__label" { (ctx.tf("backgrounds.color_n", &[("n", &(i + 1).to_string())])) }
-                            input class="field__input" type="color" name=(format!("c{}", i + 1)) value=(c);
+                    div class="bg-colors" {
+                        @for (i, c) in v.colors.iter().enumerate() {
+                            label class="field" {
+                                span class="field__label" { (ctx.tf("backgrounds.color_n", &[("n", &(i + 1).to_string())])) }
+                                input class="field__input" type="color" name=(format!("c{}", i + 1)) value=(c);
+                            }
                         }
                     }
                     label class="field" {
