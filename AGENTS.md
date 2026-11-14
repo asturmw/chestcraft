@@ -97,7 +97,7 @@ as the user that owns `state_dir`.
 | Admin accounts page, audit log, app passwords + sessions on the account page | `web/users.rs` |
 | CLI state commands, admin socket | `cli.rs`, `web/adminsock.rs` |
 | Nightly state backup | `backup.rs` (run from `web/jobs.rs`) |
-| Folder listing, downloads, zip, tree listing, download slots, folder sizes | `web/files.rs`, `fs/zipstream.rs`, `fs/tree.rs`, `fs/sort.rs`, `web/du.rs` |
+| Folder listing, list/grid choice, downloads, zip, tree listing, download slots, folder sizes | `web/files.rs`, `web/layout.rs`, `fs/zipstream.rs`, `fs/tree.rs`, `fs/sort.rs`, `web/du.rs` |
 | Uploads (chunked, resumable) | `fs/upload.rs`, `web/api.rs`, `assets/upload.js` |
 | Move/copy/new file, no-overwrite renames | `fs/transfer.rs`, `fs/ops.rs`, `fs/names.rs`; JSON API for the UI `web/ops.rs` |
 | Trash | `fs/trash.rs`, `web/trash.rs` |

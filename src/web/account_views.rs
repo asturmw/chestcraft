@@ -45,6 +45,8 @@ pub struct AccountView {
     pub skins: Vec<Opt>,
     pub keys: Vec<Opt>,
     pub rotations: Vec<Opt>,
+    /// How folders open: automatic, list, grid.
+    pub layouts: Vec<Opt>,
     pub admin: bool,
     /// App passwords and sessions (filled by the page handler).
     pub access: Markup,
@@ -74,6 +76,7 @@ pub fn account(ctx: &Ctx, v: &AccountView) -> Markup {
                     }
                     (select(ctx, "keys", "account.shortcuts", &v.keys))
                     (select(ctx, "rotation", "account.rotation", &v.rotations))
+                    (select(ctx, "layout", "account.folder_view", &v.layouts))
                     button class="prefs__submit" type="submit" { (ctx.t("account.save")) }
                 }
             }

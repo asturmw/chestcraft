@@ -1,5 +1,5 @@
 // chestcraft folder browser: selection and the status bar, the filter, the row menu, new
-// folder, delete to trash and the selection's zip. Markup: views::listing (src/web/views.rs);
+// folder, delete to trash, the selection's zip and folder sizes. Markup: views::listing (src/web/views.rs);
 // copy comes from data-t-* attributes on the browser element (the i18n catalogs). The
 // selection posts through the `sel` form (op=zip | delete), like it would without JS.
 (() => {
@@ -323,7 +323,19 @@
       if (pick(r).checked) update();
     }
   }
-  if (duRows.length) { duWorker(); duWorker(); }
+  // A share's "Download all": the folder's whole size, when the page came without it (a
+  // big folder). Asked after the rows, whose walks it repeats; left out while unknown.
+  async function duAll() {
+    const el = document.querySelector('[data-js="dl-all-size"]');
+    if (!el || el.textContent.trim()) return;
+    let d = null;
+    try {
+      const res = await fetch(`${location.pathname}?du`, { headers: { accept: 'application/json' } });
+      if (res.ok) d = await res.json();
+    } catch (e) { d = null; }
+    if (d && d.complete && typeof d.bytes === 'number') el.textContent = fill(el.dataset.t, { size: sizeText(d.bytes) });
+  }
+  Promise.all(duRows.length ? [duWorker(), duWorker()] : []).then(duAll);
   window.cc = Object.assign(window.cc || {}, {
     browser: { rows, selected, selectOnly, update, sizeText, items, setState, toggle, askDelete, submit, pick },
   });

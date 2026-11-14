@@ -39,6 +39,9 @@ pub struct Ctx<'a> {
     pub lang_switch: Option<String>,
     /// Show the app's name in the header (not on a visitor's password page).
     pub brand: bool,
+    /// Offer visitors the sign-in link in the app bar (not on share pages: the people a
+    /// link was sent to have no account).
+    pub sign_in: bool,
     /// The sidebar (folder tree, free space, links) and the current section.
     pub nav: Option<Nav>,
     /// Skins an account can switch to in the app bar: (name, display name).
@@ -360,7 +363,7 @@ fn appbar(ctx: &Ctx, crumbs: &[Crumb]) -> Markup {
                 }
                 @if let (Some(name), Some(csrf)) = (ctx.user_name, ctx.csrf) {
                     (account_menu(ctx, name, csrf))
-                } @else if !ctx.signed_in && ctx.brand {
+                } @else if !ctx.signed_in && ctx.brand && ctx.sign_in {
                     a class="appbar__link" href="/.cc/login" {
                         (icon("user"))
                         span class="appbar__label" { (ctx.t("common.sign_in")) }
@@ -706,7 +709,7 @@ pub struct Row {
     pub download_href: Option<String>,
 }
 
-/// Top of a share's pages: what is shared, by whom, until when.
+/// What a share's pages say about it: what is shared, by whom, until when.
 pub struct ShareHead {
     pub name: String,
     pub by: String,
@@ -714,19 +717,44 @@ pub struct ShareHead {
     pub until: Option<String>,
 }
 
+/// "Shared by anna · available until 13.12.2026, 21:28": one muted line under the title.
+pub fn share_line(ctx: &Ctx, h: &ShareHead) -> Markup {
+    let text = match &h.until {
+        Some(until) => ctx.tf("share.shared_until", &[("name", &h.by), ("date", until)]),
+        None => ctx.tf("share.shared_by", &[("name", &h.by)]),
+    };
+    html! { p class="share-line" { (text) } }
+}
+
+/// The creator's note for the people the link went to.
+pub fn share_note(h: &ShareHead) -> Markup {
+    html! {
+        @if let Some(note) = &h.note {
+            p class="banner share-note" data-state="note" { (note) }
+        }
+    }
+}
+
+/// Top of a share page that is not a folder (one file, the upload page): the name as the
+/// page title, the line, the note.
 pub fn share_head(ctx: &Ctx, h: &ShareHead) -> Markup {
     html! {
         header class="share-head" {
             h1 class="share-head__name" { (h.name) }
-            p class="share-head__by" { (ctx.tf("share.shared_by", &[("name", &h.by)])) }
-            @if let Some(until) = &h.until {
-                p class="share-head__until" { (ctx.tf("share.available_until", &[("date", until)])) }
-            }
-            @if let Some(note) = &h.note {
-                p class="share-head__note" { (note) }
-            }
+            (share_line(ctx, h))
         }
+        (share_note(h))
     }
+}
+
+/// A share folder's primary action: everything in it as one zip (a plain link).
+pub struct DownloadAll {
+    pub href: String,
+    /// "Download all", or "Download folder" below the share's top.
+    pub label: String,
+    /// "(979 kB)": the folder's whole size when the server had it at hand; else the page
+    /// script asks for it (`?du`).
+    pub size: Option<String>,
 }
 
 pub struct ListingView {
@@ -778,6 +806,10 @@ pub struct ListingView {
     pub share_blocked: Option<String>,
     /// Anonymous visitors: public uploads are open, enter the password here.
     pub public_upload_href: Option<String>,
+    /// The filter field (a share's folder has it only when it is long enough to need one).
+    pub filter: bool,
+    /// Share folders that hold something: the "Download all" button.
+    pub download_all: Option<DownloadAll>,
     /// `list` or `grid`.
     pub layout: &'static str,
     /// Links to the list and the grid layout.
@@ -903,24 +935,47 @@ pub fn file_icon(ftype: &str) -> Markup {
     html! { span class="ficon" data-type=(ftype) { (icon(type_icon(ftype))) } }
 }
 
+/// Which button opens the folder's download menu.
+#[derive(Clone, Copy, PartialEq)]
+enum DlToggle {
+    /// "Download folder ▾" in the action bar.
+    Bar,
+    /// The icon in the title row (phones).
+    Phone,
+    /// The arrow next to a share's "Download all": the other ways to download.
+    More,
+}
+
 /// The download menu: save to a folder, separately, or as one zip (`dl-save` and `dl-each`
 /// need the page script, which unhides them). `zip` is a plain GET form, so the zip works
-/// without JS. `phone`: the icon-only copy in the title row.
-fn download_menu(ctx: &Ctx, id: &str, v: &ListingView, phone: bool) -> Markup {
-    let label = ctx.t("browser.dl_folder");
+/// without JS.
+fn download_menu(ctx: &Ctx, id: &str, v: &ListingView, toggle: DlToggle) -> Markup {
+    let label = match toggle {
+        DlToggle::More => ctx.t("share.download_more"),
+        _ => ctx.t("browser.dl_folder"),
+    };
     let zip_name = format!("{}.zip", v.title);
     html! {
-        @if phone {
-            button class="btn btn--icon dl__toggle" type="button" aria-haspopup="menu" popovertarget=(id)
-                aria-label=(label) data-js="dl-toggle" {
-                (icon("download"))
+        @match toggle {
+            DlToggle::Phone => {
+                button class="btn btn--icon dl__toggle" type="button" aria-haspopup="menu" popovertarget=(id)
+                    aria-label=(label) data-js="dl-toggle" {
+                    (icon("download"))
+                }
             }
-        } @else {
-            button class="btn btn--quiet dl__toggle" type="button" aria-haspopup="menu" popovertarget=(id)
-                aria-label=(label) data-js="dl-toggle" {
-                (icon("download"))
-                span class="btn__label" aria-hidden="true" { (label) }
-                (icon_c("chevron-down", "dl__caret"))
+            DlToggle::Bar => {
+                button class="btn btn--quiet dl__toggle" type="button" aria-haspopup="menu" popovertarget=(id)
+                    aria-label=(label) data-js="dl-toggle" {
+                    (icon("download"))
+                    span class="btn__label" aria-hidden="true" { (label) }
+                    (icon_c("chevron-down", "dl__caret"))
+                }
+            }
+            DlToggle::More => {
+                button class="btn dl__toggle share-dl__toggle" type="button" aria-haspopup="menu" popovertarget=(id)
+                    aria-label=(label) title=(label) data-js="dl-toggle" {
+                    (icon_c("chevron-down", "dl__caret"))
+                }
             }
         }
         div class="menu dl__menu" id=(id) role="menu" aria-label=(label) popover data-scope="folder" {
@@ -989,6 +1044,18 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
     let folder_actions = v.upload.is_some()
         || v.public_upload_href.is_some()
         || (v.can_write && (v.form_csrf.is_some() || v.ops_vol.is_some()));
+    // Share folders: the download is the page's primary button ("Download all") with the
+    // menu next to it, so the action bar and the title row carry no second one, and the
+    // bar shows only for visitors who may upload. One primary button per page: Upload
+    // steps back while "Download all" is there.
+    let share = v.share.is_some();
+    let upload_class = if v.download_all.is_some() {
+        "btn actionbar__upload"
+    } else {
+        "btn btn--primary actionbar__upload"
+    };
+    // The view toggle alone in the title row's tools: on phones it sits next to the title.
+    let tools_state = (share && !v.filter).then_some("view-only");
     let main = html! {
         main class="browser" id="main" data-view=(v.layout) data-js="browser"
             data-share=[v.share_base.as_deref()] data-dir=(v.dir)
@@ -1019,28 +1086,34 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             data-t-moved=(ctx.t("browser.queue_moved")) data-t-copied=(ctx.t("browser.queue_copied"))
             data-t-rename=(ctx.t("browser.rename")) data-t-move=(ctx.t("browser.move")) data-t-copy=(ctx.t("browser.copy")) {
             div class="browser__pane" {
-                @if let Some(h) = &v.share {
-                    (share_head(ctx, h))
-                }
-                @if v.read_only {
+                // A share says nothing about what its visitor can't do; its creator's note
+                // follows the title.
+                @if v.read_only && !share {
                     p class="banner" data-state="read-only" { (ctx.t("browser.read_only")) }
                 }
                 div class="browser__head" {
                     div class="browser__heading" {
                         h1 class="browser__title" { (v.title) }
+                        @if let Some(h) = &v.share {
+                            (share_line(ctx, h))
+                        }
                         p class="browser__summary" { (v.summary) }
                     }
-                    div class="browser__tools" {
-                        label class="filter" {
-                            (icon("filter"))
-                            span class="vh" { (ctx.t("browser.filter")) }
-                            input class="filter__input" type="search" placeholder=(ctx.t("browser.filter_placeholder"))
-                                data-js="filter" autocomplete="off";
-                            @if keys {
-                                kbd class="filter__key" { "/" }
+                    div class="browser__tools" data-state=[tools_state] {
+                        @if v.filter {
+                            label class="filter" {
+                                (icon("filter"))
+                                span class="vh" { (ctx.t("browser.filter")) }
+                                input class="filter__input" type="search" placeholder=(ctx.t("browser.filter_placeholder"))
+                                    data-js="filter" autocomplete="off";
+                                @if keys {
+                                    kbd class="filter__key" { "/" }
+                                }
                             }
                         }
-                        div class="dl browser__download" { (download_menu(ctx, "dl-folder-m", v, true)) }
+                        @if !share {
+                            div class="dl browser__download" { (download_menu(ctx, "dl-folder-m", v, DlToggle::Phone)) }
+                        }
                         div class="seg" role="group" aria-label=(ctx.t("browser.layout")) {
                             @for (i, (name, key, icon_id)) in [("list", "browser.layout_list", "list"), ("grid", "browser.layout_grid", "grid")].iter().enumerate() {
                                 a class="seg__item btn btn--icon" href=(v.layout_hrefs[i]) aria-label=(ctx.t(key))
@@ -1049,10 +1122,29 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                         }
                     }
                 }
+                // The note greets at the share's top (no crumbs there), not in every folder.
+                @if let Some(h) = v.share.as_ref().filter(|_| v.crumbs.is_empty()) {
+                    (share_note(h))
+                }
+                @if let Some(d) = &v.download_all {
+                    div class="share-dl" {
+                        a class="btn btn--primary share-dl__all" href=(d.href) {
+                            (icon("download"))
+                            span class="btn__label" {
+                                (d.label)
+                                " "
+                                span class="share-dl__size" data-js="dl-all-size"
+                                    data-t=(ctx.t("share.download_size")) { (d.size.as_deref().unwrap_or("")) }
+                            }
+                        }
+                        div class="dl share-dl__more" { (download_menu(ctx, "dl-folder", v, DlToggle::More)) }
+                    }
+                }
+                @if !share || folder_actions {
                 div class="actionbar" role="toolbar" aria-label=(ctx.t("browser.folder_actions"))
                     data-state=[(!folder_actions).then_some("download-only")] {
                     @if v.upload.is_some() {
-                        button class="btn btn--primary actionbar__upload" type="button" data-js="upload-pick" {
+                        button class=(upload_class) type="button" data-js="upload-pick" {
                             (icon("upload"))
                             span class="btn__label" { (ctx.t("browser.upload")) }
                         }
@@ -1081,7 +1173,10 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                             button class="btn btn--icon" type="button" data-js="clip-clear" { (icon("x")) }
                         }
                     }
-                    div class="dl actionbar__download" { (download_menu(ctx, "dl-folder", v, false)) }
+                    @if !share {
+                        div class="dl actionbar__download" { (download_menu(ctx, "dl-folder", v, DlToggle::Bar)) }
+                    }
+                }
                 }
                 @if let Some(reason) = &v.share_blocked {
                     p class="banner" data-state="share-unavailable" { (reason) }
@@ -1913,7 +2008,7 @@ pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
                 (keys_help(ctx))
             }
             @if let Some(h) = &v.share {
-                (share_head(ctx, h))
+                (share_line(ctx, h))
             }
             article class="viewer" data-type=(v.ftype) aria-labelledby="viewer-name" {
                 header class="viewer__bar" {

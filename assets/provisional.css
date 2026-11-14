@@ -62,8 +62,47 @@ a.menu__item { text-decoration: none; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 16px; padding-top: 12px; font-size: var(--fs-sm); }
 .pager a { color: var(--accent-ink); }
 .browser__empty { padding: 24px 8px; color: var(--text-muted); }
-.share-head { margin-bottom: 12px; color: var(--text-muted); font-size: var(--fs-sm); }
-.share-head__name { font-size: var(--fs-md); color: var(--text); }
+
+/* Share pages for visitors (review Q6) until the design delivers them: the name once (the
+   page title), one muted line with who shared it and until when, the creator's note, then
+   the page's one primary button, "Download all", with the other ways to download behind
+   the arrow next to it. */
+.share-line { flex: 1 1 100%; margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
+.share-note { white-space: pre-line; overflow-wrap: anywhere; }
+.share-head { margin-bottom: 12px; }
+.panel .share-head__name { margin-bottom: 4px; overflow-wrap: anywhere; }
+.panel .share-head .share-line { margin: 0; }
+.share-dl { display: flex; align-items: stretch; gap: 6px; margin-bottom: 12px; }
+.share-dl__all { min-width: 0; min-height: var(--tap); --btn-px: 20px; font-size: var(--fs-md); }
+.share-dl__all .btn__label { min-width: 0; }
+.share-dl__size { font-weight: 500; }
+.share-dl__toggle { width: var(--tap); min-height: var(--tap); padding: 0; }
+.share-dl__toggle .dl__caret { width: 18px; height: 18px; margin: 0; opacity: 1; }
+/* One shared file: preview, size and date, one download button. */
+.file-card { display: grid; gap: 12px; }
+.file-card__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.file-card .viewer__stage { min-width: 0; }
+/* The "no preview" stage has its own download link; the card's button is the one. */
+.file-card .viewer__download-big { display: none; }
+.panel .file-card__meta { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
+.panel a.btn { color: var(--text); }
+.panel a.btn--primary { color: var(--on-accent); }
+.file-card__download { min-height: var(--tap); --btn-px: 20px; font-size: var(--fs-md); }
+/* Only the list/grid toggle is left in the title row's tools (no filter below 20 entries,
+   the download is the button). */
+.browser__tools[data-state="view-only"] { flex: none; }
+@media (max-width: 719px) {
+  /* Full width; a long label wraps instead of losing its size. */
+  .share-dl__all { flex: 1 1 auto; --btn-px: 12px; padding-block: 6px; font-size: 1rem; white-space: normal; text-align: center; }
+  .file-card__download { flex: 1 1 100%; }
+  /* The toggle sits beside the title; the lines below it get the whole width. */
+  .browser__head:has(> .browser__tools[data-state="view-only"]) {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 12px;
+  }
+  .browser__head:has(> .browser__tools[data-state="view-only"]) .browser__heading { display: contents; }
+  .browser__tools[data-state="view-only"] { grid-area: 1 / 2; margin: 0; }
+  .browser__head:has(> .browser__tools[data-state="view-only"]) :is(.share-line, .browser__summary) { grid-column: 1 / -1; }
+}
 
 /* Folder download: the icon in the title row is the phone's copy of the menu. app.css
    hides it (.browser__download) and shows it again with the .dl rule that follows (same

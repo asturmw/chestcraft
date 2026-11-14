@@ -15,6 +15,7 @@ mod files;
 mod guest;
 mod headers;
 pub mod jobs;
+mod layout;
 mod limits;
 pub mod monitor;
 mod nav;
@@ -198,6 +199,7 @@ pub fn page_ctx<'a>(
         styles: Vec::new(),
         lang_switch: None,
         brand: true,
+        sign_in: true,
         nav: None,
         skins: Vec::new(),
     };

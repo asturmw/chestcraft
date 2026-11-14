@@ -7,6 +7,10 @@
 //! [`MAX_TIME`], and results are kept for [`TTL`], keyed by the folder's inode and
 //! modification time (which changes when something is added to or removed from the folder
 //! itself; deeper changes show after the TTL).
+//!
+//! A page that wants a folder's size in its own markup (a share's "Download all") asks
+//! [`FolderSizes::quick`]: the cached size, or a walk that gives up after [`QUICK_ENTRIES`]
+//! entries or [`QUICK_TIME`], so the page never waits for a big folder.
 
 use crate::fs::path::RelPath;
 use crate::fs::tree::{Usage, UsageLimits, usage};
@@ -20,6 +24,8 @@ use tokio::sync::Semaphore;
 pub const TTL: Duration = Duration::from_secs(300);
 pub const MAX_ENTRIES: u64 = 2_000_000;
 pub const MAX_TIME: Duration = Duration::from_secs(15);
+pub const QUICK_ENTRIES: u64 = 5_000;
+pub const QUICK_TIME: Duration = Duration::from_millis(100);
 const MAX_CACHED: usize = 20_000;
 const PARALLEL: usize = 2;
 
@@ -47,19 +53,7 @@ impl FolderSizes {
         rel: RelPath,
         include_hidden: bool,
     ) -> io::Result<Usage> {
-        let meta = {
-            let (vol, rel) = (vol.clone(), rel.clone());
-            tokio::task::spawn_blocking(move || vol.stat(&rel))
-                .await
-                .map_err(io::Error::other)??
-        };
-        let key = (
-            meta.dev,
-            meta.ino,
-            meta.mtime,
-            meta.mtime_nsec,
-            include_hidden,
-        );
+        let key = Self::key(&vol, &rel, include_hidden).await?;
         if let Some(u) = self.cached(&key) {
             return Ok(u);
         }
@@ -77,6 +71,57 @@ impl FolderSizes {
         })
         .await
         .map_err(io::Error::other)??;
+        self.store(key, u);
+        Ok(u)
+    }
+
+    /// The whole size of `rel` when it is known or quick to add up, for a page that shows
+    /// it at once. None: the folder is too big for that (or unreadable); [`Self::get`]
+    /// finds out.
+    pub async fn quick(
+        &self,
+        vol: Arc<VolumeRoot>,
+        rel: RelPath,
+        include_hidden: bool,
+    ) -> Option<Usage> {
+        let key = Self::key(&vol, &rel, include_hidden).await.ok()?;
+        if let Some(u) = self.cached(&key) {
+            return Some(u).filter(|u| u.complete);
+        }
+        let u = tokio::task::spawn_blocking(move || {
+            let limits = UsageLimits {
+                max_entries: QUICK_ENTRIES,
+                deadline: Instant::now() + QUICK_TIME,
+            };
+            usage(&vol, &rel, include_hidden, &limits)
+        })
+        .await
+        .ok()?
+        .ok()?;
+        if !u.complete {
+            return None;
+        }
+        self.store(key, u);
+        Some(u)
+    }
+
+    async fn key(vol: &Arc<VolumeRoot>, rel: &RelPath, include_hidden: bool) -> io::Result<Key> {
+        let meta = {
+            let (vol, rel) = (vol.clone(), rel.clone());
+            tokio::task::spawn_blocking(move || vol.stat(&rel))
+                .await
+                .map_err(io::Error::other)??
+        };
+        Ok((
+            meta.dev,
+            meta.ino,
+            meta.mtime,
+            meta.mtime_nsec,
+            include_hidden,
+        ))
+    }
+
+    fn store(&self, key: Key, u: Usage) {
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         if cache.len() >= MAX_CACHED {
             let now = Instant::now();
@@ -86,7 +131,6 @@ impl FolderSizes {
             }
         }
         cache.insert(key, (Instant::now(), u));
-        Ok(u)
     }
 
     fn cached(&self, key: &Key) -> Option<Usage> {

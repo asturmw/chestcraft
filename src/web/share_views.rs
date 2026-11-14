@@ -3,7 +3,7 @@
 //! design deliverables are integrated.
 
 use super::views::{
-    Ctx, GateField, ShareHead, UploadUi, ViewerBody, gate, gate_field, layout, share_head,
+    Ctx, GateField, ShareHead, UploadUi, ViewerBody, gate, gate_field, icon, layout, share_head,
     upload_ui, viewer_stage,
 };
 use maud::{Markup, html};
@@ -59,7 +59,6 @@ pub struct FileCard {
     pub ftype: &'static str,
     pub size: String,
     pub modified: String,
-    pub open_href: String,
     pub download_href: String,
     pub body: ViewerBody,
 }
@@ -70,11 +69,17 @@ pub fn share_file(ctx: &Ctx, head: &ShareHead, f: &FileCard) -> Markup {
         &head.name,
         html! {
             (share_head(ctx, head))
-            article class="file-card" data-type=(f.ftype) {
+            article class="file-card" data-type=(f.ftype) aria-label=(f.name) {
+                // The button first, like a folder's "Download all": in reach whatever
+                // the preview's height.
+                div class="file-card__bar" {
+                    a class="btn btn--primary file-card__download" href=(f.download_href) download {
+                        (icon("download"))
+                        span class="btn__label" { (ctx.t("share.download")) }
+                    }
+                    p class="file-card__meta" { (f.size) " · " (f.modified) }
+                }
                 (viewer_stage(ctx, &f.name, f.ftype, &f.body, &f.download_href))
-                h2 class="file-card__name" { a href=(f.open_href) { (f.name) } }
-                p class="file-card__meta" { (f.size) " · " (f.modified) }
-                a class="file-card__download" href=(f.download_href) download { (ctx.t("share.download")) }
             }
         },
     )
