@@ -1,7 +1,8 @@
 // chestcraft page basics, on every page: menus (popovers) placed next to the button that
 // opened them, arrow keys inside menus, the password reveal button, dialog cancel buttons,
 // the type icon for thumbnails that fail to load, the sidebar drawer on narrow screens, the
-// look switches in the app bar and a message shown after a reload.
+// look switches in the app bar, the search field (`/`, no empty search) and a message
+// shown after a reload.
 // Hooks are data-js attributes and ARIA roles; JS never relies on classes (ui-handoff §5).
 (() => {
   'use strict';
@@ -210,6 +211,28 @@
       form.append(keep);
     }
     HTMLFormElement.prototype.submit.call(form);
+  });
+
+  // The search field (app bar, or the search page's own): an empty one doesn't search (on
+  // a folder page Enter in the cleared filter would leave the folder); `/` puts the focus
+  // in it where no keyboard map took the key already (keys.js does so on folder pages).
+  document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (form instanceof HTMLFormElement && form.dataset.js === 'search'
+      && !String(new FormData(form).get('q') || '').trim()) e.preventDefault();
+  });
+  addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (document.documentElement.dataset.keys === 'off') return;
+    if (document.querySelector('dialog[open]')) return;
+    const t = e.target;
+    if (t instanceof Element && (t.closest('[role="menu"]')
+      || t.matches('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable]:not([contenteditable="false"])'))) return;
+    const field = [...document.querySelectorAll('[data-js~="find"]')].find((f) => f.offsetParent !== null);
+    if (!field) return;
+    e.preventDefault();
+    field.focus();
+    field.select();
   });
 
   // A message for after a reload (an upload or a paste that changed the listing), shown in

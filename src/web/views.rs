@@ -79,6 +79,7 @@ pub enum Pictures {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Files,
+    Search,
     Shares,
     Trash,
     Account,
@@ -377,6 +378,9 @@ fn appbar(ctx: &Ctx, crumbs: &[Crumb]) -> Markup {
                 }
             }
             div class="appbar__tools" {
+                @if ctx.csrf.is_some() && ctx.nav.as_ref().is_none_or(|n| n.section != Section::Search) {
+                    (find_field(ctx, "appbar"))
+                }
                 @if let Some(csrf) = ctx.csrf {
                     (look_switch(ctx, csrf))
                 }
@@ -397,6 +401,52 @@ fn appbar(ctx: &Ctx, crumbs: &[Crumb]) -> Markup {
                 @if let Some(here) = &ctx.lang_switch {
                     (langswitch(ctx, here))
                 }
+            }
+        }
+    }
+}
+
+/// The library of the page (the sidebar's current volume): a search starts there.
+fn current_volume<'c>(ctx: &'c Ctx) -> Option<&'c str> {
+    ctx.nav
+        .as_ref()?
+        .tree
+        .iter()
+        .find(|n| n.current.is_some())
+        .map(|n| n.label.as_str())
+}
+
+/// The one field for filter and search (review Q12), for accounts: a search form that
+/// works without script (Enter searches every library, the page's first). On a folder page
+/// its input is also the folder's filter (`browser.js` filters while typing). `place`:
+/// `appbar` (from 720 px) or `title`, the folder's title row (phones, where the app bar has
+/// no room for it).
+fn find_field(ctx: &Ctx, place: &'static str) -> Markup {
+    let vol = current_volume(ctx);
+    let folder = vol.is_some()
+        && ctx
+            .nav
+            .as_ref()
+            .is_some_and(|n| n.section == Section::Files);
+    let id = format!("find-{place}");
+    let (placeholder, hint, js) = if folder {
+        ("find.placeholder_folder", "find.hint_folder", "find filter")
+    } else {
+        ("find.placeholder", "find.hint", "find")
+    };
+    html! {
+        form class="find" data-place=(place) method="get" action="/.cc/search" role="search" data-js="search" {
+            label class="filter find__field" for=(id) {
+                (icon("search"))
+                span class="vh" { (ctx.t(if folder { "find.label_folder" } else { "find.label" })) }
+                input class="filter__input" id=(id) type="search" name="q" placeholder=(ctx.t(placeholder))
+                    title=(ctx.t(hint)) autocomplete="off" spellcheck="false" enterkeyhint="search" data-js=(js);
+                @if ctx.keys != "off" {
+                    kbd class="filter__key" { "/" }
+                }
+            }
+            @if let Some(v) = vol {
+                input type="hidden" name="vol" value=(v);
             }
         }
     }
@@ -585,15 +635,21 @@ fn sidenav(ctx: &Ctx, nav: &Nav) -> Markup {
     }
 }
 
-/// The phone's tab bar (review Q23): the trash lives in the account, so the account tab
-/// is the current one on the trash page.
+/// The phone's tab bar (review Q23): libraries, search, shares, account. The trash lives in
+/// the account, so the account tab is the current one on the trash page. Search starts in
+/// the page's library.
 fn tabbar(ctx: &Ctx) -> Markup {
     let section = ctx.nav.as_ref().map(|n| match n.section {
         Section::Trash => Section::Account,
         s => s,
     });
+    let search = match current_volume(ctx) {
+        Some(v) => format!("/.cc/search?from=tab&vol={}", super::files::enc(v)),
+        None => "/.cc/search?from=tab".to_string(),
+    };
     let tabs = [
         ("/", "folder", "nav.volumes", Section::Files),
+        (search.as_str(), "search", "nav.search_tab", Section::Search),
         ("/.cc/shares", "share", "nav.shares_tab", Section::Shares),
         ("/.cc/account", "user", "nav.account", Section::Account),
     ];
@@ -1177,7 +1233,11 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                         p class="browser__summary" { (v.summary) }
                     }
                     div class="browser__tools" data-state=[tools_state] {
-                        @if v.filter {
+                        // Accounts filter (and search) in the app bar; on phones the same
+                        // field stands here instead.
+                        @if ctx.csrf.is_some() && !share {
+                            (find_field(ctx, "title"))
+                        } @else if v.filter {
                             label class="filter" {
                                 (icon("filter"))
                                 span class="vh" { (ctx.t("browser.filter")) }
@@ -1527,6 +1587,12 @@ type KeyRow = (String, &'static str);
 pub fn keys_help(ctx: &Ctx) -> Markup {
     let ctrl = ctx.t("keys.ctrl");
     let k = |s: &str| s.replace("Ctrl", ctrl);
+    // Accounts' filter field searches every library on Enter.
+    let filter_key = if ctx.csrf.is_some() {
+        "keys.filter_search"
+    } else {
+        "keys.filter"
+    };
     let (list, viewer): (Vec<KeyRow>, Vec<KeyRow>) = if ctx.keys == "vim" {
         (
             vec![
@@ -1534,7 +1600,7 @@ pub fn keys_help(ctx: &Ctx) -> Markup {
                 ("gg / G".into(), "keys.top_bottom"),
                 (format!("l / {}", ctx.t("keys.enter")), "keys.open"),
                 (format!("h / {}", ctx.t("keys.backspace")), "keys.up"),
-                ("/".into(), "keys.filter"),
+                ("/".into(), filter_key),
                 ("n / N".into(), "keys.next_match"),
                 ("Esc".into(), "keys.clear"),
                 (ctx.t("keys.space").into(), "keys.toggle"),
@@ -1567,7 +1633,7 @@ pub fn keys_help(ctx: &Ctx) -> Markup {
                 ),
                 (ctx.t("keys.enter").into(), "keys.open"),
                 ("Alt+↑".into(), "keys.up"),
-                ("/".into(), "keys.filter"),
+                ("/".into(), filter_key),
                 ("Esc".into(), "keys.clear"),
                 (ctx.t("keys.space").into(), "keys.toggle"),
                 (format!("{}+↑ / ↓", ctx.t("keys.shift")), "keys.range"),

@@ -6,7 +6,8 @@
 //! The rules are the zip's (`fs::zipstream`): the walk opens each folder relative to its
 //! parent with `O_NOFOLLOW`, leaves out symlinks, devices and FIFOs, never shows internal
 //! names, and dot-names only with `include_hidden`. `only` limits the top level to a
-//! selection. [`usage`] adds a folder up with the same rules (folder sizes in listings).
+//! selection. [`usage`] adds a folder up with the same rules (folder sizes in listings);
+//! [`walk`] is the walk itself, for other visitors (the name search, `web::search`).
 
 use crate::fs::path::RelPath;
 use crate::fs::volume::{Meta, VolumeRoot};
@@ -21,44 +22,46 @@ pub struct TreeSpec {
     pub only: Option<Vec<String>>,
 }
 
-/// Write the listing of `base` (a folder in `vol`) to `out`. Returns the number of lines.
-pub fn write_tree<W: Write>(
+/// One entry a walk found.
+pub struct Found<'a> {
+    /// Relative to the walk's base: `sub/a.jpg`.
+    pub path: &'a str,
+    pub name: &'a str,
+    pub dir: bool,
+    pub meta: Meta,
+}
+
+/// What a walk's visitor wants next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Go,
+    Stop,
+}
+
+/// Walk `base` (a folder in `vol`) with the rules above, calling `f` for every regular
+/// file and folder: folders before their contents, each level in natural order (so the
+/// paths come in natural path order). A folder that can't be opened is left out with its
+/// contents. Returns false when `f` stopped the walk. The zip, the tree listing, folder
+/// sizes and the name search all walk this way.
+pub fn walk(
     vol: &VolumeRoot,
     base: &RelPath,
-    spec: &TreeSpec,
-    mut out: W,
-) -> io::Result<u64> {
+    include_hidden: bool,
+    only: Option<&[String]>,
+    f: &mut dyn FnMut(&Found) -> Step,
+) -> io::Result<bool> {
     let dirfd = vol.open_dir(base)?;
-    let mut count = 0;
-    walk(&mut out, &dirfd, "", spec, true, &mut count)?;
-    out.flush()?;
-    Ok(count)
+    visit(&dirfd, "", include_hidden, only, f)
 }
 
-fn line<W: Write>(out: &mut W, path: &str, dir: bool, meta: &Meta) -> io::Result<()> {
-    let mtime = jiff::Timestamp::from_second(meta.mtime)
-        .map(|t| t.to_string())
-        .ok();
-    let v = serde_json::json!({
-        "path": path,
-        "dir": dir,
-        "size": if dir { 0 } else { meta.size },
-        "mtime": mtime,
-    });
-    serde_json::to_writer(&mut *out, &v)?;
-    out.write_all(b"\n")
-}
-
-fn walk<W: Write>(
-    out: &mut W,
+fn visit(
     dirfd: &OwnedFd,
     prefix: &str,
-    spec: &TreeSpec,
-    top: bool,
-    count: &mut u64,
-) -> io::Result<()> {
-    let only = spec.only.as_deref().filter(|_| top);
-    for name in listed_names(dirfd, spec.include_hidden, only)? {
+    include_hidden: bool,
+    only: Option<&[String]>,
+    f: &mut dyn FnMut(&Found) -> Step,
+) -> io::Result<bool> {
+    for name in listed_names(dirfd, include_hidden, only)? {
         let Ok(st) = statat(dirfd, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) else {
             continue;
         };
@@ -77,18 +80,79 @@ fn walk<W: Write>(
                         continue;
                     }
                 };
-                line(out, &path, true, &Meta::from_stat(&st))?;
-                *count += 1;
-                walk(out, &sub, &format!("{path}/"), spec, false, count)?;
+                let found = Found {
+                    path: &path,
+                    name: &name,
+                    dir: true,
+                    meta: Meta::from_stat(&st),
+                };
+                if f(&found) == Step::Stop
+                    || !visit(&sub, &format!("{path}/"), include_hidden, None, f)?
+                {
+                    return Ok(false);
+                }
             }
             FileType::RegularFile => {
-                line(out, &path, false, &Meta::from_stat(&st))?;
-                *count += 1;
+                let found = Found {
+                    path: &path,
+                    name: &name,
+                    dir: false,
+                    meta: Meta::from_stat(&st),
+                };
+                if f(&found) == Step::Stop {
+                    return Ok(false);
+                }
             }
             _ => {}
         }
     }
-    Ok(())
+    Ok(true)
+}
+
+/// Write the listing of `base` (a folder in `vol`) to `out`. Returns the number of lines.
+pub fn write_tree<W: Write>(
+    vol: &VolumeRoot,
+    base: &RelPath,
+    spec: &TreeSpec,
+    mut out: W,
+) -> io::Result<u64> {
+    let mut count = 0;
+    let mut failed = None;
+    walk(
+        vol,
+        base,
+        spec.include_hidden,
+        spec.only.as_deref(),
+        &mut |f| match line(&mut out, f.path, f.dir, &f.meta) {
+            Ok(()) => {
+                count += 1;
+                Step::Go
+            }
+            Err(e) => {
+                failed = Some(e);
+                Step::Stop
+            }
+        },
+    )?;
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    out.flush()?;
+    Ok(count)
+}
+
+fn line<W: Write>(out: &mut W, path: &str, dir: bool, meta: &Meta) -> io::Result<()> {
+    let mtime = jiff::Timestamp::from_second(meta.mtime)
+        .map(|t| t.to_string())
+        .ok();
+    let v = serde_json::json!({
+        "path": path,
+        "dir": dir,
+        "size": if dir { 0 } else { meta.size },
+        "mtime": mtime,
+    });
+    serde_json::to_writer(&mut *out, &v)?;
+    out.write_all(b"\n")
 }
 
 /// What a folder holds, added up by [`usage`].
@@ -117,56 +181,23 @@ pub fn usage(
     include_hidden: bool,
     limits: &UsageLimits,
 ) -> io::Result<Usage> {
-    let dirfd = vol.open_dir(base)?;
-    let mut u = Usage {
-        complete: true,
-        ..Usage::default()
-    };
-    add_up(&dirfd, include_hidden, limits, &mut u)?;
-    Ok(u)
-}
-
-fn add_up(
-    dirfd: &OwnedFd,
-    include_hidden: bool,
-    limits: &UsageLimits,
-    u: &mut Usage,
-) -> io::Result<()> {
-    for name in listed_names(dirfd, include_hidden, None)? {
-        if u.files + u.dirs >= limits.max_entries
-            || ((u.files + u.dirs).is_multiple_of(256)
-                && std::time::Instant::now() >= limits.deadline)
+    let mut u = Usage::default();
+    u.complete = walk(vol, base, include_hidden, None, &mut |f| {
+        let seen = u.files + u.dirs;
+        if seen >= limits.max_entries
+            || (seen.is_multiple_of(256) && std::time::Instant::now() >= limits.deadline)
         {
-            u.complete = false;
-            return Ok(());
+            return Step::Stop;
         }
-        let Ok(st) = statat(dirfd, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) else {
-            continue;
-        };
-        match FileType::from_raw_mode(st.st_mode as _) {
-            FileType::Directory => {
-                u.dirs += 1;
-                let Ok(sub) = openat(
-                    dirfd,
-                    name.as_str(),
-                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                    Mode::empty(),
-                ) else {
-                    continue;
-                };
-                add_up(&sub, include_hidden, limits, u)?;
-                if !u.complete {
-                    return Ok(());
-                }
-            }
-            FileType::RegularFile => {
-                u.files += 1;
-                u.bytes += st.st_size as u64;
-            }
-            _ => {}
+        if f.dir {
+            u.dirs += 1;
+        } else {
+            u.files += 1;
+            u.bytes += f.meta.size;
         }
-    }
-    Ok(())
+        Step::Go
+    })?;
+    Ok(u)
 }
 
 #[cfg(test)]

@@ -23,6 +23,8 @@ mod ops;
 mod preview;
 mod public;
 mod query;
+mod search;
+mod search_views;
 mod share;
 mod share_views;
 mod shares;
@@ -74,6 +76,8 @@ pub struct AppState {
     pub thumb_limiter: governor::DefaultKeyedRateLimiter<std::net::IpAddr>,
     /// Folder sizes for listings (`?du`).
     pub folder_sizes: du::FolderSizes,
+    /// Name searches: walk slots and one running search per account.
+    pub searches: search::Searches,
     /// Health snapshots, active alerts, chart history.
     pub health: monitor::Monitor,
     /// Telegram / ntfy.
@@ -120,6 +124,7 @@ impl AppState {
             thumbs: crate::fs::thumbs::Thumbs::new(&cfg),
             thumb_limiter: preview::anon_limiter(),
             folder_sizes: du::FolderSizes::default(),
+            searches: search::Searches::default(),
             health: monitor::Monitor::default(),
             notifier,
             cfg: Arc::new(cfg),
@@ -297,6 +302,7 @@ pub fn router(state: Shared) -> Router {
         .route("/.cc/presets.css", get(account::presets_css))
         .route("/.cc/dl-slots", get(files::dl_slots))
         .route("/.cc/shares", get(shares::list))
+        .route("/.cc/search", get(search::page))
         .route(
             "/.cc/shares/new",
             get(shares::new_page).post(shares::new_submit),

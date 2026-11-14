@@ -2,6 +2,7 @@ pub mod filetype;
 pub mod names;
 pub mod ops;
 pub mod path;
+pub mod search;
 pub mod sort;
 pub mod thumbs;
 pub mod transfer;

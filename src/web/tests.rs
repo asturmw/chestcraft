@@ -4162,6 +4162,7 @@ async fn public_uploads_notify_once_per_burst() {
 mod appearance;
 mod ops;
 mod phone;
+mod search;
 mod share_view;
 mod status;
 mod users;

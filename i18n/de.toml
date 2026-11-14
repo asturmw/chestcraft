@@ -38,6 +38,7 @@ sections = "Bereiche"
 shares = "Meine Freigaben"
 # Beschriftung in der Tab-Leiste (kurz).
 shares_tab = "Freigaben"
+search_tab = "Suche"
 trash = "Papierkorb"
 account = "Konto"
 account_menu = "Kontomenü"
@@ -190,6 +191,44 @@ clip_clear_cut = "Zwischenablage leeren ({count} ausgeschnitten)"
 queue_moved = "verschoben"
 queue_copied = "kopiert"
 
+# Das eine Feld für Filter und Suche in der App-Leiste (Konten). Im Ordner filtert
+# Tippen diesen Ordner; die Eingabetaste sucht in den Namen aller Ablagen.
+[find]
+label_folder = "Diesen Ordner filtern oder in allen Ablagen suchen"
+label = "In allen Ablagen suchen"
+placeholder_folder = "Filtern oder suchen …"
+placeholder = "Suchen …"
+hint_folder = "Tippen filtert diesen Ordner, Eingabe sucht in allen Ablagen"
+hint = "Eingabe sucht in den Namen aller Ablagen"
+
+# Die Suchseite: Namen von Dateien und Ordnern in allen Ablagen, die das Konto öffnen darf.
+# {query} ist die Eingabe, {scope} ist scope_all oder scope_one.
+[search]
+title = "Suche"
+page_title = "Suche: {query}"
+label = "Nach Namen suchen"
+placeholder = "Name oder Teil davon"
+submit = "Suchen"
+include_hidden = "Versteckte Dateien einbeziehen"
+prompt = "Suche nach dem Namen von Dateien und Ordnern in allen Ablagen, die du öffnen kannst. Jedes Wort muss im Namen vorkommen; Groß- und Kleinschreibung und Akzente zählen nicht."
+running = "Suche nach „{query}“ {scope} …"
+caption = "Treffer für „{query}“: Name, Ort, Größe, Änderung"
+col_location = "Ort"
+scope_all = "in allen Ablagen"
+scope_one = "in {volume}"
+found_one = "{count} Treffer für „{query}“ {scope}"
+found_other = "{count} Treffer für „{query}“ {scope}"
+found_many = "Mehr als {count} Treffer für „{query}“ {scope}"
+more_one = "Nur der erste Treffer wird gezeigt. Gib ein weiteres Wort ein, um die Suche einzugrenzen."
+more_other = "Nur die ersten {count} werden gezeigt. Gib ein weiteres Wort ein, um die Suche einzugrenzen."
+timeout = "Suche nach {seconds} s abgebrochen: nicht alles durchsucht."
+too_big = "Suche abgebrochen: zu viele Dateien auf einmal. Nicht alles durchsucht."
+replaced = "Abgebrochen: du hast eine neue Suche gestartet."
+busy = "Gerade laufen zu viele Suchen. Versuch es gleich noch einmal."
+failed = "{volume} konnte nicht durchsucht werden."
+nothing = "Nichts gefunden für „{query}“."
+nothing_hint = "Gesucht wird nur in Namen, nicht im Inhalt. Versuch es mit weniger Wörtern oder einem Teil des Namens."
+
 # Die Übersicht der Tastenkürzel (?) in Ordnern und in der Vorschau.
 [keys]
 title = "Tastenkürzel"
@@ -200,6 +239,7 @@ top_bottom = "Erster / letzter Eintrag"
 open = "Öffnen"
 up = "Eine Ebene höher"
 filter = "Diesen Ordner filtern"
+filter_search = "Diesen Ordner filtern (Eingabe sucht in allen Ablagen)"
 next_match = "Nächster / vorheriger Treffer des Filters"
 clear = "Filter aufheben, dann die Auswahl"
 toggle = "Auswählen oder abwählen"

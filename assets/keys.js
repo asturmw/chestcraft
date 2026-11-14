@@ -42,7 +42,10 @@
   }
 
   // --- folder pages ---------------------------------------------------------------------------
-  const filter = js('filter');
+  // The folder's filter: for accounts the app bar's search field, or its copy in the title
+  // row on phones (whichever shows); for visitors the title row's.
+  const filters = [...document.querySelectorAll('[data-js~="filter"]')];
+  const filterShown = () => filters.find((f) => f.offsetParent !== null) || null;
   const visible = () => B.rows.filter((r) => !r.hidden);
   let cursor = null;
   let anchor = null; // range start (vim V, standard Shift+arrows)
@@ -96,7 +99,8 @@
   }
   function escape() {
     if (visual) { visual = false; anchor = null; return; }
-    if (filter && filter.value) {
+    const filter = filters.find((f) => f.value);
+    if (filter) {
       filter.value = '';
       filter.dispatchEvent(new Event('input'));
       return;
@@ -120,13 +124,16 @@
     if (t.length === 1 && ops()) ops().rename(t[0]);
   }
 
-  // The filter: Enter goes to the first match, Esc on an empty filter leaves it.
-  if (filter) {
+  // The filter: ↓ goes to the first match, Esc on an empty filter leaves it. Enter goes to
+  // the first match too, except in an account's field, where Enter searches all libraries
+  // (its form's submit).
+  for (const filter of filters) {
     filter.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); filter.blur(); edge(false); }
+      if ((e.key === 'Enter' && !filter.form) || e.key === 'ArrowDown') { e.preventDefault(); filter.blur(); edge(false); }
       else if (e.key === 'Escape' && !filter.value) filter.blur();
     });
   }
+  const focusFilter = () => { const f = filterShown(); if (f) { f.focus(); f.select(); } };
 
   let pending = '';
   let pendingTimer = null;
@@ -158,7 +165,7 @@
       case 'l': open(); return true;
       case 'Enter': open(); return true;
       case 'h': case 'Backspace': up(); return true;
-      case '/': if (filter) filter.focus(); return true;
+      case '/': focusFilter(); return true;
       case 'Escape': escape(); return true;
       case ' ': toggle(); return true;
       case 'V':
@@ -214,7 +221,7 @@
       case 'End': edge(true); return true;
       case 'Enter': open(); return true;
       case ' ': toggle(); return true;
-      case '/': if (filter) filter.focus(); return true;
+      case '/': focusFilter(); return true;
       case 'Escape': escape(); return true;
       case 'Delete': B.askDelete(targets()); return true;
       case 'F2': rename(); return true;

@@ -13,7 +13,9 @@
   const form = $('sel-form');
   const op = $('sel-op');
   const all = $('select-all');
-  const filter = $('filter');
+  // The filter: in the title row (visitors), or the app bar's search field and its phone
+  // copy in the title row (accounts), so possibly two inputs that type together.
+  const filters = [...document.querySelectorAll('[data-js~="filter"]')];
   const rowMenu = $('row-menu');
   const rows = [...browser.querySelectorAll('[data-js="row"]')];
   const pick = (row) => row.querySelector('[data-js="pick"]');
@@ -184,18 +186,22 @@
     selectOnly([]);
   });
 
-  // Filter: this folder's rows only, by name, without case or accents.
-  const fold = (s) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
-  if (filter) {
+  // Filter: this folder's rows only, by name, without case or accents, every word somewhere
+  // in the name (the same rule as the search, fs/search.rs).
+  const fold = (s) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/ß/g, 'ss');
+  if (filters.length) {
     const names = new Map(rows.map((r) => [r, fold(r.dataset.name)]));
-    filter.addEventListener('input', () => {
-      const q = fold(filter.value.trim());
-      for (const r of rows) r.hidden = q !== '' && !names.get(r).includes(q);
-      update();
-    });
-    filter.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && filter.value) { e.stopPropagation(); filter.value = ''; filter.dispatchEvent(new Event('input')); }
-    });
+    for (const filter of filters) {
+      filter.addEventListener('input', () => {
+        for (const other of filters) if (other !== filter) other.value = filter.value;
+        const words = fold(filter.value).split(/\s+/).filter(Boolean);
+        for (const r of rows) r.hidden = !words.every((w) => names.get(r).includes(w));
+        update();
+      });
+      filter.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && filter.value) { e.stopPropagation(); filter.value = ''; filter.dispatchEvent(new Event('input')); }
+      });
+    }
   }
 
   function submit(what) {

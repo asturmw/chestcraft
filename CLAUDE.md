@@ -395,6 +395,17 @@ public write, shares from the UI), and the next UI slices as the design delivers
   (admins only); links from `ListOrder::params`. The status bar has no hidden-files link.
   Phone tab bar: Libraries, Shares, Account (Search joins in step 5); the account page
   links to the trash, the trash page marks Account current.
+  Step 5 done (search, Q12/Q13/Q23/Q37): `GET /.cc/search?q=…[&vol=][&hidden=1][&from=tab]`
+  (`web/search.rs`, `web/search_views.rs`; matcher `fs/search.rs`: NFKD without marks,
+  lower case, ß = ss, every word as a substring; crate `unicode-normalization`), accounts
+  only, names across every library readable from the request's origin, `vol` first.
+  Walk through the shared `fs::tree::walk` visitor (also behind `?tree` and `?du`); bounds
+  500 hits, 10 s, 2 M entries, 2 walks at a time, one per account (a new search stops the
+  old). The page is streamed HTML (rows flushed every ≤ 100 ms; works without JS). One
+  field `find` in the app bar (form to the search; on folder pages it filters live, Enter
+  searches): icon that opens at 720–1023 px, in the title row below 720 px; visitors keep
+  the plain filter. Phone tab bar: Libraries, Search, Shares, Account. The look toggles
+  now collapse into one menu below 1280 px (was 1100).
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a

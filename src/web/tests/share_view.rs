@@ -203,9 +203,9 @@ async fn share_filter_shows_from_twenty_entries() {
         t.contains(r#"data-js="filter""#) && t.contains(r#"<div class="browser__tools">"#),
         "{t}"
     );
-    // The account's own browser filters any folder.
+    // The account's own browser filters any folder (with the search field, web::search).
     let t = e.page("/Medien/Urlaub%20Gardasee/", &tom.cookie).await;
-    assert!(t.contains(r#"data-js="filter""#), "{t}");
+    assert!(t.contains(r#"data-js="find filter""#), "{t}");
 }
 
 #[tokio::test]

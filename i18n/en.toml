@@ -40,6 +40,7 @@ sections = "Sections"
 shares = "My shares"
 # Tab bar label (short).
 shares_tab = "Shares"
+search_tab = "Search"
 trash = "Trash"
 account = "Account"
 account_menu = "Account menu"
@@ -193,6 +194,44 @@ clip_clear_cut = "Clear the clipboard ({count} cut)"
 queue_moved = "moved"
 queue_copied = "copied"
 
+# The one field for filter and search in the app bar (accounts). On a folder page typing
+# filters that folder; Enter searches the names in all libraries.
+[find]
+label_folder = "Filter this folder or search all libraries"
+label = "Search all libraries"
+placeholder_folder = "Filter or search …"
+placeholder = "Search …"
+hint_folder = "Typing filters this folder; Enter searches all libraries"
+hint = "Enter searches the names in all libraries"
+
+# The search page: names of files and folders in every library the account can open.
+# {query} is what was typed, {scope} is scope_all or scope_one.
+[search]
+title = "Search"
+page_title = "Search: {query}"
+label = "Search by name"
+placeholder = "Name or part of it"
+submit = "Search"
+include_hidden = "Include hidden files"
+prompt = "Search by the name of files and folders in all libraries you can open. Every word must occur in the name; case and accents don't matter."
+running = "Searching for “{query}” {scope} …"
+caption = "Matches for “{query}”: name, location, size, modified"
+col_location = "Location"
+scope_all = "in all libraries"
+scope_one = "in {volume}"
+found_one = "{count} match for “{query}” {scope}"
+found_other = "{count} matches for “{query}” {scope}"
+found_many = "More than {count} matches for “{query}” {scope}"
+more_one = "Only the first match is shown. Add a word to narrow the search."
+more_other = "Only the first {count} are shown. Add a word to narrow the search."
+timeout = "Search stopped after {seconds} s: not everything was searched."
+too_big = "Search stopped: too many files to go through at once. Not everything was searched."
+replaced = "Stopped: you started another search."
+busy = "Too many searches are running right now. Try again in a moment."
+failed = "{volume} could not be searched."
+nothing = "Nothing found for “{query}”."
+nothing_hint = "Only names are searched, not what files contain. Try fewer words or a part of the name."
+
 # The shortcut overview (?) on folder pages and in the viewer.
 [keys]
 title = "Keyboard shortcuts"
@@ -203,6 +242,7 @@ top_bottom = "First / last item"
 open = "Open"
 up = "Up one folder"
 filter = "Filter this folder"
+filter_search = "Filter this folder (Enter searches all libraries)"
 next_match = "Next / previous item that matches the filter"
 clear = "Clear the filter, then the selection"
 toggle = "Select or unselect"

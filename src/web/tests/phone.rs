@@ -203,9 +203,10 @@ async fn tab_bar_has_no_trash_and_the_account_page_links_to_it() {
     let t = e.get_h("/Medien/", &[("cookie", &s.cookie)]).await.text();
     let start = t.find(r#"<nav class="tabbar""#).unwrap();
     let bar = &t[start..start + t[start..].find("</nav>").unwrap()];
-    assert_eq!(bar.matches(r#"class="tabbar__item""#).count(), 3, "{bar}");
+    assert_eq!(bar.matches(r#"class="tabbar__item""#).count(), 4, "{bar}");
     assert!(
         bar.contains(r#"href="/""#)
+            && bar.contains(r#"href="/.cc/search?from=tab&amp;vol=Medien""#)
             && bar.contains(r#"href="/.cc/shares""#)
             && bar.contains(r#"href="/.cc/account""#)
             && !bar.contains("/.cc/trash"),
