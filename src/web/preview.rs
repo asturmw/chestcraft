@@ -1,14 +1,21 @@
 //! Thumbnails (`?thumb`, `?thumb=view`) and the viewer page (`?view`) of a file, for
 //! volumes and shares alike. The caller has checked that the visitor may read the file.
+//!
+//! The viewer is a page of its own, without the app shell: a top bar (close, name,
+//! "3 / 18", download, share, delete, info) over a dark stage. `?view` takes the listing's
+//! `sort`, `order` and `hidden` and steps through the folder's files in that order
+//! (folders skipped, files without a preview included); `info=1` opens the info panel.
+//! Every link keeps these parameters, and the close link returns to the listing's page
+//! and row (`#row-<n>`). Everything works without scripts; `assets/viewer.js` adds zoom,
+//! swipe, the delete question and the info toggle without a reload.
 
-use super::files::{content_disposition, enc};
-use super::views::{self, Crumb, Ctx, ShareHead, ViewerBody, ViewerView};
+use super::files::{ListOrder, content_disposition, enc, listing_place};
+use super::views::{self, Crumb, Ctx, ViewerBody, ViewerDelete, ViewerView};
 use super::{AppState, ClientInfo};
-use crate::fs::filetype::{self, Preview};
+use crate::fs::filetype::{self, Preview, ThumbSource};
 use crate::fs::path::RelPath;
-use crate::fs::sort::natural_cmp;
 use crate::fs::thumbs::{self, Size, ThumbError};
-use crate::fs::volume::{Kind, Meta, VolumeRoot};
+use crate::fs::volume::{Entry, Kind, Meta, VolumeRoot};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use governor::{DefaultKeyedRateLimiter, Quota};
@@ -124,16 +131,29 @@ pub struct ViewerReq {
     pub fd: OwnedFd,
     /// The file's URL path (escaped, as requested).
     pub href: String,
-    /// Breadcrumbs down to the folder holding the file.
+    /// Breadcrumbs down to the folder holding the file (the info panel's location).
     pub crumbs: Vec<Crumb>,
     /// Admin with hidden files shown: they count for previous/next too.
     pub show_hidden: bool,
-    /// CSRF token when the visitor may move the file to the trash.
-    pub delete_csrf: Option<String>,
+    /// The order of the listing the visitor came from: previous/next follow it.
+    pub order: ListOrder,
+    /// The info panel is open (`?info=1`).
+    pub info: bool,
+    /// The visitor may move the file to the trash: the CSRF token and the days the trash
+    /// keeps it (0 = kept).
+    pub delete: Option<(String, u32)>,
     pub share_href: Option<String>,
-    pub share: Option<ShareHead>,
-    /// Previous/next only make sense inside a folder (not for a single shared file).
-    pub siblings: bool,
+}
+
+/// Where a file sits among the files of its folder, in the listing's order.
+#[derive(Default)]
+struct Place {
+    /// Index among all entries of the folder (folders first): the listing's page and row.
+    index: Option<usize>,
+    /// 1-based position among the files, and how many files there are.
+    position: Option<(usize, usize)>,
+    prev: Option<Entry>,
+    next: Option<Entry>,
 }
 
 pub async fn viewer(ctx: &Ctx<'_>, req: ViewerReq) -> Response {
@@ -142,15 +162,73 @@ pub async fn viewer(ctx: &Ctx<'_>, req: ViewerReq) -> Response {
         Some(i) => req.href[..=i].to_string(),
         None => "/".into(),
     };
-    let keep = if req.show_hidden { "&hidden=1" } else { "" };
-    let body = body_for(&name, &req.href, &req.meta, req.fd).await;
-    let (prev, next) = if req.siblings {
-        let (vol, rel, hidden) = (req.vol.clone(), req.rel.clone(), req.show_hidden);
-        tokio::task::spawn_blocking(move || neighbours(&vol, &rel, hidden))
+    // What every link out of the viewer keeps: the listing's order and hidden files.
+    let mut keep = req.order.params();
+    if req.show_hidden {
+        keep.push("hidden=1".into());
+    }
+    let place = {
+        let (vol, rel, hidden, order) =
+            (req.vol.clone(), req.rel.clone(), req.show_hidden, req.order);
+        tokio::task::spawn_blocking(move || place(&vol, &rel, hidden, order))
             .await
-            .unwrap_or((None, None))
-    } else {
-        (None, None)
+            .unwrap_or_default()
+    };
+    let view_query = |info: bool| {
+        let mut q = String::from("?view");
+        for p in &keep {
+            q.push('&');
+            q.push_str(p);
+        }
+        if info {
+            q.push_str("&info=1");
+        }
+        q
+    };
+    let step = |e: &Entry| format!("{folder_href}{}{}", enc(&e.name), view_query(req.info));
+    // Back to the folder: the page that lists the file, at its row.
+    let close_href = {
+        let mut params = keep.clone();
+        let mut row = String::new();
+        if let Some(i) = place.index {
+            let (page, id) = listing_place(i);
+            if page > 1 {
+                params.push(format!("page={page}"));
+            }
+            row = format!("#{id}");
+        }
+        if params.is_empty() {
+            format!("{folder_href}{row}")
+        } else {
+            format!("{folder_href}?{}{row}", params.join("&"))
+        }
+    };
+    // The next picture, for the page script to fetch ahead.
+    let next_preload = place.next.as_ref().and_then(|e| {
+        matches!(
+            filetype::preview(&e.name),
+            Preview::Image | Preview::Rendered
+        )
+        .then(|| {
+            format!(
+                "{folder_href}{}{}",
+                enc(&e.name),
+                thumb_query(&e.meta, Size::View)
+            )
+        })
+    });
+    let body = body_for(&name, &req.href, &req.meta, req.fd).await;
+    let dimensions = match &body {
+        ViewerBody::Image {
+            dims: Some((w, h)), ..
+        } => Some(ctx.tf(
+            "viewer.pixels",
+            &[
+                ("width", &ctx.number(u64::from(*w))),
+                ("height", &ctx.number(u64::from(*h))),
+            ],
+        )),
+        _ => None,
     };
     let ftype = filetype::icon_type(&name);
     let location = req
@@ -165,14 +243,25 @@ pub async fn viewer(ctx: &Ctx<'_>, req: ViewerReq) -> Response {
         size: ctx.size(req.meta.size),
         modified: ctx.datetime(req.meta.mtime),
         location,
-        crumbs: req.crumbs,
+        dimensions,
         download_href: format!("{}?dl", req.href),
-        close_href: format!("{folder_href}{}", keep.replacen('&', "?", 1)),
-        prev_href: prev.map(|n| format!("{folder_href}{}?view{keep}", enc(&n))),
-        next_href: next.map(|n| format!("{folder_href}{}?view{keep}", enc(&n))),
-        delete: req.delete_csrf.map(|csrf| (folder_href.clone(), csrf)),
+        close_href,
+        position: place.position,
+        prev_href: place.prev.as_ref().map(step),
+        next_href: place.next.as_ref().map(step),
+        next_preload,
+        delete: req.delete.map(|(csrf, trash_days)| ViewerDelete {
+            action: folder_href.clone(),
+            csrf,
+            note: if trash_days == 0 {
+                ctx.t("browser.trash_note_kept").to_string()
+            } else {
+                ctx.tn("browser.trash_note", u64::from(trash_days))
+            },
+        }),
         share_href: req.share_href,
-        share: req.share,
+        info_open: req.info,
+        info_href: format!("{}{}", req.href, view_query(!req.info)),
         body,
         name,
     };
@@ -184,10 +273,25 @@ pub async fn body_for(name: &str, href: &str, meta: &Meta, fd: OwnedFd) -> Viewe
     let kind = filetype::preview(name);
     let thumb = |size| format!("{href}{}", thumb_query(meta, size));
     match kind {
-        Preview::Image => ViewerBody::Image {
-            src: thumb(Size::View),
-            full: href.to_string(),
-        },
+        Preview::Image => {
+            // The size in pixels, where the file's header says it (cheap: nothing is decoded).
+            let dims = if filetype::thumb_source(name) == Some(ThumbSource::Image) {
+                tokio::task::spawn_blocking(move || {
+                    thumbs::dimensions(std::io::BufReader::new(std::fs::File::from(fd)))
+                })
+                .await
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+            ViewerBody::Image {
+                src: thumb(Size::View),
+                full: href.to_string(),
+                zoom_full: filetype::browser_image(name),
+                dims,
+            }
+        }
         Preview::Rendered => ViewerBody::Rendered {
             src: thumb(Size::View),
         },
@@ -268,30 +372,36 @@ fn read_text(fd: OwnedFd) -> Option<(String, bool)> {
     Some((text, cut))
 }
 
-/// The files before and after `rel` in its folder, by name.
-fn neighbours(
-    vol: &VolumeRoot,
-    rel: &RelPath,
-    show_hidden: bool,
-) -> (Option<String>, Option<String>) {
+/// Where `rel` sits in its folder: the listing's order, folders first; previous and next
+/// are its neighbours among the files (folders are skipped, files without a preview count).
+fn place(vol: &VolumeRoot, rel: &RelPath, show_hidden: bool, order: ListOrder) -> Place {
     let (Some(name), Some(parent)) = (rel.name(), rel.parent()) else {
-        return (None, None);
+        return Place::default();
     };
-    let Ok(entries) = vol.list(&parent, show_hidden) else {
-        return (None, None);
+    let Ok(mut entries) = vol.list(&parent, show_hidden) else {
+        return Place::default();
     };
-    let mut files: Vec<String> = entries
+    order.sort(&mut entries);
+    let index = entries.iter().position(|e| e.name == name);
+    let mut files: Vec<Entry> = entries
         .into_iter()
         .filter(|e| e.meta.kind == Kind::File)
-        .map(|e| e.name)
         .collect();
-    files.sort_by(|a, b| natural_cmp(a, b));
-    let Some(i) = files.iter().position(|n| n == name) else {
-        return (None, None);
+    let Some(i) = files.iter().position(|e| e.name == name) else {
+        return Place {
+            index,
+            ..Place::default()
+        };
     };
-    let prev = i.checked_sub(1).map(|j| files[j].clone());
-    let next = files.get(i + 1).cloned();
-    (prev, next)
+    let total = files.len();
+    let next = (i + 1 < total).then(|| files.swap_remove(i + 1));
+    let prev = (i > 0).then(|| files.swap_remove(i - 1));
+    Place {
+        index,
+        position: Some((i + 1, total)),
+        prev,
+        next,
+    }
 }
 
 /// Links and pictures may only point at the web or at relative paths.

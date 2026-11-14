@@ -371,6 +371,22 @@ public write, shares from the UI), and the next UI slices as the design delivers
   request with a valid `?layout=` stores it: accounts in `UserSettings.layout` (unset =
   automatic; select "Folder view" on the account page), visitors in the cookie
   `cc_layout` (`Path=/`, also used on every share page).
+  Step 3 done (viewer, Q7/Q18/Q31): `?view` renders through `views::skeleton()` without
+  app bar, sidebar, tab bar or backdrop, always `data-theme="dark"` + frosted (own
+  `assets/viewer.css` + `viewer.js`, linked only there; solid surfaces). Top bar: close
+  (to the listing page at the row: rows carry `id="row-N"`, `?page=N#row-M`), name (`h1`),
+  counter, Download, Share (as the listing offers it), Delete (dialog with JS, plain POST
+  without), Details. Pictures fit (container units), never enlarged; video/audio without
+  autoplay; PDF edge to edge; text/Markdown on a sheet. Previous/next links step through
+  all files in the listing's order (`files::ListOrder`, shared by listing and viewer;
+  `sort`/`order`/`hidden` carried in every viewer link), folders skipped. JS: swipe,
+  preload of the next picture, zoom (click/double tap fit ↔ 100 %, drag pan, pinch;
+  original loaded when the browser can show it, `filetype::browser_image`) through `<img>`
+  width/height + stage scroll, no styles. Details panel `?info=1` (works without JS;
+  pixel size from the header, `thumbs::dimensions`). Key `i` = details in both maps; Esc
+  leaves zoom first. Visitors: download + details only. Share pages: the brand links to
+  `/s/<id>/` (`Ctx.brand_href`; plain text on single-file cards and error pages), the
+  summary shows only the count.
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a

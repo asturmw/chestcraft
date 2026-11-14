@@ -1,0 +1,207 @@
+/* chestcraft — the viewer page (?view), provisional until the design session delivers the
+   screen (review Q7, Q18, Q31). Linked by the viewer only. A page without the app shell: a
+   top bar over a stage that is dark in both themes. The server writes data-theme="dark"
+   on <html> for this page, so every token below resolves to the skin's dark palette; the
+   surfaces are the solid ones (--bg, --surface), never the glass panels, so Clear glass
+   and panel opacity change nothing here. Unlayered: it wins over app.css and the skins. */
+
+.page--viewer {
+  --viewer-stage: color-mix(in srgb, var(--bg) 55%, #000);
+  --viewer-bar-h: 52px;
+  --viewer-pad: 16px;
+  height: 100dvh; min-height: 0; overflow: hidden;
+  background: var(--viewer-stage); color: var(--text); text-shadow: none;
+}
+
+.viewer { display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); height: 100%; }
+
+/* ---------- top bar: close, name, "3 / 18", actions ---------- */
+.viewer__bar {
+  display: flex; align-items: center; gap: 4px; box-sizing: content-box;
+  height: var(--viewer-bar-h);
+  padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) 0 max(8px, env(safe-area-inset-left, 0px));
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+/* Name and counter side by side; stacked on phones, where the name needs the width. */
+.viewer__title { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; margin: 0 4px; }
+.viewer__name {
+  flex: 0 1 auto; min-width: 0;
+  font-family: var(--font-body); font-size: var(--fs-md); font-weight: 600; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.viewer__count {
+  flex: none; padding: 2px 9px; border-radius: var(--radius-pill);
+  background: var(--surface-3); color: var(--text-muted);
+  font-size: var(--fs-sm); font-weight: 600; white-space: nowrap;
+}
+.viewer__actions { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; padding-left: 8px; }
+.viewer__delete { display: contents; }
+/* Icons only, on targets a finger hits; the names show from 1024 px. */
+.viewer__btn { width: var(--tap); min-height: var(--tap); padding: 0; flex: none; }
+.viewer__label { display: none; }
+.viewer__btn.btn--danger { color: var(--danger); }
+.viewer__info-toggle[aria-expanded="true"] { background: var(--surface-3); color: var(--text); }
+@media (max-width: 719px) {
+  .viewer__title { flex-direction: column; align-items: flex-start; gap: 0; }
+  .viewer__name { max-width: 100%; font-size: var(--fs-body); }
+  .viewer__count { padding: 0; background: none; font-size: var(--fs-xs); line-height: 1.2; }
+}
+@media (min-width: 1024px) {
+  .viewer__bar { gap: 8px; padding-inline: 12px; }
+  .viewer__actions .viewer__btn { width: auto; min-height: var(--btn-h); padding: 0 12px; }
+  .viewer__label { display: inline; }
+}
+
+/* ---------- stage ---------- */
+.viewer__body { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; }
+.viewer__main { position: relative; min-width: 0; min-height: 0; }
+.viewer__stage {
+  position: absolute; inset: 0; display: flex; overflow: hidden; padding: var(--viewer-pad);
+  /* The stage is the size pictures are measured against (cqw/cqh: its content box), so
+     they fit whatever wraps them: the open info panel, the arrows' room. */
+  container-type: size;
+  /* Horizontal swipes reach viewer.js (previous/next); pictures take every gesture. */
+  touch-action: pan-y;
+}
+/* Auto margins center what fits and keep every edge of what doesn't in reach of the
+   scrollbars (a zoomed picture). */
+.viewer__stage > * { margin: auto; flex: none; }
+
+/* Pictures: the whole picture, never enlarged. */
+.viewer__picture { display: block; border-radius: 2px; }
+.viewer__image {
+  display: block;
+  max-width: 100cqw; max-height: 100cqh;
+  -webkit-user-select: none; user-select: none; -webkit-user-drag: none;
+}
+.viewer__stage:is([data-state="image"], [data-state="rendered"]) { touch-action: none; }
+.viewer__stage[data-zoomable] .viewer__image { cursor: zoom-in; }
+/* 100 % and pinch (viewer.js): the script sets the picture's width and height attributes
+   and scrolls the stage; nothing here caps them. */
+.viewer__stage[data-zoom] { padding: 0; overflow: auto; scrollbar-width: none; }
+.viewer__stage[data-zoom] .viewer__image { max-width: none; max-height: none; cursor: grab; }
+.viewer__stage[data-zoom][data-drag] .viewer__image { cursor: grabbing; }
+.viewer__stage[data-zoom] ~ .viewer__nav .viewer__arrow { display: none; }
+
+/* Video fills the stage (the player letterboxes); the hint sits below it. */
+.viewer__stage:is([data-state="video"]) { flex-direction: column; align-items: center; gap: 8px; }
+.viewer__video { flex: 1 1 0; min-height: 0; width: 100%; margin: 0; background: #000; border-radius: var(--radius-s); }
+.viewer__stage > .viewer__hint { margin: 0 auto; }
+.viewer__hint { max-width: 60ch; color: var(--text-muted); font-size: var(--fs-sm); text-align: center; }
+
+/* PDF: the browser's own viewer, edge to edge. */
+.viewer__stage[data-state="pdf"] { padding: 0; }
+.viewer__pdf { width: 100%; height: 100%; margin: 0; border: 0; background: var(--surface-2); }
+
+/* Text and Markdown: a solid sheet with a readable line length, scrolling in the stage. */
+.viewer__sheet {
+  width: min(100%, 46rem); max-height: 100%; margin: 0 auto; align-self: flex-start; overflow: auto;
+  scrollbar-color: var(--line-strong) transparent;
+  padding: 20px 24px; border-radius: var(--radius-l);
+  background: var(--surface); border: 1px solid var(--line); color: var(--text);
+}
+.viewer__sheet .viewer__hint { margin: 16px 0 0; text-align: left; }
+.viewer__text {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  font-size: var(--fs-sm); line-height: 1.55; tab-size: 4;
+}
+.viewer__markdown { line-height: 1.6; overflow-wrap: anywhere; }
+.viewer__markdown > :first-child { margin-top: 0; }
+.viewer__markdown > :last-child { margin-bottom: 0; }
+.viewer__markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.4em 0 0.5em; line-height: 1.25;
+  font-family: var(--font-display); font-weight: var(--display-weight); letter-spacing: var(--display-tracking);
+}
+.viewer__markdown h1 { font-size: var(--fs-xl); }
+.viewer__markdown h2 { font-size: var(--fs-lg); }
+.viewer__markdown :is(h3, h4, h5, h6) { font-size: var(--fs-md); }
+.viewer__markdown :is(p, ul, ol, blockquote, pre, table) { margin: 0 0 0.9em; }
+.viewer__markdown ul { padding-left: 1.4em; list-style: disc; }
+.viewer__markdown ol { padding-left: 1.6em; list-style: decimal; }
+.viewer__markdown li > :is(ul, ol) { margin-bottom: 0; }
+.viewer__markdown a { color: var(--accent-ink); }
+.viewer__markdown img { display: inline-block; max-width: 100%; height: auto; }
+.viewer__markdown :is(code, pre) {
+  font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace; font-size: 0.9em;
+}
+.viewer__markdown code { padding: 1px 4px; border-radius: var(--radius-s); background: var(--surface-3); }
+.viewer__markdown pre {
+  padding: 10px 12px; border-radius: var(--radius-m); background: var(--surface-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.viewer__markdown pre code { padding: 0; background: none; font-size: inherit; }
+.viewer__markdown blockquote { padding-left: 12px; border-left: 3px solid var(--line-strong); color: var(--text-muted); }
+.viewer__markdown hr { margin: 1.4em 0; border: 0; border-top: 1px solid var(--line); }
+.viewer__markdown table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.viewer__markdown :is(th, td) { padding: 5px 8px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.viewer__markdown th { background: var(--surface-2); }
+.viewer__markdown input[type="checkbox"] { margin-right: 6px; }
+
+/* No preview, and audio: the type's icon, the name, the one thing to do. */
+.viewer__nothing {
+  display: grid; justify-items: center; gap: 12px; width: min(100%, 30rem); text-align: center;
+}
+.viewer__nothing .ficon {
+  width: 96px; height: 96px; border-radius: var(--radius-l);
+  background: var(--surface); border: 1px solid var(--line);
+}
+.viewer__nothing .ficon .icon { width: 52px; height: 52px; }
+.viewer__nothing-name { max-width: 100%; font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
+.viewer__nothing-download { min-height: var(--tap); --btn-px: 20px; font-size: var(--fs-md); }
+.viewer__audio { width: 100%; height: 40px; }
+
+/* ---------- previous / next ---------- */
+.viewer__nav { display: contents; }
+.viewer__arrow {
+  position: absolute; top: 50%; translate: 0 -50%; z-index: 1;
+  display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%;
+  background: color-mix(in srgb, var(--surface-2) 84%, transparent); color: var(--text);
+  border: 1px solid var(--line-strong); box-shadow: var(--shadow); text-decoration: none;
+}
+.viewer__arrow[data-dir="prev"] { left: 12px; }
+.viewer__arrow[data-dir="next"] { right: 12px; }
+.viewer__arrow:hover { background: var(--surface-3); }
+.viewer__arrow .icon { width: 24px; height: 24px; }
+/* Documents keep the arrows off their text: beside it on wide screens, below it on phones. */
+.viewer__stage:is([data-state="pdf"], [data-state="video"], [data-state="text"], [data-state="markdown"]) { padding-inline: 72px; }
+.viewer__stage[data-state="pdf"] { padding-block: 0; }
+@media (max-width: 719px) {
+  .page--viewer { --viewer-pad: 8px; }
+  .viewer__arrow { width: var(--tap); height: var(--tap); }
+  .viewer__arrow[data-dir="prev"] { left: 8px; }
+  .viewer__arrow[data-dir="next"] { right: 8px; }
+  .viewer__stage:is([data-state="pdf"], [data-state="video"], [data-state="text"], [data-state="markdown"]) {
+    padding: var(--viewer-pad) var(--viewer-pad) calc(var(--tap) + 16px);
+  }
+  .viewer__stage[data-state="pdf"] { padding-inline: 0; padding-top: 0; }
+  .viewer__stage:is([data-state="pdf"], [data-state="video"], [data-state="text"], [data-state="markdown"]) ~ .viewer__nav .viewer__arrow {
+    top: auto; bottom: 8px; translate: none;
+  }
+  .viewer__sheet { padding: 14px 16px; }
+}
+
+/* ---------- info panel: beside the stage, a sheet over its foot on phones ---------- */
+.viewer__info {
+  width: 320px; min-height: 0; overflow: auto; padding: 16px 20px;
+  background: var(--surface); border-left: 1px solid var(--line);
+}
+.viewer__info-title { margin-bottom: 12px; font-size: var(--fs-md); }
+.viewer__facts { margin: 0; }
+.viewer__facts dt { color: var(--text-muted); font-size: var(--fs-xs); font-weight: 600; }
+.viewer__facts dd { margin: 0 0 12px; overflow-wrap: anywhere; }
+.viewer__facts dd:last-child { margin-bottom: 0; }
+@media (max-width: 719px) {
+  .viewer__info {
+    position: absolute; inset: auto 0 0; z-index: 2; width: auto; max-height: 60%;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    border-left: 0; border-top: 1px solid var(--line-strong);
+    border-radius: var(--radius-l) var(--radius-l) 0 0; box-shadow: var(--pop-shadow);
+  }
+  .viewer__facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 16px; align-items: baseline; }
+  .viewer__facts dd { margin: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page--viewer .btn { transition: none; }
+}

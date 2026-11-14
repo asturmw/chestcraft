@@ -14,7 +14,7 @@
 
 use super::api::{self, NewReq, Uploader};
 use super::auth::same_origin;
-use super::files::{self, Fail, Frame, download_guard, enc, fail};
+use super::files::{self, Fail, Frame, ListOrder, download_guard, enc, fail};
 use super::guest::{self, Opened, ShareGuest, Unlock};
 use super::layout;
 use super::preview::{self, ViewerReq};
@@ -79,6 +79,9 @@ pub async fn handle(
     ctx.theme = None;
     ctx.lang_switch = Some(uri.to_string());
     ctx.sign_in = false;
+    // `/` is the sign-in page for the people a link went to: the brand is plain text,
+    // and inside a shared folder it leads to the share's top.
+    ctx.brand_href = None;
 
     let rest = uri.path().strip_prefix("/s/").unwrap_or_default();
     let (id, tail) = match rest.split_once('/') {
@@ -380,6 +383,7 @@ async fn content(
     }
 
     // A folder share.
+    ctx.brand_href = Some(format!("{base}/"));
     let Some(tail) = tail else {
         let suffix = uri.query().map(|qs| format!("?{qs}")).unwrap_or_default();
         return Redirect::permanent(&format!("{base}/{suffix}")).into_response();
@@ -502,6 +506,7 @@ async fn content(
             }
             if q.has("view") {
                 let root = (share_name.clone(), format!("{base}/"));
+                // Visitors download; sharing and deleting are for accounts.
                 let req = ViewerReq {
                     vol,
                     crumbs: files::crumbs(&root, &sub.parent().unwrap_or_default()),
@@ -510,10 +515,10 @@ async fn content(
                     fd,
                     href: raw_path.to_string(),
                     show_hidden: false,
-                    delete_csrf: None,
+                    order: ListOrder::of(&q),
+                    info: q.get("info") == Some("1"),
+                    delete: None,
                     share_href: None,
-                    share: Some(head),
-                    siblings: true,
                 };
                 return preview::viewer(&ctx, req).await;
             }

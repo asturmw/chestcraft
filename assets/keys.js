@@ -22,7 +22,7 @@
   const click = (sel) => { const el = js(sel); if (el && !el.hidden && !el.disabled) { el.click(); return true; } return false; };
   const showHelp = () => { if (help) help.showModal(); };
 
-  // --- the viewer: previous, next, close ----------------------------------------------
+  // --- the viewer: previous, next, info, close (Esc leaves 100 % first: viewer.js) ------
   if (!B) {
     document.addEventListener('keydown', (e) => {
       if (busy(e) || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -32,6 +32,7 @@
       else if (vim && k === 'h') done = click('viewer-prev');
       else if (vim && k === 'l') done = click('viewer-next');
       else if (vim && k === 'q') done = click('viewer-close');
+      else if (k === 'i') done = click('viewer-info');
       else if (!vim && k === 'ArrowLeft') done = click('viewer-prev');
       else if (!vim && k === 'ArrowRight') done = click('viewer-next');
       else if (!vim && k === 'Escape') done = click('viewer-close');

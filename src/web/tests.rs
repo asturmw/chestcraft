@@ -3558,9 +3558,9 @@ async fn viewer_shows_pictures_text_and_markdown_safely() {
     assert!(t.contains("IMG_2041.jpg?thumb=view&amp;v="), "{t}");
     // If the picture fails to load, app.js shows the "no preview" stage instead.
     assert!(
-        t.contains(r#"data-state="image" data-js="thumb-box""#)
+        t.contains(r#"data-state="image" data-js="viewer-stage thumb-box""#)
             && t.contains(
-                r#"<template data-js="thumb-fallback" data-state="none"><span class="ficon""#
+                r#"<template data-js="thumb-fallback" data-state="none"><div class="viewer__nothing"><span class="ficon""#
             ),
         "{t}"
     );
@@ -3573,7 +3573,7 @@ async fn viewer_shows_pictures_text_and_markdown_safely() {
         "{t}"
     );
     assert!(
-        t.contains(r#"href="/Medien/Urlaub%20Gardasee/""#),
+        t.contains(r#"href="/Medien/Urlaub%20Gardasee/#row-1""#),
         "close: {t}"
     );
     assert!(t.contains("IMG_2041.jpg?dl"), "{t}");
@@ -3654,8 +3654,9 @@ async fn share_visitors_get_thumbnails_and_the_viewer() {
         .get_h(&format!("/s/{id}/IMG_2041.jpg?view"), &h)
         .await
         .text();
+    // The viewer has no "shared by" line: the folder page says it.
     assert!(
-        t.contains("share-line") && t.contains(r#"data-state="image""#),
+        !t.contains("share-line") && t.contains(r#"data-state="image""#),
         "{t}"
     );
     assert!(
@@ -4163,6 +4164,7 @@ mod ops;
 mod share_view;
 mod status;
 mod users;
+mod viewer;
 
 #[tokio::test]
 async fn visitor_pages_take_the_language_from_cookie_or_browser() {

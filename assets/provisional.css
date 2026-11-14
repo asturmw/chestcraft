@@ -50,8 +50,6 @@ a.menu__item { text-decoration: none; }
 }
 .panel button:not(.btn, .menu__item):hover { background: var(--surface-3); }
 .panel a { color: var(--accent-ink); }
-.panel :is(.breadcrumb__list) { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; padding: 0; }
-.panel .breadcrumb__item + .breadcrumb__item::before { content: "/"; padding-right: 4px; color: var(--text-muted); }
 .panel :is(.viewer__image, .viewer__video) { max-width: 100%; max-height: 75vh; }
 .panel .viewer__pdf { width: 100%; height: 75vh; border: 0; }
 .panel .viewer__text { white-space: pre-wrap; overflow-wrap: anywhere; }

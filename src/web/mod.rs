@@ -199,6 +199,7 @@ pub fn page_ctx<'a>(
         styles: Vec::new(),
         lang_switch: None,
         brand: true,
+        brand_href: Some("/".into()),
         sign_in: true,
         nav: None,
         skins: Vec::new(),

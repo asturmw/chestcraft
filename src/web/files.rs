@@ -444,25 +444,6 @@ pub async fn handle(
                 .await;
             }
             if q.has("view") {
-                let nav = nav::build(
-                    &st,
-                    ctx.lang,
-                    &principal,
-                    current.as_deref(),
-                    client.origin,
-                    Section::Files,
-                    Some(nav::Here {
-                        vol: vol.clone(),
-                        dir: rel.parent().unwrap_or_default(),
-                        page: false,
-                    }),
-                )
-                .await;
-                let mut ctx = ctx.with_nav(nav);
-                if principal.is_anonymous() {
-                    ctx.theme = None;
-                    ctx.lang_switch = Some(uri.to_string());
-                }
                 let root = (vol.name().to_string(), format!("/{}/", enc(vol.name())));
                 let parent = rel.parent().unwrap_or_default();
                 let may_share = ctx.signed_in && perms.contains(Perms::SHARE) && vol.cfg.remote;
@@ -476,17 +457,17 @@ pub async fn handle(
                         )
                     }),
                     show_hidden: principal.is_admin() && q.get("hidden") == Some("1"),
-                    delete_csrf: ctx
+                    order: ListOrder::of(&q),
+                    info: q.get("info") == Some("1"),
+                    delete: ctx
                         .csrf
                         .filter(|_| perms.contains(Perms::DELETE))
-                        .map(str::to_string),
+                        .map(|csrf| (csrf.to_string(), vol.cfg.trash_days(&st.cfg))),
                     vol,
                     rel,
                     meta,
                     fd,
                     href: raw_path.to_string(),
-                    share: None,
-                    siblings: true,
                 };
                 return preview::viewer(&ctx, req).await;
             }
@@ -543,6 +524,75 @@ enum SortBy {
     Name,
     Size,
     Modified,
+}
+
+/// How a folder's entries are ordered (`?sort=size|modified`, `?order=desc`): the listing
+/// and the viewer's previous/next follow the same order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListOrder {
+    sort: SortBy,
+    desc: bool,
+}
+
+impl ListOrder {
+    pub fn of(q: &Query) -> ListOrder {
+        ListOrder {
+            sort: match q.get("sort") {
+                Some("size") => SortBy::Size,
+                Some("modified") => SortBy::Modified,
+                _ => SortBy::Name,
+            },
+            desc: q.get("order") == Some("desc"),
+        }
+    }
+
+    /// Folders first, then by the sorted column (ties by name).
+    pub fn sort(self, entries: &mut [Entry]) {
+        entries.sort_by(|a, b| {
+            let dirs_first = (b.meta.kind == Kind::Dir).cmp(&(a.meta.kind == Kind::Dir));
+            dirs_first.then_with(|| {
+                let o = match self.sort {
+                    SortBy::Name => natural_cmp(&a.name, &b.name),
+                    SortBy::Size => a
+                        .meta
+                        .size
+                        .cmp(&b.meta.size)
+                        .then_with(|| natural_cmp(&a.name, &b.name)),
+                    SortBy::Modified => a
+                        .meta
+                        .mtime
+                        .cmp(&b.meta.mtime)
+                        .then_with(|| natural_cmp(&a.name, &b.name)),
+                };
+                if self.desc { o.reverse() } else { o }
+            })
+        });
+    }
+
+    /// The query parameters that say this order (none for the default, by name).
+    pub fn params(self) -> Vec<String> {
+        let mut params = Vec::new();
+        match self.sort {
+            SortBy::Name => {}
+            SortBy::Size => params.push("sort=size".to_string()),
+            SortBy::Modified => params.push("sort=modified".to_string()),
+        }
+        if self.desc {
+            params.push("order=desc".into());
+        }
+        params
+    }
+}
+
+/// Where the entry at `index` of a folder's sorted entries sits in the listing: its page
+/// and the `id` of its row there.
+pub fn listing_place(index: usize) -> (usize, String) {
+    (index / PAGE_SIZE + 1, row_id(index % PAGE_SIZE))
+}
+
+/// The `id` of a listing's row (the viewer's close link points at it).
+pub fn row_id(index_on_page: usize) -> String {
+    format!("row-{index_on_page}")
 }
 
 /// What surrounds a listing: a volume's folder browser or a share's.
@@ -686,31 +736,9 @@ pub async fn listing(
     };
     let shared = crate::shares::shared_names(&shares, vol.name(), &rel, now());
 
-    let sort = match q.get("sort") {
-        Some("size") => SortBy::Size,
-        Some("modified") => SortBy::Modified,
-        _ => SortBy::Name,
-    };
-    let desc = q.get("order") == Some("desc");
-    entries.sort_by(|a, b| {
-        let dirs_first = (b.meta.kind == Kind::Dir).cmp(&(a.meta.kind == Kind::Dir));
-        dirs_first.then_with(|| {
-            let o = match sort {
-                SortBy::Name => natural_cmp(&a.name, &b.name),
-                SortBy::Size => a
-                    .meta
-                    .size
-                    .cmp(&b.meta.size)
-                    .then_with(|| natural_cmp(&a.name, &b.name)),
-                SortBy::Modified => a
-                    .meta
-                    .mtime
-                    .cmp(&b.meta.mtime)
-                    .then_with(|| natural_cmp(&a.name, &b.name)),
-            };
-            if desc { o.reverse() } else { o }
-        })
-    });
+    let order = ListOrder::of(q);
+    let (sort, desc) = (order.sort, order.desc);
+    order.sort(&mut entries);
 
     let total = entries.len();
     let total_bytes: u64 = entries
@@ -752,7 +780,14 @@ pub async fn listing(
         .layout
         .chosen()
         .unwrap_or_else(|| Layout::by_content(&slice));
-    let keep = if show_hidden { "&hidden=1" } else { "" };
+    // Files open in the viewer, which steps through the folder in this listing's order.
+    let keep = {
+        let mut params = order.params();
+        if show_hidden {
+            params.push("hidden=1".into());
+        }
+        params.iter().map(|p| format!("&{p}")).collect::<String>()
+    };
     let rows = slice
         .iter()
         .enumerate()
@@ -779,6 +814,7 @@ pub async fn listing(
             };
             let date = ctx.date(e.meta.mtime);
             Row {
+                id: row_id(i),
                 name: e.name.clone(),
                 href: if is_dir {
                     format!("{name}/")
@@ -820,14 +856,7 @@ pub async fn listing(
             if let Some(l) = layout {
                 params.push(format!("layout={}", l.code()));
             }
-            match sort {
-                SortBy::Name => {}
-                SortBy::Size => params.push("sort=size".to_string()),
-                SortBy::Modified => params.push("sort=modified".to_string()),
-            }
-            if desc {
-                params.push("order=desc".into());
-            }
+            params.extend(ListOrder { sort, desc }.params());
             if hidden {
                 params.push("hidden=1".into());
             }
@@ -873,7 +902,9 @@ pub async fn listing(
         None
     };
     let items = items_label(ctx, total);
-    let summary = if has_files {
+    // A share's summary is the count alone: its files' size would stand right above the
+    // button's "Download all (7.5 MB)", which counts the subfolders too.
+    let summary = if has_files && !is_share {
         ctx.tf(
             "browser.summary",
             &[("items", &items), ("size", &ctx.size(total_bytes))],

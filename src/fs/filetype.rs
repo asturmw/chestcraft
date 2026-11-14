@@ -140,6 +140,15 @@ pub fn thumb_source(name: &str) -> Option<ThumbSource> {
     })
 }
 
+/// Pictures every current browser shows itself: the viewer loads the original for 100 %.
+/// (TIFF, HEIC and the like stay with their rendered thumbnail.)
+pub fn browser_image(name: &str) -> bool {
+    matches!(
+        ext(name).as_str(),
+        "jpg" | "jpeg" | "jfif" | "png" | "gif" | "webp" | "bmp" | "avif"
+    )
+}
+
 /// How the viewer shows a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preview {

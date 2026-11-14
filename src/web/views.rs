@@ -39,6 +39,9 @@ pub struct Ctx<'a> {
     pub lang_switch: Option<String>,
     /// Show the app's name in the header (not on a visitor's password page).
     pub brand: bool,
+    /// Where the brand links to: `/`, a share's top for its visitors (`/` would send them
+    /// to the sign-in page), or nowhere (None: plain text).
+    pub brand_href: Option<String>,
     /// Offer visitors the sign-in link in the app bar (not on share pages: the people a
     /// link was sent to have no account).
     pub sign_in: bool,
@@ -207,8 +210,34 @@ pub fn icon_c(id: &str, extra: &str) -> Markup {
     }
 }
 
+/// The app's name with its mark: a link where `Ctx::brand_href` names a target.
+fn brand(ctx: &Ctx, class: &str) -> Markup {
+    let inner = html! {
+        (icon_c("chest", "brand__mark"))
+        span class="brand__name" { "chestcraft" }
+    };
+    html! {
+        @if let Some(href) = &ctx.brand_href {
+            a class=(class) href=(href) { (inner) }
+        } @else {
+            span class=(class) { (inner) }
+        }
+    }
+}
+
 /// The skeleton every page shares: head, skip link, backdrop.
 fn document(ctx: &Ctx, title: &str, body_class: &str, body: Markup) -> Markup {
+    skeleton(ctx, title, body_class, true, body)
+}
+
+/// `backdrop`: the page shows the visitor's background (the viewer has its own stage).
+fn skeleton(
+    ctx: &Ctx,
+    title: &str,
+    body_class: &str,
+    backdrop_block: bool,
+    body: Markup,
+) -> Markup {
     html! {
         (DOCTYPE)
         html lang=(ctx.code()) data-theme=[ctx.theme] data-skin=(ctx.skin) data-glass=(ctx.glass)
@@ -224,7 +253,7 @@ fn document(ctx: &Ctx, title: &str, body_class: &str, body: Markup) -> Markup {
                     link rel="stylesheet" href=(href);
                 }
                 link rel="stylesheet" href=(assets::url("provisional.css"));
-                @if let Some(href) = &ctx.backdrop.stylesheet {
+                @if let Some(href) = ctx.backdrop.stylesheet.as_ref().filter(|_| backdrop_block) {
                     link rel="stylesheet" href=(href);
                 }
                 @for href in &ctx.styles {
@@ -237,7 +266,9 @@ fn document(ctx: &Ctx, title: &str, body_class: &str, body: Markup) -> Markup {
             }
             body class=(body_class) {
                 a class="skip" href="#main" { (ctx.t("common.skip_to_content")) }
-                (backdrop(&ctx.backdrop, ctx.theme))
+                @if backdrop_block {
+                    (backdrop(&ctx.backdrop, ctx.theme))
+                }
                 (body)
             }
         }
@@ -291,10 +322,7 @@ pub fn gate(ctx: &Ctx, title: &str, emblem: &str, card: Markup) -> Markup {
         html! {
             main class="gate" id="main" {
                 @if ctx.brand {
-                    a class="brand gate__brand" href="/" {
-                        (icon_c("chest", "brand__mark"))
-                        span class="brand__name" { "chestcraft" }
-                    }
+                    (brand(ctx, "brand gate__brand"))
                 }
                 @if let Some(here) = &ctx.lang_switch {
                     (langswitch(ctx, here))
@@ -334,10 +362,7 @@ fn appbar(ctx: &Ctx, crumbs: &[Crumb]) -> Markup {
                 }
             }
             @if ctx.brand {
-                a class="brand" href="/" {
-                    (icon_c("chest", "brand__mark"))
-                    span class="brand__name" { "chestcraft" }
-                }
+                (brand(ctx, "brand"))
             }
             @if !crumbs.is_empty() {
                 nav class="crumbs" aria-label=(ctx.t("browser.location")) {
@@ -685,6 +710,8 @@ pub struct Crumb {
 }
 
 pub struct Row {
+    /// The row's `id` (`row-<n>` on its page): the viewer's close link returns to it.
+    pub id: String,
     pub name: String,
     pub href: String,
     pub is_dir: bool,
@@ -883,26 +910,6 @@ pub fn upload_ui(ctx: &Ctx, u: &UploadUi, bar: bool) -> Markup {
                 label class="name-clash__all" data-js="clash-all-label" {
                     input type="checkbox" data-js="clash-all";
                     " " span data-js="clash-all-text" data-t=(ctx.t("upload.apply_all")) {}
-                }
-            }
-        }
-    }
-}
-
-/// The path to a folder (viewer, provisional pages). `current`: the last crumb is this
-/// page (not a link).
-pub fn breadcrumb(ctx: &Ctx, crumbs: &[Crumb], current: bool) -> Markup {
-    html! {
-        nav class="breadcrumb" aria-label=(ctx.t("browser.location")) {
-            ol class="breadcrumb__list" {
-                @for (i, c) in crumbs.iter().enumerate() {
-                    li class="breadcrumb__item" {
-                        @if current && i + 1 == crumbs.len() {
-                            span aria-current="page" { (c.label) }
-                        } @else {
-                            a href=(c.href) { (c.label) }
-                        }
-                    }
                 }
             }
         }
@@ -1477,6 +1484,8 @@ pub fn keys_help(ctx: &Ctx) -> Markup {
             ],
             vec![
                 ("h / l".into(), "keys.prev_next"),
+                ("i".into(), "keys.info"),
+                ("Esc".into(), "keys.zoom_out"),
                 ("q".into(), "keys.close"),
             ],
         )
@@ -1504,7 +1513,8 @@ pub fn keys_help(ctx: &Ctx) -> Markup {
             ],
             vec![
                 ("← / →".into(), "keys.prev_next"),
-                ("Esc".into(), "keys.close"),
+                ("i".into(), "keys.info"),
+                ("Esc".into(), "keys.zoom_out_close"),
             ],
         )
     };
@@ -1542,7 +1552,7 @@ fn file_row(ctx: &Ctx, r: &Row) -> Markup {
     html! {
         tr class="files__row" data-type=(r.ftype) data-js="row" data-name=(r.name)
             data-dir=[r.is_dir.then_some("1")] data-size=(r.bytes)
-            data-share=[r.share_href.as_deref()] data-dl=[r.download_href.as_deref()] {
+            data-share=[r.share_href.as_deref()] data-dl=[r.download_href.as_deref()] id=(r.id) {
             td class="files__check" {
                 input type="checkbox" name="n" value=(r.name) form="sel" data-js="pick"
                     aria-label=(ctx.tf("browser.select_item", &[("name", &r.name)]));
@@ -1853,10 +1863,15 @@ pub fn password(ctx: &Ctx, v: &PasswordView) -> Markup {
 
 /// What the viewer's stage shows.
 pub enum ViewerBody {
-    /// A picture: the large thumbnail, linking to the original.
+    /// A picture: the large thumbnail, and the original for 100 %.
     Image {
         src: String,
+        /// The file itself.
         full: String,
+        /// Browsers show the original themselves: zooming in loads it.
+        zoom_full: bool,
+        /// Width and height in pixels, where the file's header says them.
+        dims: Option<(u32, u32)>,
     },
     /// The large thumbnail of a 3D model, G-code or SVG.
     Rendered {
@@ -1905,6 +1920,15 @@ impl ViewerBody {
     }
 }
 
+/// The viewer's "move to the trash".
+pub struct ViewerDelete {
+    /// The folder the form posts to.
+    pub action: String,
+    pub csrf: String,
+    /// "Deleted items stay in the trash for 30 days."
+    pub note: String,
+}
+
 pub struct ViewerView {
     pub name: String,
     pub ftype: &'static str,
@@ -1913,19 +1937,27 @@ pub struct ViewerView {
     pub modified: String,
     /// "Volume / folder / folder".
     pub location: String,
-    pub crumbs: Vec<Crumb>,
+    /// "4,032 × 3,024 px", for pictures whose header says it.
+    pub dimensions: Option<String>,
     pub body: ViewerBody,
     pub download_href: String,
+    /// The folder, on the page and at the row that list this file.
     pub close_href: String,
+    /// "3 / 18": the place among the folder's files, in the listing's order.
+    pub position: Option<(usize, usize)>,
     pub prev_href: Option<String>,
     pub next_href: Option<String>,
-    /// (folder URL, CSRF token): the visitor may move the file to the trash.
-    pub delete: Option<(String, String)>,
+    /// The next file's picture, fetched ahead by the page script.
+    pub next_preload: Option<String>,
+    pub delete: Option<ViewerDelete>,
     pub share_href: Option<String>,
-    pub share: Option<ShareHead>,
+    pub info_open: bool,
+    /// This page with the info panel the other way round.
+    pub info_href: String,
 }
 
-/// The picture, player or text of a file (viewer and single-file share).
+/// The picture, player or text of a single shared file (the share's file card; the viewer
+/// page has its own stage, [`viewer`]).
 pub fn viewer_stage(
     ctx: &Ctx,
     name: &str,
@@ -1936,7 +1968,7 @@ pub fn viewer_stage(
     html! {
         div class="viewer__stage" data-state=(body.state()) data-js=[body.thumb().then_some("thumb-box")] {
             @match body {
-                ViewerBody::Image { src, full } => {
+                ViewerBody::Image { src, full, .. } => {
                     a class="viewer__picture" href=(full) {
                         img class="viewer__image" src=(src) alt=(name) data-js="thumb";
                     }
@@ -1982,7 +2014,7 @@ pub fn viewer_stage(
     }
 }
 
-/// Type icon, "no preview" and a download link: the stage of a file without a preview.
+/// Type icon, "no preview" and a download link: the card of a file without a preview.
 fn no_preview(ctx: &Ctx, ftype: &str, download: &str) -> Markup {
     html! {
         (file_icon(ftype))
@@ -1991,63 +2023,213 @@ fn no_preview(ctx: &Ctx, ftype: &str, download: &str) -> Markup {
     }
 }
 
+/// The viewer's stage of a file without a preview: type icon, name, a download button.
+fn viewer_none(ctx: &Ctx, v: &ViewerView) -> Markup {
+    html! {
+        div class="viewer__nothing" {
+            (file_icon(v.ftype))
+            p class="viewer__nothing-name" { (v.name) }
+            p class="viewer__hint" { (ctx.t("viewer.no_preview")) }
+            a class="btn btn--primary viewer__nothing-download" href=(v.download_href) download {
+                (icon("download"))
+                span class="btn__label" { (ctx.t("viewer.download")) }
+            }
+        }
+    }
+}
+
+/// An action in the viewer's top bar: an icon with its name (the label shows on wide
+/// screens only, so the name is on the control itself).
+fn viewer_action_inner(icon_id: &str, label: &str) -> Markup {
+    html! {
+        (icon(icon_id))
+        span class="btn__label viewer__label" aria-hidden="true" { (label) }
+    }
+}
+
+/// The viewer (`?view`): a page without the app shell. A top bar (close, name, "3 / 18",
+/// download, share, delete, info) over a stage that is dark in both themes and solid
+/// whatever the glass setting says (review Q7, Q18, Q31); the content fits the stage.
+/// Previous/next, close, download, delete and the info panel are links and forms;
+/// `assets/viewer.js` adds zoom, swipe, the delete question and toggles the info panel in
+/// place. Styled by `assets/viewer.css` (provisional until the design delivers the screen).
 pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
     let ctx = &Ctx {
-        scripts: {
-            let mut s = ctx.scripts.clone();
-            s.push("keys.js");
+        // Only its own scripts (app.js comes with every page): nothing here uploads.
+        scripts: vec!["viewer.js", "keys.js"],
+        styles: {
+            let mut s = ctx.styles.clone();
+            s.push(assets::url("viewer.css"));
             s
         },
+        // The stage is dark for everyone: the skin's dark palette, frosted (solid here),
+        // its own opacity.
+        theme: Some("dark"),
+        glass: "frosted",
+        opacity: None,
         ..ctx.clone()
     };
-    layout(
-        ctx,
-        &v.name,
-        html! {
+    let body = &v.body;
+    let position = v.position.map(|(n, total)| {
+        (
+            format!("{} / {}", ctx.number(n as u64), ctx.number(total as u64)),
+            ctx.tf(
+                "viewer.position",
+                &[
+                    ("n", &ctx.number(n as u64)),
+                    ("total", &ctx.number(total as u64)),
+                ],
+            ),
+        )
+    });
+    let main = html! {
+        main class="viewer" id="main" data-type=(v.ftype) data-js="viewer" {
+            header class="viewer__bar" {
+                a class="btn btn--icon viewer__btn viewer__close" href=(v.close_href) data-js="viewer-close"
+                    aria-label=(ctx.t("viewer.close")) title=(ctx.t("viewer.close")) { (icon("x")) }
+                div class="viewer__title" {
+                    h1 class="viewer__name" id="viewer-name" title=(v.name) { (v.name) }
+                    @if let Some((short, long)) = &position {
+                        p class="viewer__count" {
+                            span aria-hidden="true" { (short) }
+                            span class="vh" { (long) }
+                        }
+                    }
+                }
+                div class="viewer__actions" role="group" aria-label=(ctx.t("viewer.actions")) {
+                    a class="btn btn--quiet viewer__btn" href=(v.download_href) download
+                        aria-label=(ctx.t("viewer.download")) title=(ctx.t("viewer.download")) {
+                        (viewer_action_inner("download", ctx.t("viewer.download")))
+                    }
+                    @if let Some(href) = &v.share_href {
+                        a class="btn btn--quiet viewer__btn viewer__share" href=(href)
+                            aria-label=(ctx.t("viewer.share")) title=(ctx.t("viewer.share")) {
+                            (viewer_action_inner("share", ctx.t("viewer.share")))
+                        }
+                    }
+                    @if let Some(d) = &v.delete {
+                        form class="viewer__delete" method="post" action=(d.action) data-js="viewer-delete" {
+                            input type="hidden" name="csrf" value=(d.csrf);
+                            input type="hidden" name="op" value="delete";
+                            input type="hidden" name="n" value=(v.name);
+                            button class="btn btn--quiet btn--danger viewer__btn" type="submit"
+                                aria-label=(ctx.t("viewer.delete")) title=(ctx.t("viewer.delete")) {
+                                (viewer_action_inner("trash", ctx.t("viewer.delete")))
+                            }
+                        }
+                    }
+                    a class="btn btn--quiet viewer__btn viewer__info-toggle" href=(v.info_href) data-js="viewer-info"
+                        aria-controls="viewer-info" aria-expanded=(v.info_open)
+                        aria-label=(ctx.t("viewer.info")) title=(ctx.t("viewer.info")) {
+                        (viewer_action_inner("info", ctx.t("viewer.info")))
+                    }
+                }
+            }
+            div class="viewer__body" {
+                div class="viewer__main" {
+                    div class="viewer__stage" data-state=(body.state())
+                        data-js=(if body.thumb() { "viewer-stage thumb-box" } else { "viewer-stage" }) {
+                        @match body {
+                            ViewerBody::Image { src, full, zoom_full, dims } => {
+                                // Without scripts the picture links to the original; with
+                                // them a click switches between fit and 100 %.
+                                a class="viewer__picture" href=(full) aria-label=(ctx.t("viewer.full_size"))
+                                    draggable="false" data-js="viewer-zoom" {
+                                    img class="viewer__image" src=(src) alt=(v.name) draggable="false"
+                                        data-js="thumb viewer-image" data-full=[zoom_full.then_some(full)]
+                                        data-w=[dims.map(|d| d.0)] data-h=[dims.map(|d| d.1)];
+                                }
+                            }
+                            ViewerBody::Rendered { src } => {
+                                img class="viewer__image" src=(src) alt=(v.name) draggable="false"
+                                    data-js="thumb viewer-image";
+                            }
+                            ViewerBody::Video { src, poster } => {
+                                video class="viewer__video" src=(src) poster=(poster) controls preload="metadata" {}
+                                p class="viewer__hint" { (ctx.t("viewer.no_playback")) }
+                            }
+                            ViewerBody::Audio { src } => {
+                                div class="viewer__nothing" {
+                                    (file_icon(v.ftype))
+                                    p class="viewer__nothing-name" { (v.name) }
+                                    audio class="viewer__audio" src=(src) controls preload="metadata" {}
+                                    p class="viewer__hint" { (ctx.t("viewer.no_playback")) }
+                                }
+                            }
+                            ViewerBody::Pdf { src } => {
+                                iframe class="viewer__pdf" src=(src) title=(v.name) {}
+                            }
+                            ViewerBody::Text { text, truncated } => {
+                                div class="viewer__sheet" tabindex="0" {
+                                    pre class="viewer__text" { (text) }
+                                    @if *truncated {
+                                        p class="viewer__hint" { (ctx.t("viewer.truncated")) }
+                                    }
+                                }
+                            }
+                            ViewerBody::Markdown { html, truncated } => {
+                                div class="viewer__sheet" tabindex="0" {
+                                    div class="viewer__markdown" { (maud::PreEscaped(html)) }
+                                    @if *truncated {
+                                        p class="viewer__hint" { (ctx.t("viewer.truncated")) }
+                                    }
+                                }
+                            }
+                            ViewerBody::None => {
+                                (viewer_none(ctx, v))
+                            }
+                        }
+                        @if body.thumb() {
+                            // Swapped in by app.js when the thumbnail fails to load.
+                            template data-js="thumb-fallback" data-state="none" {
+                                (viewer_none(ctx, v))
+                            }
+                        }
+                    }
+                    nav class="viewer__nav" aria-label=(ctx.t("viewer.nav")) {
+                        @if let Some(h) = &v.prev_href {
+                            a class="viewer__arrow" data-dir="prev" rel="prev" href=(h) data-js="viewer-prev"
+                                aria-label=(ctx.t("viewer.prev")) title=(ctx.t("viewer.prev")) { (icon("chevron-left")) }
+                        }
+                        @if let Some(h) = &v.next_href {
+                            a class="viewer__arrow" data-dir="next" rel="next" href=(h) data-js="viewer-next"
+                                data-preload=[v.next_preload.as_deref()]
+                                aria-label=(ctx.t("viewer.next")) title=(ctx.t("viewer.next")) { (icon("chevron-right")) }
+                        }
+                    }
+                }
+                aside class="viewer__info" id="viewer-info" aria-label=(ctx.t("viewer.info"))
+                    data-js="viewer-info-panel" hidden[!v.info_open] {
+                    h2 class="viewer__info-title" { (ctx.t("viewer.info")) }
+                    dl class="viewer__facts" {
+                        dt { (ctx.t("viewer.size")) } dd { (v.size) }
+                        @if let Some(d) = &v.dimensions {
+                            dt { (ctx.t("viewer.dimensions")) } dd { (d) }
+                        }
+                        dt { (ctx.t("viewer.modified")) } dd { (v.modified) }
+                        dt { (ctx.t("viewer.type")) } dd { (v.type_label) }
+                        dt { (ctx.t("viewer.location")) } dd { (v.location) }
+                    }
+                }
+            }
+            @if let Some(d) = &v.delete {
+                dialog class="dialog" data-js="viewer-delete-dialog" aria-labelledby="viewer-delete-title" {
+                    form class="dialog__form" method="dialog" {
+                        h2 class="dialog__title" id="viewer-delete-title" {
+                            (ctx.tf("browser.delete_title_name", &[("name", &v.name)]))
+                        }
+                        p class="dialog__text" { (d.note) }
+                        div class="dialog__actions" {
+                            button class="btn" type="submit" value="cancel" { (ctx.t("common.cancel")) }
+                            button class="btn btn--danger" type="submit" value="delete" autofocus { (ctx.t("browser.delete")) }
+                        }
+                    }
+                }
+            }
             @if ctx.keys != "off" {
                 (keys_help(ctx))
             }
-            @if let Some(h) = &v.share {
-                (share_line(ctx, h))
-            }
-            article class="viewer" data-type=(v.ftype) aria-labelledby="viewer-name" {
-                header class="viewer__bar" {
-                    (breadcrumb(ctx, &v.crumbs, false))
-                    h1 class="viewer__name" id="viewer-name" { (v.name) }
-                    nav class="viewer__nav" aria-label=(ctx.t("viewer.nav")) {
-                        @if let Some(h) = &v.prev_href {
-                            a class="viewer__prev" rel="prev" href=(h) data-js="viewer-prev" { (ctx.t("viewer.prev")) }
-                        }
-                        @if let Some(h) = &v.next_href {
-                            a class="viewer__next" rel="next" href=(h) data-js="viewer-next" { (ctx.t("viewer.next")) }
-                        }
-                    }
-                    a class="viewer__close" href=(v.close_href) data-js="viewer-close" { (ctx.t("viewer.close")) }
-                }
-                (viewer_stage(ctx, &v.name, v.ftype, &v.body, &v.download_href))
-                aside class="viewer__info" aria-label=(ctx.t("viewer.info")) {
-                    dl {
-                        dt { (ctx.t("viewer.size")) } dd { (v.size) }
-                        dt { (ctx.t("viewer.modified")) } dd { (v.modified) }
-                        dt { (ctx.t("viewer.location")) } dd { (v.location) }
-                        dt { (ctx.t("viewer.type")) } dd { (v.type_label) }
-                    }
-                }
-                div class="viewer__actions" {
-                    a class="viewer__download" href=(v.download_href) download { (ctx.t("viewer.download")) }
-                    @if let Some(href) = &v.share_href {
-                        a class="viewer__share" href=(href) { (ctx.t("viewer.share")) }
-                    }
-                    @if let Some((folder, csrf)) = &v.delete {
-                        form class="viewer__delete" method="post" action=(folder) {
-                            input type="hidden" name="csrf" value=(csrf);
-                            input type="hidden" name="op" value="delete";
-                            input type="hidden" name="n" value=(v.name);
-                            button type="submit" { (ctx.t("viewer.delete")) }
-                        }
-                    }
-                }
-            }
-        },
-    )
+        }
+    };
+    skeleton(ctx, &v.name, "page page--viewer", false, main)
 }

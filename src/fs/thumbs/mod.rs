@@ -23,6 +23,7 @@ use crate::config::Config;
 pub use crate::fs::filetype::ThumbSource;
 use crate::fs::volume::Meta;
 use cache::{Cache, Lookup};
+pub use raster::dimensions;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io;

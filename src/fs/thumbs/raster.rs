@@ -34,6 +34,23 @@ pub fn decode(r: impl BufRead + Seek) -> Result<DynamicImage> {
     Ok(img)
 }
 
+/// Width and height as shown (EXIF orientation applied), read from the file's header:
+/// nothing is decoded. None when the content is no picture this build reads.
+pub fn dimensions(r: impl BufRead + Seek) -> Option<(u32, u32)> {
+    use image::metadata::Orientation::{Rotate90, Rotate90FlipH, Rotate270, Rotate270FlipH};
+    let mut decoder = ImageReader::new(r)
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let (w, h) = decoder.dimensions();
+    let turned = matches!(
+        decoder.orientation().ok(),
+        Some(Rotate90 | Rotate270 | Rotate90FlipH | Rotate270FlipH)
+    );
+    Some(if turned { (h, w) } else { (w, h) })
+}
+
 pub fn decode_bytes(bytes: &[u8]) -> Result<DynamicImage> {
     decode(Cursor::new(bytes))
 }
