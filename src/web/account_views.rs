@@ -1,6 +1,6 @@
 //! Views of the account page, the background editor and the admin's appearance page.
 
-use super::views::{Ctx, layout};
+use super::views::{Ctx, icon, layout};
 use maud::{Markup, html};
 
 /// One `<option>`.
@@ -64,6 +64,10 @@ pub fn account(ctx: &Ctx, v: &AccountView) -> Markup {
                 dt { (ctx.t("account.role")) } dd { (v.role) }
             }
             p class="account__password" { a href="/.cc/password" { (ctx.t("account.change_password")) } }
+            // The phone's tab bar has no trash tab (review Q23): it is reached from here.
+            p class="account__trash" {
+                a href="/.cc/trash" { (icon("trash")) span { (ctx.t("nav.trash")) } }
+            }
             section class="prefs" aria-labelledby="prefs-title" {
                 h2 id="prefs-title" { (ctx.t("account.preferences")) }
                 (status(ctx, None, v.saved, "account.saved"))

@@ -585,12 +585,16 @@ fn sidenav(ctx: &Ctx, nav: &Nav) -> Markup {
     }
 }
 
+/// The phone's tab bar (review Q23): the trash lives in the account, so the account tab
+/// is the current one on the trash page.
 fn tabbar(ctx: &Ctx) -> Markup {
-    let section = ctx.nav.as_ref().map(|n| n.section);
+    let section = ctx.nav.as_ref().map(|n| match n.section {
+        Section::Trash => Section::Account,
+        s => s,
+    });
     let tabs = [
         ("/", "folder", "nav.volumes", Section::Files),
         ("/.cc/shares", "share", "nav.shares_tab", Section::Shares),
-        ("/.cc/trash", "trash", "nav.trash", Section::Trash),
         ("/.cc/account", "user", "nav.account", Section::Account),
     ];
     html! {
@@ -805,8 +809,12 @@ pub struct ListingView {
     pub folder_href: String,
     /// Free download slots of this visitor: `/.cc/dl-slots`, or the share's.
     pub slots_href: String,
-    /// Label and link of the admin's show/hide hidden files switch.
-    pub hidden_toggle: Option<(String, String)>,
+    /// The View menu: sort by name, size, modified (each keeps the direction), and
+    /// ascending, descending (each keeps the column).
+    pub menu_sort_hrefs: [String; 3],
+    pub order_hrefs: [String; 2],
+    /// The admin's link that shows or hides hidden files (in the View menu).
+    pub hidden_href: Option<String>,
     pub showing_hidden: bool,
     /// Where the folder's forms post to.
     pub post_href: String,
@@ -1005,6 +1013,68 @@ fn download_menu(ctx: &Ctx, id: &str, v: &ListingView, toggle: DlToggle) -> Mark
     }
 }
 
+/// The two layouts: value, label key, icon (the title row's toggle and the View menu).
+const LAYOUTS: [(&str, &str, &str); 2] = [
+    ("list", "browser.layout_list", "list"),
+    ("grid", "browser.layout_grid", "grid"),
+];
+
+/// The View menu (review Q29): list or grid, the sort column, the direction and, for
+/// admins, the hidden files. Every entry is a link and the menu is a native popover, so
+/// it opens and works without script (the script only places it next to its button).
+/// Below 1024 px it stands in for the list/grid toggle, and on phones for the column
+/// headers too; from 1024 px the toggle and the headers stay, and the stylesheet hides the
+/// menu's layout group there.
+fn view_menu(ctx: &Ctx, v: &ListingView) -> Markup {
+    let label = ctx.t("browser.view");
+    let item = |href: &str, role: &str, on: bool, text: &str| {
+        html! {
+            a class="menu__item viewmenu__item" role=(role) href=(href) aria-checked=(on) {
+                @if on { (icon("check")) } @else { span class="viewmenu__blank" aria-hidden="true" {} }
+                span class="menu__text" { span class="menu__label" { (text) } }
+            }
+        }
+    };
+    let columns = [
+        "browser.col_name",
+        "browser.col_size",
+        "browser.col_modified",
+    ];
+    let orders = ["browser.ascending", "browser.descending"];
+    html! {
+        button class="btn viewmenu__toggle" type="button" aria-haspopup="menu" popovertarget="view-menu"
+            aria-label=(label) {
+            (icon("sort"))
+            span class="btn__label viewmenu__label" aria-hidden="true" { (label) }
+        }
+        div class="menu viewmenu" id="view-menu" role="menu" aria-label=(label) popover {
+            div class="viewmenu__group" data-group="layout" role="group" aria-labelledby="view-layout" {
+                p class="viewmenu__heading" id="view-layout" { (ctx.t("browser.layout")) }
+                @for (i, (name, key, _)) in LAYOUTS.iter().enumerate() {
+                    (item(&v.layout_hrefs[i], "menuitemradio", *name == v.layout, ctx.t(key)))
+                }
+            }
+            div class="viewmenu__group" data-group="sort" role="group" aria-labelledby="view-sort" {
+                p class="viewmenu__heading" id="view-sort" { (ctx.t("browser.sort_by")) }
+                @for (i, key) in columns.iter().enumerate() {
+                    (item(&v.menu_sort_hrefs[i], "menuitemradio", v.sorted.0 == i, ctx.t(key)))
+                }
+            }
+            div class="viewmenu__group" data-group="order" role="group" aria-labelledby="view-order" {
+                p class="viewmenu__heading" id="view-order" { (ctx.t("browser.order")) }
+                @for (i, key) in orders.iter().enumerate() {
+                    (item(&v.order_hrefs[i], "menuitemradio", v.sorted.1 == (i == 1), ctx.t(key)))
+                }
+            }
+            @if let Some(href) = &v.hidden_href {
+                div class="viewmenu__group" data-group="hidden" {
+                    (item(href, "menuitemcheckbox", v.showing_hidden, ctx.t("browser.show_hidden")))
+                }
+            }
+        }
+    }
+}
+
 fn menu_button(js: &str, icon_id: &str, label: &str, hint: &str, hidden: bool) -> Markup {
     html! {
         button class="menu__item" type="button" role="menuitem" data-js=(js) hidden[hidden] {
@@ -1072,7 +1142,7 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             data-t-delete-other=(ctx.t("browser.delete_title_other"))
             data-t-delete-name=(ctx.t("browser.delete_title_name"))
             data-t-dl-file=(ctx.t("browser.download")) data-t-dl-folder=(ctx.t("browser.dl_zip"))
-            data-t-share=(ctx.t("browser.share")) data-t-delete=(ctx.t("browser.delete"))
+            data-t-select=(ctx.t("browser.select")) data-t-share=(ctx.t("browser.share")) data-t-delete=(ctx.t("browser.delete"))
             data-decimal=(ctx.t("format.decimal")) data-t-failed=(ctx.t("ops.failed"))
             data-slots=(v.slots_href) data-folder=(v.title) data-hidden=[v.showing_hidden.then_some("1")]
             data-t-each-one=(ctx.t("browser.dl_each_hint_one")) data-t-each-other=(ctx.t("browser.dl_each_hint_other"))
@@ -1121,12 +1191,13 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                         @if !share {
                             div class="dl browser__download" { (download_menu(ctx, "dl-folder-m", v, DlToggle::Phone)) }
                         }
-                        div class="seg" role="group" aria-label=(ctx.t("browser.layout")) {
-                            @for (i, (name, key, icon_id)) in [("list", "browser.layout_list", "list"), ("grid", "browser.layout_grid", "grid")].iter().enumerate() {
+                        div class="seg browser__layout" role="group" aria-label=(ctx.t("browser.layout")) {
+                            @for (i, (name, key, icon_id)) in LAYOUTS.iter().enumerate() {
                                 a class="seg__item btn btn--icon" href=(v.layout_hrefs[i]) aria-label=(ctx.t(key))
                                     aria-current=[(*name == v.layout).then_some("true")] { (icon(icon_id)) }
                             }
                         }
+                        (view_menu(ctx, v))
                     }
                 }
                 // The note greets at the share's top (no crumbs there), not in every folder.
@@ -1241,9 +1312,6 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             footer class="status" data-state="idle" data-js="status" {
                 div class="status__group status__group--idle" {
                     span class="status__item" { (v.summary) }
-                    @if let Some((label, href)) = &v.hidden_toggle {
-                        span class="status__item" { a href=(href) { (label) } }
-                    }
                     @if keys {
                         span class="status__item status__item--keys" { kbd { "?" } " " (ctx.t("browser.shortcuts")) }
                     }

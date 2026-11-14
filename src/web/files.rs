@@ -956,19 +956,16 @@ pub async fn listing(
         ops_vol: (ctx.csrf.is_some() && frame.share.is_none()).then(|| vol.name().to_string()),
         upload: frame.upload,
         trash_days: frame.trash_days,
-        hidden_toggle: frame.admin.then(|| {
-            if show_hidden {
-                (
-                    ctx.t("browser.hide_hidden").to_string(),
-                    link(1, sort, desc, false),
-                )
-            } else {
-                (
-                    ctx.t("browser.show_hidden").to_string(),
-                    link(1, sort, desc, true),
-                )
-            }
-        }),
+        menu_sort_hrefs: [
+            link(1, SortBy::Name, desc, show_hidden),
+            link(1, SortBy::Size, desc, show_hidden),
+            link(1, SortBy::Modified, desc, show_hidden),
+        ],
+        order_hrefs: [
+            link(1, sort, false, show_hidden),
+            link(1, sort, true, show_hidden),
+        ],
+        hidden_href: frame.admin.then(|| link(1, sort, desc, !show_hidden)),
         showing_hidden: show_hidden,
         share: frame.share,
         share_base: frame

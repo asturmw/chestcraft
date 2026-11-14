@@ -1,5 +1,6 @@
-// chestcraft folder browser: selection and the status bar, the filter, the row menu, new
-// folder, delete to trash, the selection's zip and folder sizes. Markup: views::listing (src/web/views.rs);
+// chestcraft folder browser: selection (select mode on phones) and the status bar, the
+// filter, the row menu, new folder, delete to trash, the selection's zip and folder
+// sizes. Markup: views::listing (src/web/views.rs);
 // copy comes from data-t-* attributes on the browser element (the i18n catalogs). The
 // selection posts through the `sel` form (op=zip | delete), like it would without JS.
 (() => {
@@ -39,6 +40,7 @@
   }
 
   const selected = () => rows.filter((r) => pick(r).checked);
+  const selecting = () => rows.some((r) => pick(r).checked);
   const visible = () => rows.filter((r) => !r.hidden);
 
   // What the selection's actions and its download menu show.
@@ -46,6 +48,9 @@
     const sel = selected();
     for (const r of rows) setState(r, 'selected', pick(r).checked);
     if (status) status.dataset.state = sel.length ? 'select' : 'idle';
+    // Select mode (phones): while something is selected, the checkboxes show and taps
+    // toggle rows instead of opening them; the last item unselected ends it.
+    setState(browser, 'select-mode', sel.length > 0);
     // Folders count once their size is known (?du below).
     const sized = (r) => !r.dataset.dir || r.dataset.du === '1';
     const bytes = sel.reduce((n, r) => n + (sized(r) ? Number(r.dataset.size) || 0 : 0), 0);
@@ -100,7 +105,8 @@
       last = r;
       update();
     });
-    // Phones: hold a row to select it (the checkboxes show once something is selected).
+    // Phones: hold a row to select it, a shortcut for "Select" in its menu; both start
+    // select mode.
     let timer = null;
     let held = false;
     r.addEventListener('touchstart', () => {
@@ -117,27 +123,29 @@
     r.addEventListener('touchend', cancel);
     r.addEventListener('touchmove', cancel, { passive: true });
     r.addEventListener('contextmenu', (e) => { if (held) e.preventDefault(); });
+    const link = r.querySelector('[data-js="row-link"]');
+    let pointer = 'mouse';
+    r.addEventListener('pointerdown', (e) => { pointer = e.pointerType; });
     // A click on the row outside its links and buttons toggles it; a double click opens it
-    // (its second click doesn't toggle back).
+    // (its second click doesn't toggle back). A tap opens it, unless in select mode.
     r.addEventListener('click', (e) => {
       if (held) { held = false; e.preventDefault(); return; }
       if (e.target.closest('a, button, input, label')) return;
       if (e.detail > 1) return;
+      if (pointer === 'touch' && !selecting() && link) { link.click(); return; }
       toggle(r, e.shiftKey);
     });
-    const link = r.querySelector('[data-js="row-link"]');
-    let pointer = 'mouse';
-    r.addEventListener('pointerdown', (e) => { pointer = e.pointerType; });
     r.addEventListener('dblclick', (e) => {
       if (!link || pointer === 'touch' || e.target.closest('button, input, label')) return;
       e.preventDefault();
       location.href = link.href;
     });
     // A name (file or folder) selects its row like a click on the row; a double click opens
-    // it. Taps still open (phones select by holding), and so do Enter and the keyboard maps
-    // (their clicks have no pointer); Ctrl/⌘/Alt clicks and the middle button stay the
-    // browser's. Firefox gives the click that Enter fires on a link `detail` 1 like a mouse
-    // click, so the link remembers the key.
+    // it. Taps still open (phones select from the row menu or by holding), except in select
+    // mode, where they toggle; Enter and the keyboard maps open too (their clicks have no
+    // pointer); Ctrl/⌘/Alt clicks and the middle button stay the browser's. Firefox gives
+    // the click that Enter fires on a link `detail` 1 like a mouse click, so the link
+    // remembers the key. The click that ends a hold is the row's (above).
     if (link) {
       let viaKey = false;
       link.addEventListener('keydown', (e) => { viaKey = e.key === 'Enter'; });
@@ -145,7 +153,13 @@
       link.addEventListener('click', (e) => {
         const key = viaKey;
         viaKey = false;
-        if (key || e.detail === 0 || pointer === 'touch' || e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (held || key || e.detail === 0 || e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (pointer === 'touch') {
+          if (!selecting()) return;
+          e.preventDefault();
+          toggle(r);
+          return;
+        }
         e.preventDefault();
         if (e.detail === 1) toggle(r, e.shiftKey);
       });
@@ -160,6 +174,15 @@
   }
   const clear = $('sel-clear');
   if (clear) clear.addEventListener('click', () => selectOnly([]));
+  // Esc ends select mode, also without a keyboard map (a map that used the key, say to
+  // empty the filter first, has said so; window listeners run after the document's).
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented || !selecting()) return;
+    if (document.querySelector('dialog[open], [role="menu"]:popover-open')) return;
+    const t = e.target;
+    if (t instanceof Element && t.matches('input:not([type="checkbox"]), textarea, select')) return;
+    selectOnly([]);
+  });
 
   // Filter: this folder's rows only, by name, without case or accents.
   const fold = (s) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
@@ -280,6 +303,10 @@
       const name = row.dataset.name;
       rowMenu.setAttribute('aria-label', btn.getAttribute('aria-label'));
       rowMenu.replaceChildren();
+      // "Select" starts select mode with this row (phones have no checkboxes until then).
+      if (!pick(row).checked) {
+        rowMenu.append(menuItem(ds.tSelect, 'check', () => { pick(row).checked = true; last = row; update(); }));
+      }
       if (row.dataset.dir) {
         rowMenu.append(menuItem(ds.tDlFolder, 'zip', `${encodeURIComponent(name)}/?zip`));
       } else {

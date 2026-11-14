@@ -387,6 +387,14 @@ public write, shares from the UI), and the next UI slices as the design delivers
   leaves zoom first. Visitors: download + details only. Share pages: the brand links to
   `/s/<id>/` (`Ctx.brand_href`; plain text on single-file cards and error pages), the
   summary shows only the count.
+  Step 4 done (phone, Q8/Q29/Q23 part): select mode = the browser's `data-state~=
+  "select-mode"` (on while anything is selected; entered from the row menu's "Select" or
+  by long-press; ends when empty, ×, Esc); outside it a tap anywhere on a row opens it.
+  View menu (`views::view_menu`, `viewmenu*`, native popover, no-JS bottom-sheet fallback):
+  list/grid (below 1024 px, replaces the toggle), sort by, order, "show hidden files"
+  (admins only); links from `ListOrder::params`. The status bar has no hidden-files link.
+  Phone tab bar: Libraries, Shares, Account (Search joins in step 5); the account page
+  links to the trash, the trash page marks Account current.
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a
