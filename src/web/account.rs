@@ -11,6 +11,7 @@ use super::account_views::{
 };
 use super::auth::{audit, csrf_ok, forbidden, same_origin};
 use super::files::{Fail, enc, fail};
+use super::layout::Layout;
 use super::query::Query;
 use super::views::{Backdrop, Ctx, Pictures};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, assets, page_ctx};
@@ -424,6 +425,15 @@ fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> Acco
             .iter()
             .map(|m| opt(m, rotation_label(ctx, m), mode == Some(*m))),
     );
+    let layout = s.layout.as_deref().and_then(Layout::parse);
+    let mut layouts = vec![opt("", ctx.t("account.folder_view_auto"), layout.is_none())];
+    layouts.extend(
+        [
+            (Layout::List, "browser.layout_list"),
+            (Layout::Grid, "browser.layout_grid"),
+        ]
+        .map(|(l, key)| opt(l.code(), ctx.t(key), layout == Some(l))),
+    );
     AccountView {
         csrf: cu.csrf.clone(),
         name: cu.name.clone(),
@@ -434,6 +444,7 @@ fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> Acco
         skins,
         keys,
         rotations,
+        layouts,
         admin: cu.role == ADMIN_ROLE,
         access: maud::html! {},
     }
@@ -534,13 +545,14 @@ pub async fn save_prefs(
                 matches!(k, "standard" | "vim" | "off")
             })?,
             change(&form, "rotation", &[""], look::is_rotation)?,
+            change(&form, "layout", &[""], |l| Layout::parse(l).is_some())?,
             match form.get("glass") {
                 None => None,
                 Some(g) => Some(Glass::parse(g).ok_or(())?),
             },
         ))
     })();
-    let Ok((lang, theme, skin, keys, rotation, glass)) = fields else {
+    let Ok((lang, theme, skin, keys, rotation, layout, glass)) = fields else {
         return fail(&ctx, Fail::BadRequest);
     };
     let default_skin = look::pick_skin(
@@ -558,6 +570,7 @@ pub async fn save_prefs(
                 (&mut s.skin, skin),
                 (&mut s.keys, keys),
                 (&mut s.rotation, rotation),
+                (&mut s.layout, layout),
             ] {
                 if let Some(v) = value {
                     *slot = v;

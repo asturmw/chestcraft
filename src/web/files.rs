@@ -27,11 +27,14 @@
 use super::auth::{audit, csrf_ok, forbidden, now};
 use super::guest::{self, PublicGuest};
 use super::headers::SANDBOX_CSP;
+use super::layout::{self, Layout};
 use super::limits::DownloadGuard;
 use super::nav;
 use super::preview::{self, ViewerReq};
 use super::query::Query;
-use super::views::{self, Crumb, Ctx, ListingView, Row, Section, ShareHead, UploadUi, VolumeCard};
+use super::views::{
+    self, Crumb, Ctx, DownloadAll, ListingView, Row, Section, ShareHead, UploadUi, VolumeCard,
+};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, api, page_ctx, stream};
 use crate::auth::perm::{CHANGES, Perms, Principal, path_perms, public_writer_perms, volume_perms};
 use crate::fs::filetype;
@@ -62,6 +65,8 @@ const PAGE_SIZE: usize = 2000;
 const COUNT_CAP: usize = 10_000;
 /// Folders a `?dirs` answer lists at most.
 const DIRS_CAP: usize = 5_000;
+/// A share's folder shows its filter from this many entries.
+const SHARE_FILTER_MIN: usize = 20;
 
 /// RFC 5987 attr-chars, for `filename*=`.
 const ATTR_CHARS: &AsciiSet = &NON_ALPHANUMERIC
@@ -372,7 +377,8 @@ pub async fn handle(
                     Err(f) => fail(&ctx, f),
                 };
             }
-            let frame = volume_frame(
+            let choice = layout::Choice::of(&q, &headers, current.as_deref());
+            let mut frame = volume_frame(
                 &st,
                 &ctx,
                 &vol,
@@ -383,6 +389,7 @@ pub async fn handle(
                 raw_path,
             )
             .await;
+            frame.layout = choice;
             let nav = nav::build(
                 &st,
                 ctx.lang,
@@ -407,7 +414,11 @@ pub async fn handle(
                 ctx.theme = None;
                 ctx.lang_switch = Some(uri.to_string());
             }
-            listing(&st, &ctx, vol, rel, perms, &q, raw_path, frame).await
+            let mut res = listing(&st, &ctx, vol, rel, perms, &q, raw_path, frame).await;
+            choice
+                .remember(&st, &client, current.as_deref(), &mut res)
+                .await;
+            res
         }
         Kind::File => {
             if raw_path.ends_with('/') {
@@ -552,6 +563,8 @@ pub struct Frame {
     pub share_blocked: Option<String>,
     pub public_upload_href: Option<String>,
     pub trash_days: u32,
+    /// List or grid, as far as the request and the person's memory say.
+    pub layout: layout::Choice,
 }
 
 /// The frame of a volume folder for the visitor behind the request.
@@ -618,6 +631,7 @@ async fn volume_frame(
             .then(|| ctx.t("browser.share_local_only").to_string()),
         public_upload_href,
         trash_days: vol.cfg.trash_days(&st.cfg),
+        layout: layout::Choice::default(),
     }
 }
 
@@ -734,7 +748,10 @@ pub async fn listing(
         .await
         .unwrap_or_default()
     };
-    let grid = q.get("layout") == Some("grid");
+    let view_layout = frame
+        .layout
+        .chosen()
+        .unwrap_or_else(|| Layout::by_content(&slice));
     let keep = if show_hidden { "&hidden=1" } else { "" };
     let rows = slice
         .iter()
@@ -795,38 +812,66 @@ pub async fn listing(
         })
         .collect();
 
-    // Links keep the current view settings.
-    let link_in = |grid: bool, page: usize, sort: SortBy, desc: bool, hidden: bool| -> String {
-        let mut params = Vec::new();
-        if grid {
-            params.push("layout=grid".to_string());
-        }
-        match sort {
-            SortBy::Name => {}
-            SortBy::Size => params.push("sort=size".to_string()),
-            SortBy::Modified => params.push("sort=modified".to_string()),
-        }
-        if desc {
-            params.push("order=desc".into());
-        }
-        if hidden {
-            params.push("hidden=1".into());
-        }
-        if page > 1 {
-            params.push(format!("page={page}"));
-        }
-        if params.is_empty() {
-            raw_path.to_string()
-        } else {
-            format!("{raw_path}?{}", params.join("&"))
-        }
-    };
+    // Links keep the current view settings; the layout only when the address names one
+    // (else the person's memory or the content decide again on the next page).
+    let link_in =
+        |layout: Option<Layout>, page: usize, sort: SortBy, desc: bool, hidden: bool| -> String {
+            let mut params = Vec::new();
+            if let Some(l) = layout {
+                params.push(format!("layout={}", l.code()));
+            }
+            match sort {
+                SortBy::Name => {}
+                SortBy::Size => params.push("sort=size".to_string()),
+                SortBy::Modified => params.push("sort=modified".to_string()),
+            }
+            if desc {
+                params.push("order=desc".into());
+            }
+            if hidden {
+                params.push("hidden=1".into());
+            }
+            if page > 1 {
+                params.push(format!("page={page}"));
+            }
+            if params.is_empty() {
+                raw_path.to_string()
+            } else {
+                format!("{raw_path}?{}", params.join("&"))
+            }
+        };
     let link = |page: usize, sort: SortBy, desc: bool, hidden: bool| {
-        link_in(grid, page, sort, desc, hidden)
+        link_in(frame.layout.explicit, page, sort, desc, hidden)
     };
     let sort_link = |s: SortBy| link(1, s, s == sort && !desc, show_hidden);
 
-    let crumbs = crumbs(&frame.root, &frame.sub);
+    // A share's own name is the page title at its top; the app bar repeats nothing there.
+    let is_share = frame.share.is_some();
+    let crumbs = if is_share && frame.sub.is_root() {
+        Vec::new()
+    } else {
+        crumbs(&frame.root, &frame.sub)
+    };
+    // A share's one-zip download of this folder, with its whole size where that is quick
+    // to add up (the page script asks for the size of a bigger one).
+    let download_all = if is_share && total > 0 {
+        let size = st
+            .folder_sizes
+            .quick(vol.clone(), rel.clone(), false)
+            .await
+            .map(|u| ctx.tf("share.download_size", &[("size", &ctx.size(u.bytes))]));
+        Some(DownloadAll {
+            href: format!("{raw_path}?zip"),
+            label: if frame.sub.is_root() {
+                ctx.t("share.download_all").to_string()
+            } else {
+                ctx.t("browser.dl_folder").to_string()
+            },
+            size,
+        })
+    } else {
+        None
+    };
     let items = items_label(ctx, total);
     let summary = if has_files {
         ctx.tf(
@@ -902,10 +947,12 @@ pub async fn listing(
         dir: rel.as_str().to_string(),
         share_blocked: frame.share_blocked,
         public_upload_href: frame.public_upload_href,
-        layout: if grid { "grid" } else { "list" },
+        filter: !is_share || slice.len() >= SHARE_FILTER_MIN,
+        download_all,
+        layout: view_layout.code(),
         layout_hrefs: [
-            link_in(false, page, sort, desc, show_hidden),
-            link_in(true, page, sort, desc, show_hidden),
+            link_in(Some(Layout::List), page, sort, desc, show_hidden),
+            link_in(Some(Layout::Grid), page, sort, desc, show_hidden),
         ],
     };
     views::listing(ctx, &view).into_response()

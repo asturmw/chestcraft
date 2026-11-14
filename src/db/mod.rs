@@ -145,6 +145,10 @@ pub struct UserSettings {
     /// Glass mode and panel opacity per skin name; unset values take the admin's default.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub panels: BTreeMap<String, Panels>,
+    /// How folders open: "list" | "grid" (the last toggle); None picks by content (a grid
+    /// for folders of pictures and videos).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
 }
 
 /// How the panels sit over the backdrop. Each value falls back on its own: an account's

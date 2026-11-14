@@ -6,12 +6,17 @@
 //! `/s/<id>/.cc/unlock`. Downloads that save file by file use `?tree` / `op=tree` and
 //! `/s/<id>/.cc/dl-slots` (see `web::files`).
 //!
-//! Share pages follow the system theme and the browser's language, with a language switch.
+//! Share pages follow the system theme and the browser's language, with a language switch
+//! and no sign-in link (the people a link goes to have no account). A folder's page shows
+//! the share's name once (the page title; crumbs only below the top), one line with who
+//! shared it and until when, the creator's note, and "Download all" (the folder's zip, a
+//! plain link) as its primary button; the list/grid choice is a cookie (`web::layout`).
 
 use super::api::{self, NewReq, Uploader};
 use super::auth::same_origin;
 use super::files::{self, Fail, Frame, download_guard, enc, fail};
 use super::guest::{self, Opened, ShareGuest, Unlock};
+use super::layout;
 use super::preview::{self, ViewerReq};
 use super::query::Query;
 use super::share_views::{self, FileCard};
@@ -73,6 +78,7 @@ pub async fn handle(
     let mut ctx = page_ctx(&st, &headers, &Principal::Anonymous, None);
     ctx.theme = None;
     ctx.lang_switch = Some(uri.to_string());
+    ctx.sign_in = false;
 
     let rest = uri.path().strip_prefix("/s/").unwrap_or_default();
     let (id, tail) = match rest.split_once('/') {
@@ -341,7 +347,6 @@ async fn content(
                 modified: ctx.datetime(meta.mtime),
                 download_href: format!("{href}?dl"),
                 ftype: crate::fs::filetype::icon_type(&name),
-                open_href: href,
                 name,
                 body,
             };
@@ -451,6 +456,8 @@ async fn content(
             if upload.is_some() {
                 ctx.scripts.push("upload.js");
             }
+            // Everyone is a visitor here: the layout choice lives in this browser's cookie.
+            let choice = layout::Choice::of(&q, headers, None);
             let frame = Frame {
                 root: (share_name.clone(), format!("{base}/")),
                 sub: sub.clone(),
@@ -465,8 +472,11 @@ async fn content(
                 share_blocked: None,
                 public_upload_href: None,
                 trash_days: 0,
+                layout: choice,
             };
-            files::listing(st, &ctx, vol, abs, perms, &q, raw_path, frame).await
+            let mut res = files::listing(st, &ctx, vol, abs, perms, &q, raw_path, frame).await;
+            choice.remember(st, client, None, &mut res).await;
+            res
         }
         Kind::File => {
             if raw_path.ends_with('/') {

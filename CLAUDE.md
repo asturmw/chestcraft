@@ -356,6 +356,21 @@ public write, shares from the UI), and the next UI slices as the design delivers
   (square, cropped to cover; model/vector/G-code thumbnails contained; one-line name);
   background editor: color inputs in `div.bg-colors`, presets as swatch buttons. All in
   `provisional.css`.
+  Step 2 done (share view, Q6/Q16/Q17): the unlocked share shows its name once (the
+  heading; crumbs only inside subfolders), one muted line `share-line` ("shared by … ·
+  available until …"), the creator's note as a banner at the share's top only, no mode
+  banner for view shares, and one primary button "Download all (size)" (`?zip`, works
+  without JS; "Download folder" in subfolders; the other ways behind the arrow menu next to
+  it; no title-row icon, no action-bar download there). The size is the recursive one:
+  rendered when cached or when `FolderSizes::quick` (`web/du.rs`, ≤ 5000 entries / 100 ms)
+  finishes, else `browser.js` fills it in from `?du`. The filter shows from 20 entries in
+  share views. Single-file shares: download button above the preview. `Ctx.sign_in` is off
+  under `/s/` (no sign-in link for recipients). List or grid (`web/layout.rs`):
+  `?layout=` in the URL, then the stored choice, then by content (grid when the page has
+  ≥ 4 entries and ≥ 80 % are pictures or videos; accounts, public volumes, shares). Any
+  request with a valid `?layout=` stores it: accounts in `UserSettings.layout` (unset =
+  automatic; select "Folder view" on the account page), visitors in the cookie
+  `cc_layout` (`Path=/`, also used on every share page).
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a

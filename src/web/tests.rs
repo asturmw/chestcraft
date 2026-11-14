@@ -3308,7 +3308,8 @@ async fn action_bar_without_folder_actions_is_marked_download_only() {
     assert!(t.contains(bare), "{t}");
     assert_eq!(downloads(&t), (1, 1), "{t}");
 
-    // A visitor of a view-only folder share.
+    // A visitor of a view-only folder share: no bar at all, the download is the page's
+    // primary button with the menu next to it (tests/share_view.rs).
     let teiler = e.session("tom", "teiler").await;
     let (id, pw) = e
         .create_share(&teiler, "Medien", "Urlaub Gardasee", &[])
@@ -3318,8 +3319,12 @@ async fn action_bar_without_folder_actions_is_marked_download_only() {
         .get_h(&format!("/s/{id}/"), &[("cookie", &cookie)])
         .await
         .text();
-    assert!(t.contains("IMG_2041.jpg") && t.contains(bare), "{t}");
-    assert_eq!(downloads(&t), (1, 1), "{t}");
+    assert!(
+        t.contains("IMG_2041.jpg") && !t.contains(r#"class="actionbar""#),
+        "{t}"
+    );
+    assert_eq!(downloads(&t), (0, 0), "{t}");
+    assert_eq!(t.matches(r#"popovertarget="dl-folder""#).count(), 1, "{t}");
 
     // A share that takes uploads keeps its bar.
     let (id, pw) = e
@@ -3650,7 +3655,7 @@ async fn share_visitors_get_thumbnails_and_the_viewer() {
         .await
         .text();
     assert!(
-        t.contains("share-head") && t.contains(r#"data-state="image""#),
+        t.contains("share-line") && t.contains(r#"data-state="image""#),
         "{t}"
     );
     assert!(
@@ -4155,6 +4160,7 @@ async fn public_uploads_notify_once_per_burst() {
 
 mod appearance;
 mod ops;
+mod share_view;
 mod status;
 mod users;
 
