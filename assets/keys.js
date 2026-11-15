@@ -108,8 +108,7 @@
     B.selectOnly([]);
   }
   function share() {
-    const t = targets();
-    if (t.length === 1 && t[0].dataset.share) location.href = t[0].dataset.share;
+    B.share(targets(), document.activeElement);
   }
   function zip() {
     if (B.selected().length) B.submit('zip');

@@ -484,7 +484,7 @@ pub async fn handle(
 /// `?dirs`: folder names for the move and copy dialogs, with what the visitor may do in
 /// the folder itself (`write`: copy here; `move`: move here within the volume).
 /// The listing's scripts ask for JSON (`Accept: application/json`) where a form would get a page.
-fn wants_json(headers: &HeaderMap) -> bool {
+pub(super) fn wants_json(headers: &HeaderMap) -> bool {
     headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())

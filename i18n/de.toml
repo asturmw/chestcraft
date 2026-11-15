@@ -63,6 +63,8 @@ share_item = "{name} teilen"
 share_folder = "Diesen Ordner teilen"
 shared = "Geteilt"
 share_local_only = "Dieser Bereich ist nur von zu Hause erreichbar, deshalb kann er nicht geteilt werden."
+# Hinweis am deaktivierten „Teilen“, wenn mehrere Einträge ausgewählt sind.
+share_multi = "Leg sie in einen Ordner, um sie zusammen zu teilen."
 public_upload = "Dateien hochladen"
 location = "Ort"
 # Row menu: starts selecting (phones show the checkboxes then).
@@ -508,6 +510,23 @@ message_text_never = """Hallo! Hier sind die Dateien, die ich mit dir teile:
 {link}
 Passwort: {password}"""
 to_details = "Zu den Details der Freigabe"
+
+# Der Teilen-Dialog über der Ablage und der Ansicht.
+[share_dialog]
+# Teil der Zusammenfassung „Ansehen und herunterladen · 30 Tage · Passwort wird erzeugt“.
+summary_generated = "Passwort wird erzeugt"
+change = "Ändern"
+create = "Link erstellen"
+copy_message = "Als Nachricht kopieren"
+message_lang = "Sprache der Nachricht"
+lang_de = "Nachricht auf Deutsch"
+lang_en = "Nachricht auf Englisch"
+message = "Nachricht"
+copied_message = "Nachricht kopiert."
+copied_link = "Link kopiert."
+copied_password = "Passwort kopiert."
+copy_by_hand = "Automatisch kopieren ging nicht: der Text ist markiert, kopier ihn von Hand."
+done = "Fertig"
 
 [share_detail]
 title = "Freigabe von {name}"

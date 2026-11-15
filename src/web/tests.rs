@@ -4163,6 +4163,7 @@ mod appearance;
 mod ops;
 mod phone;
 mod search;
+mod share_dialog;
 mod share_view;
 mod status;
 mod users;

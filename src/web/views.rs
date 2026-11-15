@@ -1155,6 +1155,10 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             if v.ops_vol.is_some() {
                 s.push("ops.js");
             }
+            if v.share_base.is_some() {
+                s.push("copy.js");
+                s.push("share.js");
+            }
             s.push("keys.js");
             s
         },
@@ -1416,8 +1420,11 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                                 span class="btn__label" { (ctx.t("browser.rename")) }
                             }
                         }
+                        // One item: the share dialog. Several: the button stays, refused
+                        // with the hint (review Q39): aria-disabled, so it still takes a tap
+                        // and shows why.
                         @if v.share_base.is_some() {
-                            button class="btn" type="button" data-js="share" {
+                            button class="btn status__share" type="button" data-js="share" {
                                 (icon("share"))
                                 span class="btn__label" { (ctx.t("browser.share")) }
                             }
@@ -1449,6 +1456,11 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                     }
                     button class="btn btn--icon status__close" type="button" data-js="sel-clear"
                         aria-label=(ctx.t("browser.clear_selection")) { (icon("x")) }
+                }
+                @if v.share_base.is_some() {
+                    // The disabled Share's description, shown for a moment when it is tapped.
+                    p class="status__hint" id="share-multi-hint" role="status" data-js="share-hint"
+                        data-t=(ctx.t("browser.share_multi")) hidden { (ctx.t("browser.share_multi")) }
                 }
             }
             form id="sel" method="post" action=(v.post_href) hidden data-js="sel-form" {
@@ -1496,6 +1508,16 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
             }
             @if v.ops_vol.is_some() {
                 (ops_dialogs(ctx))
+            }
+            @if let (Some(_), Some(csrf)) = (&v.share_base, ctx.csrf) {
+                (super::share_views::share_dialog(ctx, csrf))
+                // The badge a row gets once the dialog has shared it.
+                template data-js="share-badge" {
+                    span class="sharebadge" {
+                        (icon("share"))
+                        span class="sharebadge__label" { (ctx.t("browser.shared")) }
+                    }
+                }
             }
             @if ctx.keys != "off" {
                 (keys_help(ctx))
@@ -1703,7 +1725,7 @@ fn file_row(ctx: &Ctx, r: &Row) -> Markup {
                 a class="files__link" href=(r.href) data-js="row-link" { (r.name) }
                 @if let Some(title) = &r.shared {
                     " "
-                    span class="sharebadge" title=(title) {
+                    span class="sharebadge" title=(title) data-js="sharebadge" {
                         (icon("share"))
                         span class="sharebadge__label" { (ctx.t("browser.shared")) }
                     }
@@ -2190,7 +2212,11 @@ fn viewer_action_inner(icon_id: &str, label: &str) -> Markup {
 pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
     let ctx = &Ctx {
         // Only its own scripts (app.js comes with every page): nothing here uploads.
-        scripts: vec!["viewer.js", "keys.js"],
+        scripts: if v.share_href.is_some() {
+            vec!["viewer.js", "copy.js", "share.js", "keys.js"]
+        } else {
+            vec!["viewer.js", "keys.js"]
+        },
         styles: {
             let mut s = ctx.styles.clone();
             s.push(assets::url("viewer.css"));
@@ -2236,7 +2262,7 @@ pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
                         (viewer_action_inner("download", ctx.t("viewer.download")))
                     }
                     @if let Some(href) = &v.share_href {
-                        a class="btn btn--quiet viewer__btn viewer__share" href=(href)
+                        a class="btn btn--quiet viewer__btn viewer__share" href=(href) data-js="share-open"
                             aria-label=(ctx.t("viewer.share")) title=(ctx.t("viewer.share")) {
                             (viewer_action_inner("share", ctx.t("viewer.share")))
                         }
@@ -2359,6 +2385,9 @@ pub fn viewer(ctx: &Ctx, v: &ViewerView) -> Markup {
                         }
                     }
                 }
+            }
+            @if let (Some(_), Some(csrf)) = (&v.share_href, ctx.csrf) {
+                (super::share_views::share_dialog(ctx, csrf))
             }
             @if ctx.keys != "off" {
                 (keys_help(ctx))

@@ -66,6 +66,8 @@ share_item = "Share {name}"
 share_folder = "Share this folder"
 shared = "Shared"
 share_local_only = "This volume is only reachable at home, so it can't be shared."
+# Hint on the disabled "Share" while several items are selected.
+share_multi = "Put them in a folder to share them together."
 public_upload = "Upload files"
 location = "Location"
 # Row menu: starts selecting (phones show the checkboxes then).
@@ -513,6 +515,23 @@ message_text_never = """Hi! Here are the files I shared with you:
 {link}
 Password: {password}"""
 to_details = "Go to the share's details"
+
+# The share dialog over the browser and the viewer.
+[share_dialog]
+# Part of the summary "View and download · 30 days · Password is generated".
+summary_generated = "Password is generated"
+change = "Change"
+create = "Create link"
+copy_message = "Copy as message"
+message_lang = "Message language"
+lang_de = "Message in German"
+lang_en = "Message in English"
+message = "Message"
+copied_message = "Message copied."
+copied_link = "Link copied."
+copied_password = "Password copied."
+copy_by_hand = "Couldn't copy automatically: the text is selected, copy it by hand."
+done = "Done"
 
 [share_detail]
 title = "Share of {name}"

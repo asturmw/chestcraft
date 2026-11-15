@@ -406,12 +406,23 @@ public write, shares from the UI), and the next UI slices as the design delivers
   searches): icon that opens at 720–1023 px, in the title row below 720 px; visitors keep
   the plain filter. Phone tab bar: Libraries, Search, Shares, Account. The look toggles
   now collapse into one menu below 1280 px (was 1100).
+  Step 6 done (share dialog, Q19/Q39): `/.cc/shares/new` with `Accept: application/json`:
+  GET → `{name, location, dir, modes, passphrase}`; POST → `{link, password, expires,
+  expires_at, lang, message:{de,en}, details_href, badge}` or `{errors:{own_password|max_mib|
+  note|form: …}}`; `op=regenerate` → `{passphrase}`; all JSON and the secret page
+  `no-store`. `share_views::share_dialog` (`data-state` create/created) + `assets/share.js`
+  (`cc.share.open`; intercepts `a[data-js~=share-open]` in the row menu and the viewer;
+  defaults view · 30 days · generated passphrase, options behind "Change"; step 2 "Copy as
+  message" DE/EN, link, password; the row's badge is added in place, no reload). The page
+  stays as the no-JS fallback. `copy.js` → `cc.copyText` (clipboard, else select the field).
+  Several items selected: Share is `aria-disabled` with `aria-describedby` + `title`; a tap,
+  click or Vim `s` shows the `#share-multi-hint` bubble.
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a
   folder-upload entry (only drag and drop now), an `i-arrow-down` icon for descending sort,
   `a.menu__item` (links in menus), dialogs, upload tray, banners, pager, grid view (provisional now),
-  share of several items (Share shows for exactly one), the rename/picker/clash/shortcut
+  the share dialog and the disabled Share's hint (provisional), the rename/picker/clash/shortcut
   dialogs; at 1280 px the selection bar wraps to two rows while Rename shows (one item
   selected); "keep both" on the server names `x (1).ext`, save-to-folder (design)
   `x (2).ext`. The dashboard/alerts, volumes/API-token, accounts/agents, audit and

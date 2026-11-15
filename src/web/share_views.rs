@@ -290,6 +290,166 @@ pub fn share_new(ctx: &Ctx, v: &NewShareView) -> Markup {
     )
 }
 
+/// The share dialog over the browser and the viewer (review Q19; `assets/share.js`).
+/// Step 1 (`data-state="create"`): the target, a summary of the defaults and "Create link";
+/// "Change" opens the options (the page's fields, posted to the same URL as JSON). Step 2
+/// (`data-state="created"`): "Copy as message" with its language, link and password with
+/// copy buttons, the "shown once" warning, the details link and "Done". The script fills in
+/// the target and the answers; without script the triggers are links to the page.
+/// Provisional markup until the design delivers the dialog.
+pub fn share_dialog(ctx: &Ctx, csrf: &str) -> Markup {
+    let min = crate::shares::MIN_OWN_PASSWORD.to_string();
+    let modes =
+        crate::shares::Mode::ALL.map(|m| (m.as_str(), super::shares::mode_label(ctx, m.as_str())));
+    let expiries = super::shares::expiry_choices(ctx, crate::shares::Expiry::Month);
+    let first = if ctx.code() == "de" { "de" } else { "en" };
+    html! {
+        dialog class="dialog share-dialog" data-js="share-dialog" data-state="create"
+            aria-labelledby="share-dialog-title"
+            data-t-target=(ctx.t("share_create.target"))
+            data-t-generated=(ctx.t("share_dialog.summary_generated"))
+            data-t-own=(ctx.t("share_create.own_password"))
+            data-t-copied-message=(ctx.t("share_dialog.copied_message"))
+            data-t-copied-link=(ctx.t("share_dialog.copied_link"))
+            data-t-copied-password=(ctx.t("share_dialog.copied_password"))
+            data-t-copy-by-hand=(ctx.t("share_dialog.copy_by_hand"))
+            data-t-failed=(ctx.t("ops.failed")) {
+            form class="dialog__form share-dialog__step" data-step="create" method="post"
+                action="/.cc/shares/new" data-js="share-form" novalidate {
+                h2 class="dialog__title" id="share-dialog-title" { (ctx.t("share_create.title")) }
+                p class="share-dialog__target" data-js="share-target" {}
+                p class="share-dialog__summary" data-js="share-summary" {}
+                p class="banner" data-state="error" role="alert" data-js="share-error-form" hidden {}
+                input type="hidden" name="csrf" value=(csrf);
+                input type="hidden" name="vol" data-js="share-vol";
+                input type="hidden" name="path" data-js="share-path";
+                input type="hidden" name="passphrase" data-js="share-passphrase-input";
+                div class="share-dialog__options" id="share-options" data-js="share-options" hidden {
+                    fieldset class="share-dialog__group" {
+                        legend { (ctx.t("share_create.mode")) }
+                        @for (value, label) in modes {
+                            label class="choice" {
+                                input type="radio" name="mode" value=(value) checked[value == "view"];
+                                " " (label)
+                            }
+                        }
+                    }
+                    fieldset class="share-dialog__group" {
+                        legend { (ctx.t("share_create.expiry")) }
+                        @for e in &expiries {
+                            label class="choice" {
+                                input type="radio" name="expiry" value=(e.value) checked[e.checked];
+                                " " (e.label)
+                            }
+                        }
+                    }
+                    fieldset class="share-dialog__group" {
+                        legend { (ctx.t("share_create.password")) }
+                        label class="choice" {
+                            input type="radio" name="password_kind" value="generated" checked
+                                aria-describedby="share-phrase";
+                            " " (ctx.t("share_create.use_passphrase"))
+                        }
+                        div class="share-dialog__passphrase" {
+                            code class="share-dialog__phrase" id="share-phrase" data-js="share-passphrase" {}
+                            button class="btn btn--quiet share-dialog__regenerate" type="button" data-js="share-regenerate" {
+                                (ctx.t("share_create.regenerate"))
+                            }
+                        }
+                        label class="choice" {
+                            input type="radio" name="password_kind" value="own";
+                            " " (ctx.t("share_create.use_own"))
+                        }
+                        div class="field" data-js="share-field-own_password" hidden {
+                            label class="field__label" for="share-own" { (ctx.t("share_create.own_password")) }
+                            div class="field__control" {
+                                input class="field__input" id="share-own" type="text" name="own_password"
+                                    minlength=(min) autocomplete="off" spellcheck="false"
+                                    aria-describedby="share-own-hint share-own-error";
+                            }
+                            p class="field__hint" id="share-own-hint" { (ctx.tf("share_create.own_hint", &[("min", &min)])) }
+                            p class="field__error" id="share-own-error" data-js="share-error-own_password" {}
+                        }
+                    }
+                    div class="field" data-js="share-field-note" {
+                        label class="field__label" for="share-note" { (ctx.t("share_create.note")) }
+                        div class="field__control" {
+                            textarea class="field__input" id="share-note" name="note" rows="2"
+                                maxlength=(crate::shares::MAX_NOTE_CHARS) aria-describedby="share-note-error" {}
+                        }
+                        p class="field__error" id="share-note-error" data-js="share-error-note" {}
+                    }
+                    div class="field" data-js="share-field-max_mib" hidden {
+                        label class="field__label" for="share-max" { (ctx.t("share_create.max_size")) }
+                        div class="field__control" {
+                            input class="field__input" id="share-max" type="number" name="max_mib" min="1" step="1"
+                                inputmode="numeric" aria-describedby="share-max-hint share-max-error";
+                        }
+                        p class="field__hint" id="share-max-hint" { (ctx.t("share_create.max_size_hint")) }
+                        p class="field__error" id="share-max-error" data-js="share-error-max_mib" {}
+                    }
+                }
+                div class="dialog__actions" {
+                    button class="btn share-dialog__change" type="button" data-js="share-change"
+                        aria-expanded="false" aria-controls="share-options" { (ctx.t("share_dialog.change")) }
+                    button class="btn" type="button" data-js="dialog-cancel" { (ctx.t("common.cancel")) }
+                    button class="btn btn--primary" type="submit" data-js="share-create" {
+                        (icon("share"))
+                        span class="btn__label" { (ctx.t("share_dialog.create")) }
+                    }
+                }
+            }
+            div class="dialog__form share-dialog__step" data-step="created" {
+                h2 class="dialog__title" id="share-dialog-done-title" { (ctx.t("share_created.title")) }
+                p class="banner" data-state="warning" { (ctx.t("share_created.once")) }
+                div class="share-dialog__send" {
+                    button class="btn btn--primary share-dialog__copy-message" type="button" data-js="share-copy-message" {
+                        (icon("copy"))
+                        span class="btn__label" { (ctx.t("share_dialog.copy_message")) }
+                    }
+                    div class="seg share-dialog__lang" role="group" aria-label=(ctx.t("share_dialog.message_lang")) {
+                        @for (code, key) in [("de", "share_dialog.lang_de"), ("en", "share_dialog.lang_en")] {
+                            button class="seg__item btn btn--quiet share-dialog__lang-opt" type="button" data-js="share-lang"
+                                value=(code) aria-label=(ctx.t(key)) aria-pressed=(code == first)
+                                aria-current=[(code == first).then_some("true")] { (code.to_uppercase()) }
+                        }
+                    }
+                }
+                textarea class="field__input share-dialog__message" data-js="share-message" readonly rows="5"
+                    aria-label=(ctx.t("share_dialog.message")) hidden {}
+                div class="field" {
+                    label class="field__label" for="share-link" { (ctx.t("share_created.link")) }
+                    div class="field__control" {
+                        input class="field__input" id="share-link" type="text" readonly data-js="share-link";
+                        button class="btn btn--icon btn--quiet" type="button" data-js="share-copy" data-copy="share-link"
+                            data-what="link" aria-label=(ctx.t("share_created.copy_link")) title=(ctx.t("share_created.copy_link")) {
+                            (icon("copy"))
+                        }
+                    }
+                }
+                div class="field" {
+                    label class="field__label" for="share-password" { (ctx.t("share_created.password")) }
+                    div class="field__control" {
+                        input class="field__input" id="share-password" type="text" readonly data-js="share-password";
+                        button class="btn btn--icon btn--quiet" type="button" data-js="share-copy" data-copy="share-password"
+                            data-what="password" aria-label=(ctx.t("share_created.copy_password")) title=(ctx.t("share_created.copy_password")) {
+                            (icon("copy"))
+                        }
+                    }
+                }
+                p class="share-dialog__until" {
+                    (ctx.t("share_created.until")) ": " span data-js="share-until" {}
+                }
+                p class="share-dialog__status" role="status" data-js="share-copy-status" {}
+                div class="dialog__actions" {
+                    a class="share-dialog__details" href="/.cc/shares" data-js="share-details" { (ctx.t("share_created.to_details")) }
+                    button class="btn" type="button" data-js="share-close" { (ctx.t("share_dialog.done")) }
+                }
+            }
+        }
+    }
+}
+
 pub struct Message {
     pub lang_name: String,
     pub code: String,

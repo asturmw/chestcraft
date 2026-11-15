@@ -17,6 +17,7 @@
   // copy in the title row (accounts), so possibly two inputs that type together.
   const filters = [...document.querySelectorAll('[data-js~="filter"]')];
   const rowMenu = $('row-menu');
+  const shareHint = $('share-hint');
   const rows = [...browser.querySelectorAll('[data-js="row"]')];
   const pick = (row) => row.querySelector('[data-js="pick"]');
 
@@ -61,8 +62,23 @@
     if (count) count.textContent = String(sel.length);
     const size = $('sel-size');
     if (size) size.textContent = files ? `, ${sizeText(bytes)}` : '';
+    // Share: one item opens the dialog; several keep the button, refused with the hint as
+    // its description and tooltip (review Q39).
     const share = $('share');
-    if (share) share.hidden = !(sel.length === 1 && sel[0].dataset.share);
+    if (share) {
+      const many = sel.length > 1 && sel.every((r) => r.dataset.share);
+      share.hidden = !(many || (sel.length === 1 && sel[0].dataset.share));
+      if (many) {
+        share.setAttribute('aria-disabled', 'true');
+        share.setAttribute('aria-describedby', shareHint.id);
+        share.title = shareHint.dataset.t;
+      } else {
+        share.removeAttribute('aria-disabled');
+        share.removeAttribute('aria-describedby');
+        share.removeAttribute('title');
+        shareHint.hidden = true;
+      }
+    }
     const zipHint = document.querySelector('#dl-sel [data-js="dl-zip"] [data-js="hint"]');
     if (zipHint) zipHint.textContent = files ? `${items(sel.length)}, ${sizeText(bytes)}` : items(sel.length);
     if (all) {
@@ -233,13 +249,27 @@
   const del = $('delete');
   if (del) del.addEventListener('click', () => askDelete(selected()));
 
-  const share = $('share');
-  if (share) {
-    share.addEventListener('click', () => {
-      const sel = selected();
-      if (sel.length === 1 && sel[0].dataset.share) location.href = sel[0].dataset.share;
-    });
+  // Share `list` (the selection, or the keyboard's cursor row): the dialog for one item
+  // (share.js; the page without it), the hint for several, shown for a few seconds in a
+  // live region over the status bar, since a disabled button has no tooltip on touch.
+  let hintTimer = null;
+  function share(list, from) {
+    if (list.length > 1) {
+      if (!shareHint) return;
+      shareHint.hidden = false;
+      shareHint.textContent = '';
+      setTimeout(() => { shareHint.textContent = shareHint.dataset.t; }, 30);
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => { shareHint.hidden = true; }, 5000);
+      return;
+    }
+    const href = list.length === 1 && list[0].dataset.share;
+    if (!href) return;
+    if (window.cc.share) window.cc.share.open(href, from);
+    else location.href = href;
   }
+  const shareBtn = $('share');
+  if (shareBtn) shareBtn.addEventListener('click', () => share(selected(), shareBtn));
 
   // New folder.
   const nfDialog = $('new-folder-dialog');
@@ -320,7 +350,12 @@
         a.setAttribute('download', '');
         rowMenu.append(a);
       }
-      if (row.dataset.share) rowMenu.append(menuItem(ds.tShare, 'share', row.dataset.share));
+      if (row.dataset.share) {
+        // A link to the share page; share.js opens the dialog from it.
+        const a = menuItem(ds.tShare, 'share', row.dataset.share);
+        a.dataset.js = 'share-open';
+        rowMenu.append(a);
+      }
       // Other scripts add their items here (ops.js: rename, move, copy).
       const add = (label, iconId, action) => rowMenu.append(menuItem(label, iconId, action));
       browser.dispatchEvent(new CustomEvent('cc:row-menu', { detail: { row, add } }));
@@ -370,6 +405,6 @@
   }
   Promise.all(duRows.length ? [duWorker(), duWorker()] : []).then(duAll);
   window.cc = Object.assign(window.cc || {}, {
-    browser: { rows, selected, selectOnly, update, sizeText, items, setState, toggle, askDelete, submit, pick },
+    browser: { rows, selected, selectOnly, update, sizeText, items, setState, toggle, askDelete, submit, pick, share },
   });
 })();

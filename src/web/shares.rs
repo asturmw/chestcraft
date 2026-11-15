@@ -3,9 +3,17 @@
 //! (`/.cc/shares/<id>`) the details with the access log, edit (mode, expiry, note, size
 //! limit), a new password (shown once) and revoke. Only the creator and the admin manage a
 //! share; a new mode is checked against the creator's rights, whoever edits.
+//!
+//! Creating has a JSON side for the browser's share dialog (`assets/share.js`, review Q19):
+//! with `Accept: application/json`, `GET /.cc/shares/new?vol=…&path=…` answers
+//! `{name, location, dir, modes, passphrase}` (or `{error}`), and the POST answers
+//! `{link, password, expires, expires_at, lang, message: {de, en}, details_href, badge}`
+//! or `{errors: {field: message}}` (fields `own_password`, `max_mib`, `note`, else `form`).
+//! The page and its form stay as the way without script. Everything that carries a
+//! password is `no-store`.
 
 use super::auth::{audit, csrf_ok, forbidden, now};
-use super::files::enc;
+use super::files::{enc, wants_json};
 use super::share_views::{
     self, DetailView, ExpiryChoice, LogRow, Message, ModeChoice, NewShareView, SecretView,
     ShareRow, SharesView,
@@ -17,10 +25,12 @@ use crate::db::{Share, User};
 use crate::fs::path::RelPath;
 use crate::i18n::{DE, EN, Lang};
 use crate::shares::{self, Expiry, Mode, NewShare, Password, Pause, ShareError, Status};
+use axum::Json;
 use axum::extract::{Extension, Form, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
+use serde_json::json;
 
 const SIGN_IN: &str = "/.cc/login?next=%2F.cc%2Fshares";
 
@@ -103,6 +113,18 @@ fn link_of(st: &AppState, s: &Share) -> String {
 
 fn may_manage(cu: &CurrentUser, principal: &Principal, s: &Share) -> bool {
     principal.is_admin() || s.owner == cu.key
+}
+
+/// Pages and answers that carry a password stay out of every cache.
+fn no_store(mut res: Response) -> Response {
+    res.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
+}
+
+/// The share dialog's error answer: messages per form field (`form` for the rest).
+fn json_errors(status: StatusCode, field: &str, msg: &str) -> Response {
+    no_store((status, Json(json!({ "errors": { field: msg } }))).into_response())
 }
 
 fn problem(ctx: &Ctx, status: StatusCode, msg: &str, back: &str) -> Response {
@@ -301,6 +323,25 @@ async fn target(st: &Shared, vol: &str, path: &str) -> Result<Target, ShareError
     })
 }
 
+/// The target's name, the folder it is in ("Volume/a/b") and that folder's listing URL.
+fn target_names(t: &Target) -> (String, String, String) {
+    let parent = t.path.parent().unwrap_or_default();
+    let (location, href) = if parent.is_root() {
+        (t.vol.clone(), format!("/{}/", enc(&t.vol)))
+    } else {
+        (
+            format!("{}/{}", t.vol, parent.as_str()),
+            format!("/{}/{}/", enc(&t.vol), parent.to_url()),
+        )
+    };
+    (t.path.name().unwrap_or(&t.vol).to_string(), location, href)
+}
+
+/// An error answer for the dialog's `GET` (it then falls back to the page).
+fn json_problem(status: StatusCode, msg: &str) -> Response {
+    no_store((status, Json(json!({ "error": msg }))).into_response())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn new_view(
     ctx: &Ctx,
@@ -315,22 +356,13 @@ fn new_view(
     max_mib: String,
     error: Option<String>,
 ) -> NewShareView {
-    let parent = t.path.parent().unwrap_or_default();
-    let location = if parent.is_root() {
-        t.vol.clone()
-    } else {
-        format!("{}/{}", t.vol, parent.as_str())
-    };
+    let (name, location, location_href) = target_names(t);
     NewShareView {
         csrf: cu.csrf.clone(),
         vol: t.vol.clone(),
         path: t.path.as_str().to_string(),
-        name: t.path.name().unwrap_or(&t.vol).to_string(),
-        location_href: if parent.is_root() {
-            format!("/{}/", enc(&t.vol))
-        } else {
-            format!("/{}/{}/", enc(&t.vol), parent.to_url())
-        },
+        name,
+        location_href,
         location,
         modes: modes
             .iter()
@@ -356,19 +388,40 @@ pub async fn new_page(
     headers: HeaderMap,
     Query(q): Query<NewQuery>,
 ) -> Response {
+    let json = wants_json(&headers);
+    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     let Some(cu) = current.clone() else {
+        if json {
+            return json_problem(StatusCode::UNAUTHORIZED, ctx.t("error.forbidden_body"));
+        }
         return Redirect::to(SIGN_IN).into_response();
     };
-    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     let t = match target(&st, &q.vol, &q.path).await {
         Ok(t) => t,
+        Err(e) if json => return json_problem(StatusCode::NOT_FOUND, &share_error(&ctx, &e)),
         Err(e) => return problem(&ctx, StatusCode::NOT_FOUND, &share_error(&ctx, &e), "/"),
     };
     let modes = match allowed_modes(&st, &principal, &t.vol, &t.path, t.is_dir) {
         Ok(m) => m,
+        Err(e) if json => return json_problem(StatusCode::FORBIDDEN, &share_error(&ctx, &e)),
         Err(e) => return problem(&ctx, StatusCode::FORBIDDEN, &share_error(&ctx, &e), "/"),
     };
     let passphrase = st.words.passphrase(ctx.code());
+    if json {
+        // What the dialog needs beyond its own markup: the target, the modes allowed here
+        // (their labels are in the dialog) and a passphrase to show under "Change".
+        let (name, location, _) = target_names(&t);
+        return no_store(
+            Json(json!({
+                "name": name,
+                "location": location,
+                "dir": t.is_dir,
+                "modes": modes.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+                "passphrase": passphrase,
+            }))
+            .into_response(),
+        );
+    }
     let view = new_view(
         &ctx,
         &cu,
@@ -421,6 +474,37 @@ fn parse_mib(s: &str) -> Result<Option<u64>, ()> {
     }
 }
 
+/// The ready-to-send text for a share: link, password and until when, in `lang`.
+fn message_text(
+    st: &AppState,
+    lang: Lang,
+    link: &str,
+    password: &str,
+    until: Option<i64>,
+) -> String {
+    match until {
+        Some(t) => st.i18n.tf(
+            lang,
+            "share_created.message_text",
+            &[
+                ("link", link),
+                ("password", password),
+                ("date", &st.i18n.datetime(lang, t, &st.cfg.server.timezone)),
+            ],
+        ),
+        None => st.i18n.tf(
+            lang,
+            "share_created.message_text_never",
+            &[("link", link), ("password", password)],
+        ),
+    }
+}
+
+/// The message's language: the creator's when it is one of the two built-in ones.
+fn first_lang(ctx: &Ctx) -> Lang {
+    if ctx.lang == DE { DE } else { EN }
+}
+
 /// Link + password page, with a ready-to-send message in the creator's language and the
 /// other built-in one.
 fn secret_page(
@@ -432,33 +516,17 @@ fn secret_page(
     until: Option<i64>,
     back: (String, String),
 ) -> Response {
-    let first = if ctx.lang == DE { DE } else { EN };
-    let langs: [Lang; 2] = if first == DE { [DE, EN] } else { [EN, DE] };
-    let tz = &st.cfg.server.timezone;
+    let langs: [Lang; 2] = if first_lang(ctx) == DE {
+        [DE, EN]
+    } else {
+        [EN, DE]
+    };
     let messages = langs
         .iter()
-        .map(|&lang| {
-            let text = match until {
-                Some(t) => st.i18n.tf(
-                    lang,
-                    "share_created.message_text",
-                    &[
-                        ("link", &link),
-                        ("password", &password),
-                        ("date", &st.i18n.datetime(lang, t, tz)),
-                    ],
-                ),
-                None => st.i18n.tf(
-                    lang,
-                    "share_created.message_text_never",
-                    &[("link", &link), ("password", &password)],
-                ),
-            };
-            Message {
-                lang_name: st.i18n.t(lang, "meta.name").to_string(),
-                code: st.i18n.code(lang).to_string(),
-                text,
-            }
+        .map(|&lang| Message {
+            lang_name: st.i18n.t(lang, "meta.name").to_string(),
+            code: st.i18n.code(lang).to_string(),
+            text: message_text(st, lang, &link, &password, until),
         })
         .collect();
     let mut ctx2 = ctx.clone();
@@ -475,7 +543,34 @@ fn secret_page(
         back_href: back.0,
         back_label: back.1,
     };
-    share_views::secret(&ctx2, &view).into_response()
+    no_store(share_views::secret(&ctx2, &view).into_response())
+}
+
+/// Why a share wasn't created: the form field it is about (`form` for the rest), the
+/// message and the status.
+struct CreateError {
+    field: &'static str,
+    msg: String,
+    status: StatusCode,
+}
+
+impl CreateError {
+    fn new(field: &'static str, msg: String) -> Self {
+        CreateError {
+            field,
+            msg,
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+        }
+    }
+}
+
+fn create_error(ctx: &Ctx, e: &ShareError) -> CreateError {
+    let field = match e {
+        ShareError::PasswordTooShort => "own_password",
+        ShareError::NoteTooLong => "note",
+        _ => "form",
+    };
+    CreateError::new(field, share_error(ctx, e))
 }
 
 pub async fn new_submit(
@@ -486,19 +581,36 @@ pub async fn new_submit(
     headers: HeaderMap,
     Form(form): Form<NewForm>,
 ) -> Response {
+    let json = wants_json(&headers);
+    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     let Some(cu) = current.clone() else {
+        if json {
+            return json_errors(
+                StatusCode::UNAUTHORIZED,
+                "form",
+                ctx.t("error.forbidden_body"),
+            );
+        }
         return Redirect::to(SIGN_IN).into_response();
     };
-    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     if !csrf_ok(&headers, &st, &cu, &form.csrf) {
+        if json {
+            return json_errors(StatusCode::FORBIDDEN, "form", ctx.t("error.forbidden_body"));
+        }
         return forbidden(&ctx);
     }
     let t = match target(&st, &form.vol, &form.path).await {
         Ok(t) => t,
+        Err(e) if json => {
+            return json_errors(StatusCode::NOT_FOUND, "form", &share_error(&ctx, &e));
+        }
         Err(e) => return problem(&ctx, StatusCode::NOT_FOUND, &share_error(&ctx, &e), "/"),
     };
     let modes = match allowed_modes(&st, &principal, &t.vol, &t.path, t.is_dir) {
         Ok(m) => m,
+        Err(e) if json => {
+            return json_errors(StatusCode::FORBIDDEN, "form", &share_error(&ctx, &e));
+        }
         Err(e) => return problem(&ctx, StatusCode::FORBIDDEN, &share_error(&ctx, &e), "/"),
     };
     let mode = Mode::parse(&form.mode)
@@ -528,66 +640,64 @@ pub async fn new_submit(
         form.passphrase.trim().to_string()
     };
     if form.op == "regenerate" {
+        if json {
+            return no_store(Json(json!({ "passphrase": passphrase })).into_response());
+        }
         return rerender(passphrase, None, StatusCode::OK);
     }
-    let Ok(max_file) = parse_mib(&form.max_mib) else {
-        return rerender(
-            passphrase,
-            Some(ctx.t("share_create.bad_size").to_string()),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        );
-    };
     let password = if own {
         Password::Own(form.own_password.clone())
     } else {
         Password::Passphrase(passphrase.clone())
     };
-    let created = {
-        let (st, key, t_vol, t_path, note, pw) = (
-            st.clone(),
-            cu.key.clone(),
-            t.vol.clone(),
-            t.path.clone(),
-            form.note.clone(),
-            password.clone(),
-        );
-        blocking(move || -> Result<Share, ShareError> {
-            let owner = st.db.user(&key)?.ok_or(ShareError::NoRights)?;
-            shares::create(
-                &st.cfg,
-                &st.volumes,
-                &st.db,
-                &NewShare {
-                    owner: &owner,
-                    volume: &t_vol,
-                    path: &t_path,
-                    mode,
-                    expiry,
-                    password: &pw,
-                    note: &note,
-                    max_file,
-                },
-                now(),
-            )
-        })
-        .await
+    let created = match parse_mib(&form.max_mib) {
+        Err(()) => Err(CreateError::new(
+            "max_mib",
+            ctx.t("share_create.bad_size").to_string(),
+        )),
+        Ok(max_file) => {
+            let (st, key, t_vol, t_path, note, pw) = (
+                st.clone(),
+                cu.key.clone(),
+                t.vol.clone(),
+                t.path.clone(),
+                form.note.clone(),
+                password.clone(),
+            );
+            match blocking(move || -> Result<Share, ShareError> {
+                let owner = st.db.user(&key)?.ok_or(ShareError::NoRights)?;
+                shares::create(
+                    &st.cfg,
+                    &st.volumes,
+                    &st.db,
+                    &NewShare {
+                        owner: &owner,
+                        volume: &t_vol,
+                        path: &t_path,
+                        mode,
+                        expiry,
+                        password: &pw,
+                        note: &note,
+                        max_file,
+                    },
+                    now(),
+                )
+            })
+            .await
+            {
+                Some(Ok(s)) => Ok(s),
+                Some(Err(e)) => Err(create_error(&ctx, &e)),
+                None => Err(CreateError {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    ..CreateError::new("form", ctx.t("ops.failed").to_string())
+                }),
+            }
+        }
     };
     let share = match created {
-        Some(Ok(s)) => s,
-        Some(Err(e)) => {
-            return rerender(
-                passphrase,
-                Some(share_error(&ctx, &e)),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            );
-        }
-        None => {
-            return rerender(
-                passphrase,
-                Some(ctx.t("ops.failed").into()),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            );
-        }
+        Ok(s) => s,
+        Err(e) if json => return json_errors(e.status, e.field, &e.msg),
+        Err(e) => return rerender(passphrase, Some(e.msg), e.status),
     };
     audit(
         &st,
@@ -597,17 +707,39 @@ pub async fn new_submit(
         &format!("{}/{}", share.volume, share.path),
         &format!("{} {}", share.id, share.mode),
     );
+    let link = link_of(&st, &share);
+    let details_href = format!("/.cc/shares/{}", share.id);
+    if json {
+        let message = |lang| message_text(&st, lang, &link, password.text(), share.expires);
+        return no_store(
+            Json(json!({
+                "link": link,
+                "password": password.text(),
+                "expires": share
+                    .expires
+                    .map(|t| ctx.datetime(t))
+                    .unwrap_or_else(|| ctx.t("share_expiry.never").to_string()),
+                "expires_at": share.expires,
+                "lang": st.i18n.code(first_lang(&ctx)),
+                "message": { "de": message(DE), "en": message(EN) },
+                "details_href": details_href,
+                // The listing's badge for the item, as the listing would render it.
+                "badge": match share.expires {
+                    Some(t) => ctx.tf("browser.shared_until", &[("date", &ctx.date(t))]),
+                    None => ctx.t("browser.shared_forever").to_string(),
+                },
+            }))
+            .into_response(),
+        );
+    }
     secret_page(
         &st,
         &ctx,
         ctx.t("share_created.title").to_string(),
-        link_of(&st, &share),
+        link,
         password.text().to_string(),
         share.expires,
-        (
-            format!("/.cc/shares/{}", share.id),
-            ctx.t("share_created.to_details").to_string(),
-        ),
+        (details_href, ctx.t("share_created.to_details").to_string()),
     )
 }
 

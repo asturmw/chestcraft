@@ -397,3 +397,55 @@ a.menu__item { text-decoration: none; }
   .results .files__meta .files__where { display: block; }
   .results__head .browser__title { font-size: var(--fs-lg); }
 }
+
+/* Share dialog (review Q19) until the design delivers it: step 1 = target, summary of the
+   defaults, "Create link", the options behind "Change"; step 2 = "Copy as message" with its
+   language, link and password, the warning. The dialog's data-state picks the step. */
+.share-dialog { width: min(480px, calc(100vw - 32px)); scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
+.share-dialog:not([data-state="created"]) .share-dialog__step[data-step="created"],
+.share-dialog[data-state="created"] .share-dialog__step[data-step="create"] { display: none; }
+.share-dialog__target { margin-top: -8px; font-weight: 600; overflow-wrap: anywhere; }
+.share-dialog__summary { margin-top: -10px; color: var(--text-muted); font-size: var(--fs-sm); }
+.share-dialog .banner { margin: 0; font-size: var(--fs-sm); }
+.share-dialog .banner[data-state="error"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface-2)); }
+.share-dialog .banner[data-state="warning"] { background: color-mix(in srgb, var(--warn) 16%, var(--surface-2)); }
+.share-dialog__options { display: grid; gap: 14px; padding-top: 12px; border-top: 1px solid var(--bar-line); }
+.share-dialog__group { display: grid; gap: 2px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.share-dialog__group legend { margin-bottom: 4px; padding: 0; font-weight: 600; font-size: var(--fs-sm); }
+.share-dialog .choice { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
+.share-dialog .choice input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-ink); }
+.share-dialog .choice[hidden] { display: none; }
+.share-dialog__passphrase { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; padding-left: 26px; }
+.share-dialog__phrase { font-family: var(--font-num), monospace; overflow-wrap: anywhere; }
+.share-dialog__regenerate { min-height: 32px; --btn-px: 8px; color: var(--accent-ink); }
+.share-dialog__group .field { margin-top: 6px; }
+.share-dialog textarea.field__input { min-height: 64px; padding: 10px 12px; resize: vertical; letter-spacing: normal; font: inherit; }
+.share-dialog .field__control .btn--icon { flex: none; margin-right: 4px; }
+.share-dialog__change { margin-right: auto; }
+/* Phones: "Create link" on a row of its own, first. */
+@media (max-width: 519px) {
+  .share-dialog .dialog__actions > .btn--primary { order: -1; flex: 1 1 100%; min-height: var(--tap); }
+}
+.share-dialog__send { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.share-dialog__copy-message { flex: 1 1 auto; min-height: var(--tap); }
+.share-dialog__lang { align-self: center; }
+.share-dialog__lang .share-dialog__lang-opt { width: auto; min-height: 34px; --btn-px: 10px; font-size: var(--fs-xs); }
+.share-dialog__message {
+  width: 100%; min-height: 0; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-m);
+  background: var(--field-bg); font: inherit; font-size: var(--fs-sm); letter-spacing: normal; resize: vertical;
+}
+.share-dialog__until { color: var(--text-muted); font-size: var(--fs-sm); }
+.share-dialog__status { min-height: 1.4em; margin-top: -8px; font-size: var(--fs-sm); color: var(--text-muted); }
+.share-dialog__details { margin-right: auto; align-self: center; color: var(--accent-ink); font-size: var(--fs-sm); }
+
+/* Share with several items selected (review Q39): the button stays, dimmed, and a tap shows
+   why over the status bar. */
+.status__actions .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.status__actions .btn[aria-disabled="true"]:hover { background: none; }
+.status__hint {
+  position: absolute; z-index: 1; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%);
+  width: max-content; max-width: calc(100vw - 4 * var(--float)); padding: 8px 12px;
+  border-radius: var(--radius-m); background: var(--menu-bg); border: 1px solid var(--bar-line);
+  box-shadow: var(--pop-shadow); color: var(--text); font-size: var(--fs-sm); text-align: center;
+}
+.status__hint[hidden] { display: none; }
