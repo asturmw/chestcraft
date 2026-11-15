@@ -166,14 +166,14 @@ async fn share_download_button_needs_something_to_download() {
     let (id, cookie) = e.shared(&tom, "Leer", &[("mode", "view_upload")]).await;
     let t = e.page(&format!("/s/{id}/"), &cookie).await;
     assert!(
-        t.contains(r#"<button class="btn btn--primary actionbar__upload""#)
+        t.contains(r#"<button class="btn btn--primary actionbar__upload upsplit__main""#)
             && !t.contains("share-dl"),
         "{t}"
     );
     e.put("medien/Leer/eins.txt", b"1");
     let t = e.page(&format!("/s/{id}/"), &cookie).await;
     assert!(
-        t.contains(r#"<button class="btn actionbar__upload""#)
+        t.contains(r#"<button class="btn actionbar__upload upsplit__main""#)
             && t.contains("share-dl__all")
             && !t.contains("actionbar__download"),
         "{t}"

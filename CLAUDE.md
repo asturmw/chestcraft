@@ -446,15 +446,23 @@ public write, shares from the UI), and the next UI slices as the design delivers
   dialog with JS, inline without), "Fine-tune" (veil, blur, opacity), rotation select in
   the editor (shown from 2 ticked sets). An unset glass stays unset on save (`glass_auto`).
   `/.cc/backdrop.css` takes `&for=<scope>` (scoped colors for preview and tiles).
+  Step 10 done (upload entry, keep-both; Q28/Q40): Upload is a split button
+  (`views::upload_button`, `.upsplit`): the main part picks files, the arrow's menu has
+  Files / Folder (staged batch, like a drop) and a drop hint; the arrow is rendered hidden
+  and shown by `upload.js` (no-JS unchanged), hidden below 720 px. Same split on view +
+  upload shares, unlocked public volumes and the upload-only page. `app.js`: a button in
+  `data-js="menu-anchor"` aligns its menu with the group. Save to folder names clashes like
+  the server (`cc.numberedName`, mirrors `fs/names.rs`): `x (1).ext` first.
+  All ten backend steps of the review are done; the design requests (section 4 of the
+  review file) are open.
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
-  drawer, provisional now), the account menu, a
-  folder-upload entry (only drag and drop now), an `i-arrow-down` icon for descending sort,
+  drawer, provisional now), the account menu, the upload split button (provisional), an
+  `i-arrow-down` icon for descending sort,
   `a.menu__item` (links in menus), dialogs, upload tray, banners, pager, grid view (provisional now),
   the share dialog and the disabled Share's hint (provisional), the rename/picker/clash/shortcut
   dialogs; at 1280 px the selection bar wraps to two rows while Rename shows (one item
-  selected); "keep both" on the server names `x (1).ext`, save-to-folder (design)
-  `x (2).ext`. The dashboard/alerts, volumes/API-token, accounts/agents, audit and
+  selected). The dashboard/alerts, volumes/API-token, accounts/agents, audit and
   account-access markup is provisional until the design session delivers those screens; the
   agents part (Addendum 2 "UI") needs a note in its handoff.
 

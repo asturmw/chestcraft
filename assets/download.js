@@ -1,7 +1,8 @@
 // chestcraft download menu, the two ways that need a script (design NOTES, round 3):
 // - "Save to folder": the File System Access API (Chrome/Edge desktop), files fetched one
 //   by one into a folder the visitor picks, subfolders kept. Never overwrites: a file with
-//   the same name and size counts as already there, another size gets "name (2).ext".
+//   the same name and size counts as already there, another size gets the first free
+//   "name (1).ext", "name (2).ext", … like the server's "keep both" (fs/names.rs).
 // - "Separately": every file as its own download (?dl), every folder as its own zip; more
 //   than 20 ask first.
 // Both run at most 4 downloads at a time, for everyone. Browser-managed downloads can't be
@@ -14,6 +15,46 @@
   const ds = browser.dataset;
   const MAX = 4;
   const MANY = 20;
+
+  // "Keep both" names, the same as the server's (fs/names.rs, Variant::Numbered): " (n)"
+  // before the extension (folders: at the end); dotfiles like ".bashrc" have none,
+  // "backup.tar.gz" keeps ".tar.gz" together; shortened at a character boundary so the
+  // name stays within 255 bytes of UTF-8. Check in a browser console:
+  // cc.numberedName('Angebot.pdf', false, 1) === 'Angebot (1).pdf'.
+  const MAX_NAME_BYTES = 255;
+  const DOUBLE_EXTENSIONS = ['.tar.gz', '.tar.bz2', '.tar.xz', '.tar.zst', '.tar.lz4'];
+  const utf8 = new TextEncoder();
+  const bytes = (s) => utf8.encode(s).length;
+  const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  function splitExt(name) {
+    for (const ext of DOUBLE_EXTENSIONS) {
+      if (name.length > ext.length && asciiLower(name.slice(-ext.length)) === ext) {
+        return [name.slice(0, -ext.length), name.slice(-ext.length)];
+      }
+    }
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+  }
+  function truncate(s, max) {
+    let out = '';
+    let n = 0;
+    for (const ch of s) {
+      const b = bytes(ch);
+      if (n + b > max) break;
+      out += ch;
+      n += b;
+    }
+    return out;
+  }
+  function numberedName(name, isDir, n) {
+    const suffix = ` (${n})`;
+    let [stem, ext] = isDir ? [name, ''] : splitExt(name);
+    const budget = MAX_NAME_BYTES - bytes(suffix) - bytes(ext);
+    if (budget > 0) stem = truncate(stem, budget);
+    else [stem, ext] = [truncate(name, MAX_NAME_BYTES - bytes(suffix)), ''];
+    return `${stem}${suffix}${ext}`;
+  }
+  window.cc = Object.assign(window.cc || {}, { numberedName });
   const queue = document.querySelector('[data-js="queue"]');
   const qText = queue && queue.querySelector('[data-js="queue-text"]');
   const qFill = queue && queue.querySelector('[data-js="queue-fill"]');
@@ -232,10 +273,8 @@
       reserved.get(dir).add(name);
     }
     async function freeName(dir, name) {
-      const dot = name.lastIndexOf('.');
-      const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
-      for (let n = 2; ; n += 1) {
-        const candidate = `${stem} (${n})${ext}`;
+      for (let n = 1; ; n += 1) {
+        const candidate = numberedName(name, false, n);
         if (!(await exists(dir, candidate))) return candidate;
       }
     }

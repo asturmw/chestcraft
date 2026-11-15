@@ -999,13 +999,13 @@ pub struct UploadUi {
 }
 
 /// The upload tray and the name-clash dialog. `upload.js` fills them in; the strings it
-/// shows come from `data-t-*` attributes, so all copy stays in the catalogs. `bar`: the
-/// action bar's Upload button picks the files, so the pickers stay hidden.
-pub fn upload_ui(ctx: &Ctx, u: &UploadUi, bar: bool) -> Markup {
+/// shows come from `data-t-*` attributes, so all copy stays in the catalogs. The two file
+/// inputs stay hidden: `upload_button` picks through them.
+pub fn upload_ui(ctx: &Ctx, u: &UploadUi) -> Markup {
     html! {
         div class="upload" data-js="upload" hidden
             data-vol=(u.volume) data-dir=(u.dir) data-csrf=(u.csrf) data-parallel=(u.parallel)
-            data-api=(u.api) data-pick=[bar.then_some("bar")]
+            data-api=(u.api)
             data-t-queued=(ctx.t("upload.state_queued"))
             data-t-uploading=(ctx.t("upload.state_uploading"))
             data-t-done=(ctx.t("upload.state_done"))
@@ -1020,18 +1020,8 @@ pub fn upload_ui(ctx: &Ctx, u: &UploadUi, bar: bool) -> Markup {
             data-t-uploaded-other=(ctx.t("upload.uploaded_other"))
             data-t-unfinished=(ctx.t("upload.unfinished")) data-t-discard=(ctx.t("upload.discard"))
             data-decimal=(ctx.t("format.decimal")) {
-            label class="upload__pick" {
-                span class="upload__pick-label" { (ctx.t("browser.upload_files")) }
-                input class="upload__input" type="file" multiple data-js="upload-files";
-            }
-            label class="upload__pick" {
-                span class="upload__pick-label" { (ctx.t("browser.upload_folder")) }
-                input class="upload__input" type="file" webkitdirectory multiple data-js="upload-folder";
-            }
-            p class="upload__hint" { (ctx.t("browser.drop_hint")) }
-            @if let Some(limit) = &u.limit {
-                p class="upload__limit" { (limit) }
-            }
+            input type="file" multiple data-js="upload-files";
+            input type="file" webkitdirectory multiple data-js="upload-folder";
         }
         section class="upload-tray" data-js="upload-tray" data-state="idle" hidden
             aria-labelledby="upload-tray-title" {
@@ -1053,6 +1043,55 @@ pub fn upload_ui(ctx: &Ctx, u: &UploadUi, bar: bool) -> Markup {
                     input type="checkbox" data-js="clash-all";
                     " " span data-js="clash-all-text" data-t=(ctx.t("upload.apply_all")) {}
                 }
+            }
+        }
+    }
+}
+
+/// "Upload ▾" (review Q28): a split button. The main part picks files (also the `u` key),
+/// the arrow opens a menu with Files and Folder (the size limit, if any, under Files) and a
+/// reminder that dropping onto the page works as well.
+/// Phones (< 720 px) get the main part only: their browsers pick folders poorly. Uploads
+/// need the script; it unhides the arrow, so a page without script never opens a menu
+/// whose items do nothing (the main part shows as it always did).
+/// `class`: the main part's classes (with or without `btn--primary`).
+pub fn upload_button(ctx: &Ctx, u: &UploadUi, class: &str) -> Markup {
+    let primary = class.split(' ').any(|c| c == "btn--primary");
+    let toggle = if primary {
+        "btn btn--primary dl__toggle upsplit__toggle"
+    } else {
+        "btn dl__toggle upsplit__toggle"
+    };
+    let label = ctx.t("browser.upload_choose");
+    html! {
+        div class="dl upsplit" data-js="menu-anchor" {
+            button class={ (class) " upsplit__main" } type="button" data-js="upload-pick" {
+                (icon("upload"))
+                span class="btn__label" { (ctx.t("browser.upload")) }
+            }
+            button class=(toggle) type="button" aria-haspopup="menu" popovertarget="upload-menu"
+                aria-label=(label) title=(label) data-js="upload-toggle" hidden {
+                (icon_c("chevron-down", "dl__caret"))
+            }
+            div class="menu upsplit__menu" id="upload-menu" role="menu" aria-label=(label) popover {
+                button class="menu__item" type="button" role="menuitem" data-js="upload-pick-files" {
+                    (icon("file"))
+                    span class="menu__text" {
+                        span class="menu__label" { (ctx.t("browser.upload_files")) }
+                        span class="menu__hint" {
+                            (u.limit.as_deref().unwrap_or(ctx.t("browser.upload_files_hint")))
+                        }
+                    }
+                }
+                button class="menu__item" type="button" role="menuitem" data-js="upload-pick-folder" {
+                    (icon("folder"))
+                    span class="menu__text" {
+                        span class="menu__label" { (ctx.t("browser.upload_folder")) }
+                        span class="menu__hint" { (ctx.t("browser.upload_folder_hint")) }
+                    }
+                }
+                // Pointer users only: the menu's items are what assistive technology needs.
+                p class="upsplit__note" aria-hidden="true" { (ctx.t("browser.drop_hint")) }
             }
         }
     }
@@ -1363,11 +1402,8 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                 @if !share || folder_actions {
                 div class="actionbar" role="toolbar" aria-label=(ctx.t("browser.folder_actions"))
                     data-state=[(!folder_actions).then_some("download-only")] {
-                    @if v.upload.is_some() {
-                        button class=(upload_class) type="button" data-js="upload-pick" {
-                            (icon("upload"))
-                            span class="btn__label" { (ctx.t("browser.upload")) }
-                        }
+                    @if let Some(u) = &v.upload {
+                        (upload_button(ctx, u, upload_class))
                     } @else if let Some(href) = &v.public_upload_href {
                         a class="btn btn--primary actionbar__upload" href=(href) {
                             (icon("upload"))
@@ -1402,7 +1438,7 @@ pub fn listing(ctx: &Ctx, v: &ListingView) -> Markup {
                     p class="banner" data-state="share-unavailable" { (reason) }
                 }
                 @if let Some(u) = &v.upload {
-                    (upload_ui(ctx, u, true))
+                    (upload_ui(ctx, u))
                 }
                 @if v.rows.is_empty() {
                     p class="browser__empty" { (ctx.t("browser.empty")) }

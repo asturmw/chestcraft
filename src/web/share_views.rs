@@ -5,7 +5,7 @@
 use super::views::{
     Adder, Ctx, GateField, SecretField, ShareHead, UploadUi, ViewerBody, adder, confirm_dialog,
     form_field, gate, gate_field, icon, layout, row_action, secret_box, secret_result, share_head,
-    tag, upload_ui, viewer_stage,
+    tag, upload_button, upload_ui, viewer_stage,
 };
 use maud::{Markup, html};
 
@@ -93,7 +93,13 @@ pub fn share_dropbox(ctx: &Ctx, head: &ShareHead, upload: &UploadUi, uploads: &[
         html! {
             (share_head(ctx, head))
             p class="dropbox__intro" { (ctx.t("share.dropbox_intro")) }
-            (upload_ui(ctx, upload, false))
+            div class="dropbox__pick" {
+                (upload_button(ctx, upload, "btn btn--primary"))
+                @if let Some(limit) = &upload.limit {
+                    p class="dropbox__limit" { (limit) }
+                }
+            }
+            (upload_ui(ctx, upload))
             noscript { p class="banner" data-state="warning" { (ctx.t("share.needs_js")) } }
             section class="dropbox__mine" aria-labelledby="dropbox-mine" {
                 h2 id="dropbox-mine" { (ctx.t("share.your_uploads")) }

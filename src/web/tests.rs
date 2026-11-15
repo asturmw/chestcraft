@@ -2948,6 +2948,132 @@ async fn a_new_share_password_ends_visitor_sessions() {
     assert!(e.share(&id).revoked.is_none());
 }
 
+/// "Upload ▾" (review Q28): the main part picks files, the arrow (rendered hidden, the
+/// script shows it; the stylesheet keeps it off phones) opens Files and Folder. Phones get
+/// the same markup and see the main part only. Wherever uploads are allowed: accounts,
+/// shares that take uploads (the dropbox page too) and open public uploads after the
+/// password.
+#[tokio::test]
+async fn upload_entry_offers_files_and_folder_wherever_uploads_go() {
+    let e = env();
+    // (main part, arrow rendered hidden, Files item, Folder item, both inputs)
+    let entry = |t: &str| {
+        (
+            t.matches(r#"data-js="upload-pick">"#).count(),
+            t.matches(r#"popovertarget="upload-menu" aria-label="Upload files or a folder" title="Upload files or a folder" data-js="upload-toggle" hidden>"#).count(),
+            t.matches(r#"data-js="upload-pick-files">"#).count(),
+            t.matches(r#"data-js="upload-pick-folder">"#).count(),
+            t.contains(r#"<input type="file" multiple data-js="upload-files">"#)
+                && t.contains(
+                    r#"<input type="file" webkitdirectory multiple data-js="upload-folder">"#,
+                ),
+        )
+    };
+    let full = (1, 1, 1, 1, true);
+    let none = (0, 0, 0, 0, false);
+
+    let fam = e.session("jana", "familie").await;
+    let t = e.get_h("/Medien/", &[("cookie", &fam.cookie)]).await.text();
+    assert_eq!(entry(&t), full, "{t}");
+    assert!(
+        t.contains(r#"<button class="btn btn--primary actionbar__upload upsplit__main" type="button" data-js="upload-pick">"#)
+            && t.contains(r#"<button class="btn btn--primary dl__toggle upsplit__toggle""#)
+            && t.contains(r#"<span class="menu__label">Files …</span><span class="menu__hint">One or several</span>"#)
+            && t.contains(r#"<span class="menu__label">Folder …</span>"#)
+            && t.contains("Or drop them anywhere on this page."),
+        "{t}"
+    );
+    // The inputs are never shown: the button and the menu pick through them.
+    assert!(
+        t.contains(r#"<div class="upload" data-js="upload" hidden"#),
+        "{t}"
+    );
+
+    let leser = e.session("lena", "leser").await;
+    let t = e
+        .get_h("/Medien/", &[("cookie", &leser.cookie)])
+        .await
+        .text();
+    assert_eq!(entry(&t), none, "{t}");
+
+    // Shares: view and upload (next to "Download all" the upload steps back from primary),
+    // and upload only.
+    let tom = e.session("tom", "teiler").await;
+    let (id, pw) = e
+        .create_share(
+            &tom,
+            "Medien",
+            "Urlaub Gardasee",
+            &[("mode", "view_upload")],
+        )
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let t = e
+        .get_h(&format!("/s/{id}/"), &[("cookie", &cookie)])
+        .await
+        .text();
+    assert_eq!(entry(&t), full, "{t}");
+    assert!(
+        t.contains(r#"<button class="btn dl__toggle upsplit__toggle""#),
+        "{t}"
+    );
+    let (id, pw) = e
+        .create_share(
+            &tom,
+            "Medien",
+            "Urlaub Gardasee",
+            &[("mode", "upload"), ("max_mib", "1")],
+        )
+        .await;
+    let cookie = e.visit(&id, &pw).await;
+    let t = e
+        .get_h(&format!("/s/{id}"), &[("cookie", &cookie)])
+        .await
+        .text();
+    assert_eq!(entry(&t), full, "{t}");
+    assert!(
+        t.contains(r#"<div class="dropbox__pick"><div class="dl upsplit" data-js="menu-anchor"><button class="btn btn--primary upsplit__main""#)
+            && t.contains(r#"<p class="dropbox__limit">Files up to"#)
+            && t.contains(r#"<span class="menu__hint">Files up to"#),
+        "{t}"
+    );
+
+    // Public uploads: the link to the password first, the entry after it.
+    let admin = e.session("Admin", "admin").await;
+    let r = e
+        .form_post(
+            &admin,
+            "/.cc/admin/volumes",
+            &[
+                ("op", "open"),
+                ("vol", "Share"),
+                ("expiry", "1d"),
+                ("own_password", "Briefkasten 7"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let t = e.get("/Share/").await.text();
+    assert_eq!(entry(&t), none, "{t}");
+    assert!(t.contains("/.cc/public-write?vol=Share"), "{t}");
+    let r = e
+        .send_body(
+            "POST",
+            "/.cc/public-write",
+            "127.0.0.1",
+            &[FORM],
+            form(&[
+                ("vol", "Share"),
+                ("password", "Briefkasten 7"),
+                ("next", "/Share/"),
+            ]),
+        )
+        .await;
+    let cookie = cookie_of(&r);
+    let t = e.get_h("/Share/", &[("cookie", &cookie)]).await.text();
+    assert_eq!(entry(&t), full, "{t}");
+}
+
 #[tokio::test]
 async fn public_uploads_open_with_a_password_and_never_overwrite() {
     let e = env();
@@ -3281,7 +3407,7 @@ async fn action_bar_without_folder_actions_is_marked_download_only() {
     let fam = e.session("jana", "familie").await;
     let t = e.get_h("/Medien/", &[("cookie", &fam.cookie)]).await.text();
     assert!(
-        t.contains(r#"<div class="actionbar" role="toolbar" aria-label="Folder actions"><button class="btn btn--primary actionbar__upload""#)
+        t.contains(r#"<div class="actionbar" role="toolbar" aria-label="Folder actions"><div class="dl upsplit" data-js="menu-anchor"><button class="btn btn--primary actionbar__upload upsplit__main""#)
             && t.contains("actionbar__newfolder")
             && !t.contains("download-only"),
         "{t}"

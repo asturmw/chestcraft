@@ -62,9 +62,6 @@
   let clashForAll = null;
   let dialogChain = Promise.resolve();
 
-  // On folder pages the action bar's Upload button opens the file picker.
-  if (ds.pick !== 'bar') root.hidden = false;
-
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const store = {
     get(k) { try { return localStorage.getItem(STORE + k); } catch (e) { return null; } },
@@ -515,8 +512,21 @@
 
   const files = root.querySelector('[data-js="upload-files"]');
   const folder = root.querySelector('[data-js="upload-folder"]');
-  const pick = document.querySelector('[data-js="upload-pick"]');
-  if (pick) pick.addEventListener('click', () => files.click());
+  // "Upload ▾" (views::upload_button): the main part and "Files …" pick files, "Folder …"
+  // a folder (sent as a staged batch, like a dropped one). The arrow is rendered hidden
+  // for pages without script; the stylesheet keeps it off phones.
+  const on = (js, fn) => {
+    const el = document.querySelector(`[data-js="${js}"]`);
+    if (el) el.addEventListener('click', fn);
+    return el;
+  };
+  on('upload-pick', () => files.click());
+  on('upload-pick-files', () => files.click());
+  const folderItem = on('upload-pick-folder', () => folder.click());
+  const toggle = document.querySelector('[data-js="upload-toggle"]');
+  if (toggle) toggle.hidden = false;
+  // A browser that can't pick folders keeps the drop and the file picker.
+  if (folderItem && !('webkitdirectory' in folder)) folderItem.hidden = true;
   files.addEventListener('change', () => {
     enqueue([...files.files].map((f) => ({ file: f, name: f.name })));
     files.value = '';

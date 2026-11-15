@@ -17,10 +17,12 @@
 
   // Menus open in the top layer (no panel clips them); put each below or above its
   // button, whichever half of the window the button is in, aligned to the nearer edge.
+  // A button inside `data-js="menu-anchor"` (the arrow of a split button) aligns the menu
+  // with the whole group.
   function place(menu) {
     const btn = anchorOf(menu);
     if (!btn) return;
-    const r = btn.getBoundingClientRect();
+    const r = (btn.closest('[data-js="menu-anchor"]') || btn).getBoundingClientRect();
     const s = menu.style;
     s.left = s.right = s.top = s.bottom = 'auto';
     s.maxHeight = '';

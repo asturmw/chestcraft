@@ -144,6 +144,36 @@ a.menu__item { text-decoration: none; }
   .shell:has(> .tabbar) .panel { margin-bottom: calc(var(--tabbar-h) + var(--float)); }
 }
 
+/* "Upload ▾" (review Q28): one control in two parts, the main part picks files, the arrow
+   opens Files / Folder. From 720 px the parts join (inner corners square, a thin line
+   between them); phones show the main part alone. */
+.upsplit { gap: 0; }
+.upsplit__toggle { padding: 0 10px; }
+.upsplit__toggle .dl__caret { margin: 0; }
+.upsplit__note { margin: 4px 10px 2px; color: var(--text-muted); font-size: var(--fs-xs); }
+.dropbox__pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0 16px; }
+.dropbox__limit { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
+@media (min-width: 720px) {
+  .upsplit:has(> .upsplit__toggle:not([hidden])) > .upsplit__main {
+    border-start-end-radius: 0; border-end-end-radius: 0;
+  }
+  .upsplit__toggle {
+    border-start-start-radius: 0; border-end-start-radius: 0;
+    border-inline-start-color: color-mix(in srgb, currentColor 30%, transparent);
+  }
+  [data-skin="gaming"] .upsplit:has(> .upsplit__toggle:not([hidden])) > .upsplit__main {
+    clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+  }
+  [data-skin="gaming"] .upsplit__toggle {
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  }
+}
+@media (max-width: 719px) {
+  .upsplit__toggle { display: none; }
+  .actionbar .upsplit { flex: 1 1 auto; min-width: 0; }
+  .dropbox__pick .upsplit, .dropbox__pick .upsplit__main { flex: 1 1 100%; }
+}
+
 /* Upload tray (inside the browser pane). */
 .upload-tray { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius-m); background: var(--bar-bg); border: 1px solid var(--bar-line); font-size: var(--fs-sm); }
 .upload-tray__title { font-size: var(--fs-sm); }
