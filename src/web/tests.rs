@@ -570,7 +570,7 @@ async fn language_follows_cookie_then_browser() {
         e.get_h("/", &[("accept-language", "de-DE,de;q=0.9")])
             .await
             .text()
-            .contains("Öffentliche Ordner")
+            .contains("Öffentliche Ablagen")
     );
     let t = e
         .get_h(
@@ -580,7 +580,7 @@ async fn language_follows_cookie_then_browser() {
         .await
         .text();
     assert!(
-        t.contains("Public folders") && t.contains("lang=\"en\""),
+        t.contains("Public libraries") && t.contains("lang=\"en\""),
         "{t}"
     );
     let t = e.get_h("/", &[("cookie", "cc_theme=dark")]).await.text();

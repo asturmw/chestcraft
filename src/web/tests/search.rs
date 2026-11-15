@@ -368,7 +368,7 @@ async fn the_search_tab_starts_in_the_current_library() {
         .skip(1)
         .map(|s| &s[..s.find('<').unwrap()])
         .collect();
-    assert_eq!(labels, ["Folders", "Search", "Shares", "Account"]);
+    assert_eq!(labels, ["Libraries", "Search", "Shares", "Account"]);
     assert!(
         bar.contains(r#"<a class="tabbar__item" href="/.cc/search?from=tab&amp;vol=Medien">"#),
         "{bar}"

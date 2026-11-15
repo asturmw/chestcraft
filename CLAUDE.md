@@ -430,6 +430,10 @@ public write, shares from the UI), and the next UI slices as the design delivers
   ("Machines": agents + tokens; `tokens_submit` now in `web/users.rs`, same route); the
   volumes page is one table (muted path, tags, public uploads). Admin tables become cards
   below 720 px. Dashboard with the sidebar: 4-column charts from 860 px container width.
+  Step 8 done (wording, Q25): a top-level volume is "Ablage(n)" / "library (libraries)" in
+  every UI string; "Bereich"/"area" only for read-only areas, mount points and selection
+  ranges; generic folder-view strings ("Ordner herunterladen", "Dieser Ordner ist leer")
+  stay at a library's top level too. MCP, CLI, config and API texts keep "volume".
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a

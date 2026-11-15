@@ -47,25 +47,25 @@ admin = "Verwaltung"
 open_admin_menu = "Verwaltung anzeigen"
 # Seitenleiste der Verwaltung: der Weg zurück zu den Dateien.
 admin_back = "Zurück zu den Ablagen"
-# Markierungen neben einer Ablage im Ordnerbaum.
+# Markierungen neben einer Ablage in der Seitenleiste.
 tag_public = "öffentlich"
 tag_home = "nur zu Hause"
 # {percent} ist eine ganze Zahl.
 space_used = "{percent} % belegt"
 
 [landing]
-title = "Deine Ordner"
-public_title = "Öffentliche Ordner"
+title = "Deine Ablagen"
+public_title = "Öffentliche Ablagen"
 free_of = "{free} frei von {total}"
-none = "Du hast noch keinen Zugriff auf Ordner. Bitte den Besitzer, dir Zugriff zu geben."
-none_public = "Hier ist nichts öffentlich. Melde dich an, um deine Ordner zu sehen."
+none = "Du hast noch keinen Zugriff auf eine Ablage. Bitte den Besitzer, dir Zugriff zu geben."
+none_public = "Hier ist nichts öffentlich. Melde dich an, um deine Ablagen zu sehen."
 
 [browser]
 share = "Teilen"
 share_item = "{name} teilen"
 share_folder = "Diesen Ordner teilen"
 shared = "Geteilt"
-share_local_only = "Dieser Bereich ist nur von zu Hause erreichbar, deshalb kann er nicht geteilt werden."
+share_local_only = "Diese Ablage ist nur von zu Hause erreichbar, deshalb lässt sich daraus nichts teilen."
 # Hinweis am deaktivierten „Teilen“, wenn mehrere Einträge ausgewählt sind.
 share_multi = "Leg sie in einen Ordner, um sie zusammen zu teilen."
 public_upload = "Dateien hochladen"
@@ -347,7 +347,7 @@ discard = "Verwerfen"
 [trash]
 title = "Papierkorb"
 intro_user = "Was du gelöscht hast. Stell es wieder her, bevor es endgültig weg ist."
-intro_admin = "Alles, was in den Bereichen gelöscht wurde, von allen."
+intro_admin = "Alles, was in den Ablagen gelöscht wurde, von allen."
 empty = "Der Papierkorb ist leer."
 summary_one = "{count} Eintrag, {size}"
 summary_other = "{count} Einträge, {size}"
@@ -369,7 +369,7 @@ reason_unfinished = "(aus einem unfertigen Ordner-Upload)"
 restore = "Wiederherstellen"
 restore_item = "{name} wiederherstellen"
 empty_now = "Papierkorb jetzt leeren"
-empty_confirm = "Alles im Papierkorb dieses Bereichs endgültig löschen"
+empty_confirm = "Alles im Papierkorb dieser Ablage endgültig löschen"
 confirm_missing = "Setz den Haken, um zu bestätigen, dass alles endgültig gelöscht wird."
 empty_failed_one = "{count} Eintrag konnte nicht gelöscht werden. Details stehen im Log."
 empty_failed_other = "{count} Einträge konnten nicht gelöscht werden. Details stehen im Log."
@@ -390,8 +390,8 @@ blocked = "„{name}“ ist eine Datei, da kann nichts hinein."
 no_space = "Es ist nicht genug Platz frei."
 read_only_inside = "„{name}“ enthält einen schreibgeschützten Bereich und kann deshalb nicht in den Papierkorb."
 mount_point = "„{name}“ ist oder enthält einen eigenen Speicherbereich und kann deshalb nicht in den Papierkorb."
-volume_inside = "„{name}“ ist oder enthält einen anderen Bereich und kann deshalb weder verschoben werden noch in den Papierkorb."
-work_dir = "chestcraft kann in diesem Bereich seinen Arbeitsordner nicht anlegen. Sag dem Besitzer Bescheid."
+volume_inside = "„{name}“ ist oder enthält eine andere Ablage und kann deshalb weder verschoben werden noch in den Papierkorb."
+work_dir = "chestcraft kann in dieser Ablage seinen Arbeitsordner nicht anlegen. Sag dem Besitzer Bescheid."
 busy = "Dieser Upload läuft noch. Versuch es gleich noch einmal."
 incomplete = "Noch sind nicht alle Teile dieses Uploads angekommen."
 gone = "Diesen Upload gibt es nicht mehr. Füg die Datei noch einmal hinzu."
@@ -464,7 +464,7 @@ expired = "Abgelaufen"
 revoked = "Beendet"
 paused_owner = "Pausiert: das Konto der Person, die sie erstellt hat, ist gesperrt"
 paused_rights = "Pausiert: die Person, die sie erstellt hat, darf das nicht mehr teilen"
-paused_volume = "Pausiert: den Bereich gibt es nicht mehr"
+paused_volume = "Pausiert: die Ablage gibt es nicht mehr"
 paused_trash = "Pausiert: liegt im Papierkorb"
 missing = "Fehlt: außerhalb von chestcraft verschoben oder gelöscht"
 
@@ -514,7 +514,7 @@ message_text_never = """Hallo! Hier sind die Dateien, die ich mit dir teile:
 Passwort: {password}"""
 to_details = "Zu den Details der Freigabe"
 
-# Der Teilen-Dialog über der Ablage und der Ansicht.
+# Der Teilen-Dialog über der Ordneransicht und der Vorschau.
 [share_dialog]
 # Teil der Zusammenfassung „Ansehen und herunterladen · 30 Tage · Passwort wird erzeugt“.
 summary_generated = "Passwort wird erzeugt"
@@ -565,12 +565,12 @@ other = "Sonstiges"
 [public_write]
 title = "Hochladen nach {volume}"
 intro = "Zum Hochladen braucht es hier ein Passwort. Gib das ein, das du vom Besitzer bekommen hast."
-closed = "Hochladen in diesen Ordner ist gerade nicht möglich."
+closed = "Hochladen in diese Ablage ist gerade nicht möglich."
 submit = "Weiter"
 
-# Admin: Bereiche und öffentliche Uploads.
+# Admin: Ablagen und öffentliche Uploads.
 [volumes]
-title = "Bereiche"
+title = "Ablagen"
 flag_public = "Öffentlich (alle können lesen)"
 flag_local = "Nur von zu Hause erreichbar"
 flag_read_only = "Schreibgeschützt"
@@ -595,10 +595,10 @@ reopen = "Neues Passwort und neue Zeit setzen"
 close = "Uploads schließen"
 close_confirm = "Uploads nach {volume} schließen? Besucher können dann nichts mehr hochladen."
 open_title = "Uploads nach {volume} öffnen"
-not_public = "Öffentliche Uploads gehen nur in öffentliche Bereiche."
+not_public = "Öffentliche Uploads gehen nur in öffentliche Ablagen."
 opened_title = "Uploads nach {volume} sind offen"
 once = "Kopier das Passwort jetzt: chestcraft kann es nicht noch einmal zeigen. Geht es verloren, öffne die Uploads neu (das setzt ein neues)."
-back = "Zurück zu den Bereichen"
+back = "Zurück zu den Ablagen"
 
 [api_tokens]
 title = "Tokens für die Status-API"
@@ -746,7 +746,7 @@ no_history = "Für eine Prognose fehlt noch Verlauf."
 not_filling = "Wird nicht voller."
 datasets = "Datasets"
 ds_name = "Dataset"
-ds_volumes = "Bereiche"
+ds_volumes = "Ablagen"
 ds_used = "Belegt"
 ds_avail = "Frei"
 ds_quota = "Quota"
