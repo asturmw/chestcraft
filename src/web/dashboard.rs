@@ -8,7 +8,7 @@ use super::activity::{self, Range};
 use super::auth::{audit, csrf_ok, forbidden, now};
 use super::charts::{self, FillChart};
 use super::files::{Fail, fail};
-use super::views::{Ctx, layout, verdict_key};
+use super::views::{AdminPage, Ctx, layout, verdict_key};
 use super::{ClientInfo, Current, Shared, page_ctx};
 use crate::auth::perm::Principal;
 use crate::health::alerts::{self, Active, LogEntry, Severity};
@@ -101,6 +101,7 @@ pub async fn page(
     if !principal.is_admin() || current.is_none() {
         return fail(&ctx, Fail::NotFound);
     }
+    ctx = ctx.admin_page(AdminPage::Dashboard);
     ctx.scripts.push("dashboard.js");
     ctx.styles.push(super::assets::url("dashboard.css"));
     let now = now();
@@ -869,6 +870,7 @@ pub async fn alerts_page(
     let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Alerts);
     alerts_view(&ctx, &alerts_data(&st, cu.csrf.clone(), None).await).into_response()
 }
 
@@ -894,6 +896,7 @@ pub async fn alerts_submit(
     let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Alerts);
     if !csrf_ok(&headers, &st, cu, &form.csrf) {
         return forbidden(&ctx);
     }

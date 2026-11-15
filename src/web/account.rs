@@ -13,7 +13,7 @@ use super::auth::{audit, csrf_ok, forbidden, same_origin};
 use super::files::{Fail, enc, fail};
 use super::layout::Layout;
 use super::query::Query;
-use super::views::{Backdrop, Ctx, Pictures};
+use super::views::{AdminPage, Backdrop, Ctx, Pictures};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, assets, page_ctx};
 use crate::appearance::{self as look, AddError, DEFAULT_ROTATION, MAX_STEP, Seed};
 use crate::auth::perm::{ADMIN_ROLE, Principal};
@@ -472,7 +472,9 @@ pub async fn page(
         None,
     )
     .await;
-    let ctx = ctx.with_nav(nav);
+    let mut ctx = ctx.with_nav(nav);
+    // App passwords: the create form in a dialog, revoking asks first, the copy button.
+    ctx.scripts.extend(["copy.js", "forms.js"]);
     let q = Query::parse(uri.query());
     let mut v = account_view(&st, &ctx, &cu, q.has("saved"));
     let access = super::users::access_view(&st, &cu).await;
@@ -1484,6 +1486,7 @@ pub async fn appearance_page(
     let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Appearance);
     let q = Query::parse(uri.query());
     if let Some(edit) = q.get("edit") {
         return match Target::parse(edit, &skin_names(&st)).filter(Target::admin_only) {
@@ -1508,6 +1511,7 @@ pub async fn appearance_submit(
     let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Appearance);
     let form = Query::parse(Some(&body));
     if !csrf_ok(&headers, &st, cu, form.get("csrf").unwrap_or("")) {
         return forbidden(&ctx);

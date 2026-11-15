@@ -212,13 +212,14 @@ async fn tab_bar_has_no_trash_and_the_account_page_links_to_it() {
             && !bar.contains("/.cc/trash"),
         "{bar}"
     );
-    // The sidebar keeps its trash link, and so does the account menu.
+    // The sidebar keeps its trash link; the account menu holds only the account, the
+    // admin's way in and signing out (review Q14).
     assert!(
         t.contains(r#"<a class="sidenav__link" href="/.cc/trash""#),
         "{t}"
     );
     assert!(
-        t.contains(r#"<a class="menu__item" role="menuitem" href="/.cc/trash">"#),
+        !t.contains(r#"<a class="menu__item" role="menuitem" href="/.cc/trash">"#),
         "{t}"
     );
 

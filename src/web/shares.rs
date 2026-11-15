@@ -175,18 +175,23 @@ pub async fn list(
         return Redirect::to(SIGN_IN).into_response();
     };
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let nav = super::nav::build(
-        &st,
-        ctx.lang,
-        &principal,
-        current.as_deref(),
-        client.origin,
-        super::views::Section::Shares,
-        None,
-    )
-    .await;
-    let ctx = ctx.with_nav(nav);
     let all = principal.is_admin() && q.all == "1";
+    // Everyone's shares are an admin page (review Q14): the admin navigation.
+    let nav = if all {
+        super::views::Nav::admin(super::views::AdminPage::Shares)
+    } else {
+        super::nav::build(
+            &st,
+            ctx.lang,
+            &principal,
+            current.as_deref(),
+            client.origin,
+            super::views::Section::Shares,
+            None,
+        )
+        .await
+    };
+    let ctx = ctx.with_nav(nav);
     let loaded = {
         let (st, key) = (st.clone(), cu.key.clone());
         blocking(
@@ -534,6 +539,7 @@ fn secret_page(
     ctx2.scripts.push("copy.js");
     let view = SecretView {
         title,
+        warning: ctx.t("share_created.once").to_string(),
         until: until
             .map(|t| ctx.datetime(t))
             .unwrap_or_else(|| ctx.t("share_expiry.never").to_string()),

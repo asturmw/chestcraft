@@ -327,7 +327,7 @@ pub fn router(state: Shared) -> Router {
         .route("/s/{id}", any(share::handle))
         .route("/s/{id}/", any(share::handle))
         .route("/s/{id}/{*rest}", any(share::handle))
-        .route("/.cc/admin/api-tokens", post(public::tokens_submit))
+        .route("/.cc/admin/api-tokens", post(users::tokens_submit))
         .fallback(dav_or_files)
         .layer(middleware::from_fn_with_state(
             state.clone(),

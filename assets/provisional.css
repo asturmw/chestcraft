@@ -243,6 +243,12 @@ a.menu__item { text-decoration: none; }
   }
 }
 
+/* Admin pages (review Q14): phones have no drawer button (the tab bar leads), but the
+   admin navigation lives only in the sidebar, so admin pages keep the button there too. */
+@media (max-width: 719px) {
+  .shell:has(> .layout > .sidenav[data-variant="admin"]) .appbar .appbar__menu { display: inline-flex; order: -1; }
+}
+
 /* Background editor: picture sets as rows of small previews, so the upload form below
    stays in reach. */
 .panel .bg-sets { list-style: none; padding: 0; display: grid; gap: 10px; }
@@ -449,3 +455,101 @@ a.menu__item { text-decoration: none; }
   box-shadow: var(--pop-shadow); color: var(--text); font-size: var(--fs-sm); text-align: center;
 }
 .status__hint[hidden] { display: none; }
+
+/* Admin pages (review Q14, Q26, Q27) until the design delivers the admin tables: each part
+   leads with its table, the create forms sit behind "+ …" buttons (a <details> without
+   script, a dialog with forms.js), row actions are compact buttons in the row. Below
+   720 px the tables become one card per row with the column names as labels. */
+.admin-section { margin-top: 28px; }
+.admin-section:first-of-type { margin-top: 8px; }
+.admin-subsection { margin-top: 20px; }
+.admin-section__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.panel .admin-section__head :is(h2, h3) { margin: 0; }
+.panel .admin-section__head + * { margin-top: 10px; }
+.panel .admin-section__intro { color: var(--text-muted); font-size: var(--fs-sm); max-width: 72ch; }
+.panel .admin-empty { color: var(--text-muted); }
+.panel .admin-table { font-size: var(--fs-sm); }
+.panel .admin-table :is(th, td) { vertical-align: middle; }
+.panel .admin-table tbody th { font-size: var(--fs-sm); color: var(--text); font-weight: 400; }
+.admin-table__name { font-weight: 600; margin-right: 4px; }
+.panel a.admin-table__name { color: var(--accent-ink); }
+.admin-path {
+  display: block; margin-top: 2px; color: var(--text-muted); font-family: var(--font-num), ui-monospace, monospace;
+  font-size: var(--fs-xs); overflow-wrap: anywhere;
+}
+.admin-none { color: var(--text-muted); }
+.tag {
+  display: inline-flex; align-items: center; padding: 1px 8px; margin: 1px 0; border-radius: var(--radius-pill);
+  background: var(--surface-3); color: var(--text-muted); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap;
+}
+.tag[data-state="warning"] { background: color-mix(in srgb, var(--warn) 20%, var(--surface-2)); color: var(--text); }
+.tag[data-state="off"] { background: color-mix(in srgb, var(--danger) 16%, var(--surface-2)); color: var(--text); }
+.tags-cell { line-height: 1.9; }
+.row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; }
+.panel :is(.row-action, .inline-form) { margin: 0; }
+.inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.panel .admin-table .inline-form > select.field__input { width: auto; min-width: 9rem; min-height: 32px; padding-block: 2px; }
+.panel .admin-table .btn, .panel .admin-section__head .btn { min-height: 32px; --btn-px: 10px; }
+.row-action__button.btn--danger { color: var(--danger); }
+.panel .token-list { list-style: none; padding: 0; margin: 0 0 6px; display: grid; gap: 4px; }
+.token-list__item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; }
+.token-list__item[data-state="expired"] .token-list__text { opacity: .6; }
+.token-list__text { display: grid; min-width: 0; }
+.token-list__meta { color: var(--text-muted); font-size: var(--fs-xs); }
+.panel .tokens-cell .admin-empty { margin: 0 0 6px; }
+.public-upload__state { margin: 0 0 4px; }
+.panel .public-upload .public-upload__state { margin: 0 0 4px; }
+.public-upload .row-actions { justify-content: flex-start; }
+.public-upload[data-state="open"] .public-upload__state { color: var(--text); font-weight: 600; }
+
+/* "+ …" buttons: a <details> without script (the form opens below it), the dialog's
+   trigger with it. */
+.adder > summary { list-style: none; }
+.adder > summary::-webkit-details-marker { display: none; }
+.adder__plus { font-size: 1.15em; line-height: 1; font-weight: 700; }
+.adder[open] { flex: 1 1 100%; }
+.adder > .adder__form {
+  margin-top: 8px; padding: 14px 16px; border: 1px solid var(--panel-line); border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--surface) 70%, transparent); text-align: left;
+}
+.adder-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
+.adder__form .banner, .secret-result .banner { margin: 0; font-size: var(--fs-sm); }
+.adder__form .banner[data-state="error"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface-2)); }
+.adder__form .choice { display: flex; align-items: center; gap: 8px; min-height: 30px; margin: 0; cursor: pointer; }
+.adder__form .choice input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-ink); }
+.adder__group { display: grid; gap: 0; min-width: 0; margin: 0; padding: 0; border: 0; }
+.panel .adder__group { border: 0; padding: 0; margin: 0; }
+.adder__group legend { margin-bottom: 4px; padding: 0; font-weight: 600; font-size: var(--fs-sm); }
+.adder__form .field { margin: 0; }
+/* In a panel the forms use the design's .field__control; the panel's own field look would
+   draw a second box inside it. */
+.panel .field__control > .field__input { min-height: 44px; border: 0; border-radius: 0; background: none; padding: 0 12px; }
+
+/* The one "shown once" box (review Q26): warning, then each value with its copy button. */
+.secret-box { display: grid; gap: 12px; max-width: 36rem; }
+.secret-box .banner[data-state="warning"] { background: color-mix(in srgb, var(--warn) 16%, var(--surface-2)); }
+.secret-box__value { font-family: var(--font-num), ui-monospace, monospace; letter-spacing: 0; }
+.secret-box__copy { flex: none; margin-right: 4px; min-height: 36px; --btn-px: 10px; }
+.secret-box__copy[data-state="copied"] { color: var(--ok); }
+.secret-result { display: grid; gap: 12px; }
+.panel .secret-result > * { margin-block: 0; }
+.secret-result__until { color: var(--text-muted); font-size: var(--fs-sm); }
+.secret-result__example { overflow-x: auto; padding: 8px 10px; border-radius: var(--radius-s); background: var(--surface-2); font-size: var(--fs-xs); }
+.adder-dialog .secret-result { gap: 14px; }
+.adder-dialog .secret-result > p:not(.banner) { margin: 0; font-size: var(--fs-sm); }
+
+@media (max-width: 719px) {
+  .panel .admin-table, .panel .admin-table tbody { display: block; }
+  .panel .admin-table thead { display: none; }
+  .panel .admin-table tr { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--panel-line); }
+  .panel .admin-table :is(th, td) { display: block; padding: 0; border: 0; }
+  .panel .admin-table td[data-label]::before {
+    content: attr(data-label); display: block; margin-bottom: 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted);
+  }
+  .row-actions { justify-content: flex-start; }
+  .panel .admin-table .btn, .panel .admin-section__head .btn { min-height: 40px; }
+}
+
+/* The admin navigation uses the tree's items (each skin marks the current page), but its
+   pages don't open: no expander (the classic skin draws one on every tree link). */
+.sidenav[data-variant="admin"] .tree__link::before { content: none; }

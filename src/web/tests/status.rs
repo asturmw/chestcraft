@@ -23,8 +23,8 @@ impl Env {
         self.send("GET", "/api/v1/status", peer, &headers).await
     }
 
-    async fn volumes_page(&self, s: &Login) -> String {
-        self.get_h("/.cc/admin/volumes", &[("cookie", &s.cookie)])
+    async fn accounts_page(&self, s: &Login) -> String {
+        self.get_h("/.cc/admin/users", &[("cookie", &s.cookie)])
             .await
             .text()
     }
@@ -248,7 +248,7 @@ async fn status_reports_the_snapshot() {
 }
 
 #[tokio::test]
-async fn admin_creates_and_revokes_tokens_on_the_volumes_page() {
+async fn admin_creates_and_revokes_tokens_on_the_accounts_page() {
     let e = env();
     let admin = e.session("Admin", "admin").await;
     let jana = e.session("jana", "familie").await;
@@ -272,7 +272,20 @@ async fn admin_creates_and_revokes_tokens_on_the_volumes_page() {
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     assert!(e.state.db.api_tokens().unwrap().is_empty());
 
-    assert!(e.volumes_page(&admin).await.contains("No tokens yet."));
+    // Under "Machines" on the accounts page (review Q27), no longer with the volumes.
+    let t = e.accounts_page(&admin).await;
+    assert!(
+        t.contains(r#"id="api-tokens""#) && t.contains("No tokens yet."),
+        "{t}"
+    );
+    let v = e
+        .get_h("/.cc/admin/volumes", &[("cookie", &admin.cookie)])
+        .await
+        .text();
+    assert!(
+        !v.contains("api-tokens") && !v.contains("status API"),
+        "{v}"
+    );
 
     let r = e
         .form_post(
@@ -285,6 +298,8 @@ async fn admin_creates_and_revokes_tokens_on_the_volumes_page() {
     let token = attr_after(&r.text(), "id=\"secret-token\"", "value");
     assert!(apitoken::plausible(&token), "{token}");
     assert!(r.text().contains("shown only once"));
+    assert!(r.text().contains(r#"<div class="secret-box">"#));
+    assert!(r.text().contains(r#"href="/.cc/admin/users#api-tokens""#));
     assert_eq!(r.header("cache-control"), "no-store");
 
     let r = e
@@ -295,7 +310,14 @@ async fn admin_creates_and_revokes_tokens_on_the_volumes_page() {
         )
         .await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(r.text().contains("already a token with this label"));
+    // The refused create opens its form again, with the reason in it.
+    let t = r.text();
+    let form = &t[t.find(r#"id="add-api-token""#).expect("adder")..];
+    assert!(
+        t.contains(r#"<details class="adder" id="add-api-token" data-js="adder" open"#)
+            && form[..form.find("</details>").unwrap()].contains("already a token with this label"),
+        "{t}"
+    );
     let r = e
         .form_post(
             &admin,
@@ -305,11 +327,11 @@ async fn admin_creates_and_revokes_tokens_on_the_volumes_page() {
         .await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
 
-    let t = e.volumes_page(&admin).await;
+    let t = e.accounts_page(&admin).await;
     assert!(t.contains("Watchdog") && t.contains("Never"), "{t}");
     let r = e.status_from("127.0.0.1", &[], Some(&token)).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert!(e.volumes_page(&admin).await.contains("from 127.0.0.1"));
+    assert!(e.accounts_page(&admin).await.contains("from 127.0.0.1"));
 
     let id = e.state.db.api_tokens().unwrap()[0].1.id.clone();
     let r = e
@@ -321,7 +343,7 @@ async fn admin_creates_and_revokes_tokens_on_the_volumes_page() {
         .await;
     assert_eq!(
         (r.status, r.header("location")),
-        (StatusCode::SEE_OTHER, "/.cc/admin/volumes#api-tokens")
+        (StatusCode::SEE_OTHER, "/.cc/admin/users#api-tokens")
     );
     let r = e
         .form_post(

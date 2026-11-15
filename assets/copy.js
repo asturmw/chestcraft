@@ -1,5 +1,7 @@
 // chestcraft copy buttons: <button data-js="copy" data-copy="<id of an input or textarea>">,
-// and `cc.copyText(text, field)` for scripts (the share dialog). The clipboard needs a
+// rendered hidden (they need script) and shown here; `cc.copyButtons(root)` shows the ones in
+// markup a script inserts (forms.js puts "shown once" boxes into dialogs), and
+// `cc.copyText(text, field)` copies for scripts (the share dialog). The clipboard needs a
 // secure context (HTTPS or localhost); elsewhere, or without clipboard access, the field is
 // selected so it can be copied by hand. Without JS the fields stay selectable as they are.
 (() => {
@@ -18,11 +20,15 @@
       return 'select';
     }
   }
-  for (const btn of document.querySelectorAll('[data-js="copy"][data-copy]')) {
-    btn.addEventListener('click', async () => {
-      const field = document.getElementById(btn.dataset.copy);
-      if (field) btn.dataset.state = await copyText(field.value, field);
-    });
+  function copyButtons(root) {
+    for (const btn of root.querySelectorAll('[data-js="copy"][data-copy]')) btn.hidden = false;
   }
-  window.cc = Object.assign(window.cc || {}, { copyText });
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest && e.target.closest('[data-js="copy"][data-copy]');
+    if (!btn) return;
+    const field = document.getElementById(btn.dataset.copy);
+    if (field) btn.dataset.state = await copyText(field.value, field);
+  });
+  copyButtons(document);
+  window.cc = Object.assign(window.cc || {}, { copyText, copyButtons });
 })();

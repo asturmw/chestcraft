@@ -3,20 +3,16 @@
 //! limit, optional notification); opening again sets a new password and ends every visitor
 //! session. Visitors enter the password at `/.cc/public-write?vol=…` and may then upload
 //! and create folders in that volume for 12 hours, never overwrite or delete.
-//!
-//! The same admin page lists the status API tokens; they are created and revoked at
-//! `/.cc/admin/api-tokens` (see [`super::status`]).
 
 use super::auth::{audit, csrf_ok, forbidden, now, safe_next, same_origin};
 use super::files::{Fail, enc, fail};
 use super::guest::{self, Unlock};
-use super::share_views::{self, PublicState, TokenRow, VolumeRow, VolumesView};
+use super::share_views::{self, PublicState, VolumeRow, VolumesView};
 use super::shares::expiry_choices;
-use super::views::Ctx;
+use super::views::{AdminPage, Ctx};
 use super::{ClientInfo, Current, Shared, page_ctx};
-use crate::auth::apitoken;
 use crate::auth::perm::Principal;
-use crate::db::{ApiToken, PublicWrite};
+use crate::db::PublicWrite;
 use crate::shares::{self, Expiry, Password};
 use axum::extract::{Extension, Form, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -173,37 +169,59 @@ fn volumes_view(
     ctx: &Ctx,
     st: &Shared,
     csrf: &str,
-    data: &Stored,
+    writes: &[PublicWrite],
     error: Option<String>,
+    failed_open: Option<&str>,
 ) -> VolumesView {
-    let writes = &data.writes;
+    // The error of a refused "open" goes into that volume's form (when it has one).
+    let has_form = |vol: &str| st.cfg.volumes.values().any(|v| v.public && v.name == vol);
+    let (error, open_error) = match failed_open.filter(|vol| has_form(vol)) {
+        Some(vol) => (None, error.map(|e| (vol, e))),
+        None => (error, None),
+    };
     let rows = st
         .cfg
         .volumes
         .values()
         .map(|v| {
-            let mut flags = Vec::new();
+            let long = |key: &str| Some(ctx.t(key).to_string());
+            let mut tags = Vec::new();
             if v.public {
-                flags.push(ctx.t("volumes.flag_public").to_string());
+                tags.push((
+                    ctx.t("nav.tag_public").to_string(),
+                    long("volumes.flag_public"),
+                ));
             }
             if !v.remote {
-                flags.push(ctx.t("volumes.flag_local").to_string());
+                tags.push((
+                    ctx.t("nav.tag_home").to_string(),
+                    long("volumes.flag_local"),
+                ));
             }
             if v.read_only {
-                flags.push(ctx.t("volumes.flag_read_only").to_string());
+                tags.push((ctx.t("volumes.flag_read_only").to_string(), None));
             }
             for ro in &v.read_only_paths {
-                flags.push(ctx.tf("volumes.flag_read_only_path", &[("path", ro.as_str())]));
+                tags.push((
+                    ctx.tf("volumes.flag_read_only_path", &[("path", ro.as_str())]),
+                    None,
+                ));
             }
             if v.stage_folder_uploads {
-                flags.push(ctx.t("volumes.flag_staged").to_string());
+                tags.push((
+                    ctx.t("volumes.tag_staged").to_string(),
+                    long("volumes.flag_staged"),
+                ));
             }
             let days = v.trash_days(&st.cfg);
-            flags.push(if days == 0 {
-                ctx.t("volumes.flag_trash_kept").to_string()
-            } else {
-                ctx.tn("volumes.flag_trash_days", u64::from(days))
-            });
+            tags.push((
+                if days == 0 {
+                    ctx.t("volumes.flag_trash_kept").to_string()
+                } else {
+                    ctx.tn("volumes.flag_trash_days", u64::from(days))
+                },
+                None,
+            ));
             let public = v.public.then(|| {
                 let pw = writes
                     .iter()
@@ -220,63 +238,33 @@ fn volumes_view(
                     state,
                     open: pw.is_some(),
                     expiries: expiry_choices(ctx, Expiry::Week),
+                    error: open_error
+                        .as_ref()
+                        .filter(|(vol, _)| *vol == v.name)
+                        .map(|(_, e)| e.clone()),
                 }
             });
             VolumeRow {
                 name: v.name.clone(),
                 href: format!("/{}/", enc(&v.name)),
                 path: v.path.display().to_string(),
-                flags,
+                tags,
                 public,
             }
-        })
-        .collect();
-    let tokens = data
-        .tokens
-        .iter()
-        .map(|t| TokenRow {
-            id: t.id.clone(),
-            label: t.label.clone(),
-            created: ctx.datetime(t.created),
-            last_used: match (t.last_used, &t.last_ip) {
-                (Some(when), Some(ip)) => ctx.tf(
-                    "api_tokens.used_from",
-                    &[("date", &ctx.datetime(when)), ("ip", ip)],
-                ),
-                (Some(when), None) => ctx.datetime(when),
-                (None, _) => ctx.t("api_tokens.never_used").to_string(),
-            },
         })
         .collect();
     VolumesView {
         csrf: csrf.to_string(),
         rows,
-        tokens,
         error,
     }
 }
 
-/// What the volumes page shows from the database.
-#[derive(Default)]
-struct Stored {
-    writes: Vec<PublicWrite>,
-    tokens: Vec<ApiToken>,
-}
-
-async fn page_data(st: &Shared) -> Stored {
+async fn page_data(st: &Shared) -> Vec<PublicWrite> {
     let st = st.clone();
-    blocking(move || Stored {
-        writes: st.db.public_writes().unwrap_or_default(),
-        tokens: st
-            .db
-            .api_tokens()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(_, t)| t)
-            .collect(),
-    })
-    .await
-    .unwrap_or_default()
+    blocking(move || st.db.public_writes().unwrap_or_default())
+        .await
+        .unwrap_or_default()
 }
 
 pub async fn volumes_page(
@@ -289,8 +277,9 @@ pub async fn volumes_page(
     let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Volumes);
     let data = page_data(&st).await;
-    share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &data, None))
+    share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &data, None, None))
         .into_response()
 }
 
@@ -324,13 +313,19 @@ pub async fn volumes_submit(
     let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Volumes);
     if !csrf_ok(&headers, &st, cu, &form.csrf) {
         return forbidden(&ctx);
     }
-    let rerender = |data: Stored, msg: String| {
+    // A refused "open" opens its form again with the reason.
+    let failed_open = (form.op == "open").then_some(form.vol.as_str());
+    let rerender = |data: Vec<PublicWrite>, msg: String| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
-            share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &data, Some(msg))),
+            share_views::admin_volumes(
+                &ctx,
+                &volumes_view(&ctx, &st, &cu.csrf, &data, Some(msg), failed_open),
+            ),
         )
             .into_response()
     };
@@ -449,6 +444,7 @@ fn secret(
     ctx2.scripts.push("copy.js");
     let view = share_views::SecretView {
         title,
+        warning: ctx.t("volumes.once").to_string(),
         until: until
             .map(|t| ctx.datetime(t))
             .unwrap_or_else(|| ctx.t("share_expiry.never").to_string()),
@@ -458,111 +454,9 @@ fn secret(
         back_href: "/.cc/admin/volumes".into(),
         back_label: ctx.t("volumes.back").into(),
     };
-    share_views::secret(&ctx2, &view).into_response()
-}
-
-// ---------------------------------------------------------------------------------------
-// Admin: status API tokens (shown on the volumes page)
-
-#[derive(Deserialize, Default)]
-pub struct TokenForm {
-    #[serde(default)]
-    csrf: String,
-    #[serde(default)]
-    op: String,
-    #[serde(default)]
-    label: String,
-    #[serde(default)]
-    id: String,
-}
-
-pub async fn tokens_submit(
-    State(st): State<Shared>,
-    Extension(client): Extension<ClientInfo>,
-    Extension(principal): Extension<Principal>,
-    Extension(current): Extension<Current>,
-    headers: HeaderMap,
-    Form(form): Form<TokenForm>,
-) -> Response {
-    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
-    let Some(cu) = current.as_deref().filter(|_| principal.is_admin()) else {
-        return fail(&ctx, Fail::NotFound);
-    };
-    if !csrf_ok(&headers, &st, cu, &form.csrf) {
-        return forbidden(&ctx);
-    }
-    let rerender = |data: Stored, msg: String| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            share_views::admin_volumes(&ctx, &volumes_view(&ctx, &st, &cu.csrf, &data, Some(msg))),
-        )
-            .into_response()
-    };
-    let actor = format!("user:{}", cu.key);
-    match form.op.as_str() {
-        "add" => {
-            let created = {
-                let (st, label, by) = (st.clone(), form.label.clone(), actor.clone());
-                blocking(move || apitoken::create(&st.db, &label, &by, now())).await
-            };
-            let (token, rec) = match created {
-                Some(Ok(t)) => t,
-                Some(Err(e)) => {
-                    let msg = match e {
-                        apitoken::CreateError::BadLabel => ctx.tf(
-                            "api_tokens.bad_label",
-                            &[("max", &apitoken::MAX_LABEL_CHARS.to_string())],
-                        ),
-                        apitoken::CreateError::Duplicate => {
-                            ctx.t("api_tokens.duplicate").to_string()
-                        }
-                        apitoken::CreateError::TooMany => ctx.tf(
-                            "api_tokens.too_many",
-                            &[("max", &apitoken::MAX_TOKENS.to_string())],
-                        ),
-                        apitoken::CreateError::Db(_) => ctx.t("ops.failed").to_string(),
-                    };
-                    return rerender(page_data(&st).await, msg);
-                }
-                None => return rerender(page_data(&st).await, ctx.t("ops.failed").into()),
-            };
-            audit(
-                &st,
-                actor,
-                client.ip,
-                "api_token_created",
-                &rec.label,
-                &rec.id,
-            );
-            let mut ctx2 = ctx.clone();
-            ctx2.scripts.push("copy.js");
-            let mut res = share_views::api_token_created(&ctx2, &rec.label, &token).into_response();
-            // The token must not stay in the browser's cache.
-            res.headers_mut()
-                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-            res
-        }
-        "revoke" => {
-            let revoked = {
-                let (st, id) = (st.clone(), form.id.clone());
-                blocking(move || apitoken::revoke(&st.db, &id)).await
-            };
-            match revoked {
-                Some(Ok(Some(rec))) => {
-                    audit(
-                        &st,
-                        actor,
-                        client.ip,
-                        "api_token_revoked",
-                        &rec.label,
-                        &rec.id,
-                    );
-                    Redirect::to("/.cc/admin/volumes#api-tokens").into_response()
-                }
-                Some(Ok(None)) => rerender(page_data(&st).await, ctx.t("api_tokens.gone").into()),
-                _ => rerender(page_data(&st).await, ctx.t("ops.failed").into()),
-            }
-        }
-        _ => rerender(page_data(&st).await, ctx.t("ops.invalid").into()),
-    }
+    let mut res = share_views::secret(&ctx2, &view).into_response();
+    // The password must not stay in the browser's cache.
+    res.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
 }

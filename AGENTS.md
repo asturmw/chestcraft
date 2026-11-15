@@ -94,7 +94,7 @@ as the user that owns `state_dir`.
 | Config schema + validation | `config/mod.rs` (`deny_unknown_fields`), secrets `config/secrets.rs` |
 | State DB (all tables, one file) | `db/mod.rs` |
 | Accounts, sessions, passwords, backoff, tokens | `auth/` (shared account changes: `auth/accounts.rs`) |
-| Admin accounts page, audit log, app passwords + sessions on the account page | `web/users.rs` |
+| Admin accounts page (people, agents, status-API tokens), audit log, app passwords + sessions on the account page | `web/users.rs` |
 | CLI state commands, admin socket | `cli.rs`, `web/adminsock.rs` |
 | Nightly state backup | `backup.rs` (run from `web/jobs.rs`) |
 | Folder listing, list/grid choice, downloads, zip, tree listing, download slots, folder sizes | `web/files.rs`, `web/layout.rs`, `fs/zipstream.rs`, `fs/tree.rs`, `fs/sort.rs`, `web/du.rs` |
@@ -113,7 +113,7 @@ as the user that owns `state_dir`.
 | External programs (absolute paths) | `tools.rs`, `health/cmd.rs` |
 | UI strings | `i18n/en.toml`, `i18n/de.toml`, `src/i18n.rs` |
 | App shell (app bar, sidebar tree, tab bar), browser view, gate pages | `web/views.rs`, `web/nav.rs` |
-| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs, thumbnail fallback, sidebar drawer, message after reload), `browser.js` (selection, filter, row menu, new folder, folder sizes), `download.js` (save to folder, separately, queue), `ops.js` (clipboard, rename, move/copy picker), `share.js` (share dialog), `copy.js` (copy buttons, `cc.copyText`), `keys.js` (Vim/Standard maps), `upload.js`, `dashboard.js` (dashboard refresh, activity crosshair), `provisional.css` (screens not designed yet, grid view, drawer, the app bar's look switches), `dashboard.css` (the dashboard until the design delivers it), `viewer.css` + `viewer.js` (the full-screen viewer: zoom, swipe, details; provisional) |
+| CSS/JS/icons/fonts (embedded by `build.rs`) | `assets/`: `tokens.css`, `app.css`, `skins/`, `icons.svg`, `fonts/`, `backgrounds/` come from the `design` branch via `deploy/design-sync.sh` (never edit them here); own: `app.js` (menus, dialogs, thumbnail fallback, sidebar drawer, message after reload), `browser.js` (selection, filter, row menu, new folder, folder sizes), `download.js` (save to folder, separately, queue), `ops.js` (clipboard, rename, move/copy picker), `share.js` (share dialog), `copy.js` (copy buttons, `cc.copyText`, `cc.copyButtons`), `forms.js` (admin adders in dialogs, confirm dialog), `keys.js` (Vim/Standard maps), `upload.js`, `dashboard.js` (dashboard refresh, activity crosshair), `provisional.css` (screens not designed yet, grid view, drawer, the app bar's look switches), `dashboard.css` (the dashboard until the design delivers it), `viewer.css` + `viewer.js` (the full-screen viewer: zoom, swipe, details; provisional) |
 | Deploy | `deploy/release.sh`, `deploy/install.sh`, `deploy/units/` |
 
 ## Rules a change must keep
@@ -168,5 +168,7 @@ passes (fmt, clippy `-D warnings`, tests, C-free static build).
 - **Alert rule:** `health/alerts.rs` (stable key; messages are i18n keys + arguments, so
   the texts go in both i18n files),
   tests in `health/alerts/tests.rs`.
+- **Secret shown once:** `views::secret_box` inside `views::secret_result`, served `no-store`,
+  never in a URL or a log.
 - **Status API field:** add only, never rename or remove (`api: 1`); document it in
   `docs/api.md`.

@@ -65,7 +65,7 @@ async fn app_passwords_on_the_account_page() {
         .get_h("/.cc/account", &[("cookie", &s.cookie)])
         .await
         .text();
-    assert!(page.contains("<strong>laptop</strong>"), "{page}");
+    assert!(page.contains(r#"<th scope="row">laptop</th>"#), "{page}");
     assert!(!page.contains(&secret), "the secret is shown only once");
     let id = e.state.db.app_passwords_of("jana").unwrap()[0].1.id.clone();
     let gone = e

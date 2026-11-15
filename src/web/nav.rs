@@ -42,6 +42,7 @@ pub async fn build(
         tree: Vec::new(),
         space: None,
         shares: None,
+        admin: None,
     };
     tokio::task::spawn_blocking(move || {
         let i18n = &st.i18n;
@@ -100,6 +101,7 @@ pub async fn build(
             tree,
             space,
             shares,
+            admin: None,
         }
     })
     .await

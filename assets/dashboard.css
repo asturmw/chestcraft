@@ -108,7 +108,8 @@
 .activity { container-type: inline-size; }
 .pulse-grid { display: grid; gap: 22px 32px; grid-template-columns: minmax(0, 1fr); }
 @container (min-width: 540px) { .pulse-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@container (min-width: 1000px) { .pulse-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* Four in a row from 860 px: with the admin sidebar a 1280 px window leaves about 900. */
+@container (min-width: 860px) { .pulse-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .pulse { margin: 0; min-width: 0; display: grid; gap: 6px; align-content: start; }
 .pulse__head { display: grid; gap: 2px; }
 .pulse__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -255,6 +256,9 @@
 .panel :is(.dataset-table, .disk-table) th[scope="row"] { font-size: var(--fs-sm); color: var(--text); font-weight: 600; }
 .panel :is(.dataset-table, .disk-table) :is(th, td) { vertical-align: middle; }
 .panel :is(.dataset-table, .disk-table) .num { text-align: right; white-space: nowrap; }
+/* Long column names wrap, so the model column keeps its room next to the sidebar. */
+.panel :is(.dataset-table, .disk-table) thead .num { white-space: normal; }
+.panel .disk-table .disk__model { min-width: 12em; }
 .disk__dev, .disk__serial { color: var(--text-muted); font-size: var(--fs-xs); font-weight: 400; }
 .disk__kind { display: block; color: var(--text-muted); font-size: var(--fs-xs); }
 .disk__smart[data-state="ok"] { color: var(--ok); font-weight: 600; }

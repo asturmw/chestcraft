@@ -3,8 +3,9 @@
 //! design deliverables are integrated.
 
 use super::views::{
-    Ctx, GateField, ShareHead, UploadUi, ViewerBody, gate, gate_field, icon, layout, share_head,
-    upload_ui, viewer_stage,
+    Adder, Ctx, GateField, SecretField, ShareHead, UploadUi, ViewerBody, adder, confirm_dialog,
+    form_field, gate, gate_field, icon, layout, row_action, secret_box, secret_result, share_head,
+    tag, upload_ui, viewer_stage,
 };
 use maud::{Markup, html};
 
@@ -459,6 +460,8 @@ pub struct Message {
 /// A link and password, shown once (new share, new password, public upload opened).
 pub struct SecretView {
     pub title: String,
+    /// The "shown once" warning: how to get a new password when this one is lost.
+    pub warning: String,
     pub link: String,
     pub password: String,
     pub until: String,
@@ -468,45 +471,46 @@ pub struct SecretView {
     pub back_label: String,
 }
 
+/// Link and password in the shared "shown once" box (review Q26), the expiry, and the
+/// ready-to-send messages (new shares only).
 pub fn secret(ctx: &Ctx, v: &SecretView) -> Markup {
+    let body = html! {
+        (secret_box(&v.warning, &[
+            SecretField {
+                id: "secret-link",
+                label: ctx.t("share_created.link"),
+                value: &v.link,
+                copy: ctx.t("share_created.copy_link"),
+            },
+            SecretField {
+                id: "secret-password",
+                label: ctx.t("share_created.password"),
+                value: &v.password,
+                copy: ctx.t("share_created.copy_password"),
+            },
+        ]))
+        p class="secret-result__until" { (ctx.t("share_created.until")) ": " (v.until) }
+        @for (i, m) in v.messages.iter().enumerate() {
+            @let id = format!("secret-message-{}", m.code);
+            @if i == 0 {
+                section class="share-secret__message" {
+                    h2 { (ctx.tf("share_created.message", &[("language", &m.lang_name)])) }
+                    textarea class="field__input" id=(id) readonly rows="6" lang=(m.code) { (m.text) }
+                    button class="btn" type="button" data-js="copy" data-copy=(id) hidden { (icon("copy")) span class="btn__label" { (ctx.t("share_created.copy_message")) } }
+                }
+            } @else {
+                details class="share-secret__message" {
+                    summary { (ctx.tf("share_created.message", &[("language", &m.lang_name)])) }
+                    textarea class="field__input" id=(id) readonly rows="6" lang=(m.code) { (m.text) }
+                    button class="btn" type="button" data-js="copy" data-copy=(id) hidden { (icon("copy")) span class="btn__label" { (ctx.t("share_created.copy_message")) } }
+                }
+            }
+        }
+    };
     layout(
         ctx,
         &v.title,
-        html! {
-            h1 class="share-secret__title" { (v.title) }
-            p class="banner" data-state="warning" role="status" { (ctx.t("share_created.once")) }
-            dl class="share-secret" {
-                dt { (ctx.t("share_created.link")) }
-                dd {
-                    input class="field__input" id="secret-link" type="text" readonly value=(v.link);
-                    " " button type="button" data-js="copy" data-copy="secret-link" { (ctx.t("share_created.copy_link")) }
-                }
-                dt { (ctx.t("share_created.password")) }
-                dd {
-                    input class="field__input" id="secret-password" type="text" readonly value=(v.password);
-                    " " button type="button" data-js="copy" data-copy="secret-password" { (ctx.t("share_created.copy_password")) }
-                }
-                dt { (ctx.t("share_created.until")) }
-                dd { (v.until) }
-            }
-            @for (i, m) in v.messages.iter().enumerate() {
-                @let id = format!("secret-message-{}", m.code);
-                @if i == 0 {
-                    section class="share-secret__message" {
-                        h2 { (ctx.tf("share_created.message", &[("language", &m.lang_name)])) }
-                        textarea class="field__input" id=(id) readonly rows="6" lang=(m.code) { (m.text) }
-                        button type="button" data-js="copy" data-copy=(id) { (ctx.t("share_created.copy_message")) }
-                    }
-                } @else {
-                    details class="share-secret__message" {
-                        summary { (ctx.tf("share_created.message", &[("language", &m.lang_name)])) }
-                        textarea class="field__input" id=(id) readonly rows="6" lang=(m.code) { (m.text) }
-                        button type="button" data-js="copy" data-copy=(id) { (ctx.t("share_created.copy_message")) }
-                    }
-                }
-            }
-            p { a href=(v.back_href) { (v.back_label) } }
-        },
+        secret_result(&v.title, body, (&v.back_href, &v.back_label)),
     )
 }
 
@@ -543,6 +547,9 @@ pub struct DetailView {
 }
 
 pub fn share_detail(ctx: &Ctx, v: &DetailView) -> Markup {
+    let mut ctx = ctx.clone();
+    ctx.scripts.push("forms.js");
+    let ctx = &ctx;
     let title = ctx.tf("share_detail.title", &[("name", &v.target)]);
     let action = format!("/.cc/shares/{}", v.id);
     layout(
@@ -606,7 +613,10 @@ pub fn share_detail(ctx: &Ctx, v: &DetailView) -> Markup {
                     }
                     button type="submit" { (ctx.t("share_detail.save")) }
                 }
-                form class="share-new-password" method="post" action=(action) {
+                // Asks first with script (the old password stops working); the answer is the
+                // page with the new one in the "shown once" box.
+                form class="share-new-password" method="post" action=(action)
+                    data-confirm=(ctx.t("share_detail.new_password_hint")) {
                     input type="hidden" name="csrf" value=(v.csrf);
                     input type="hidden" name="op" value="password";
                     button type="submit" { (ctx.t("share_detail.new_password")) }
@@ -646,6 +656,7 @@ pub fn share_detail(ctx: &Ctx, v: &DetailView) -> Markup {
                 }
             }
             p { a href="/.cc/shares" { (ctx.t("shares.back")) } }
+            (confirm_dialog(ctx))
         },
     )
 }
@@ -686,7 +697,8 @@ pub struct VolumeRow {
     pub name: String,
     pub href: String,
     pub path: String,
-    pub flags: Vec<String>,
+    /// Compact tags: (text, long explanation).
+    pub tags: Vec<(String, Option<String>)>,
     /// Public volumes: the public upload state and controls.
     pub public: Option<PublicState>,
 }
@@ -696,157 +708,115 @@ pub struct PublicState {
     pub state: String,
     pub open: bool,
     pub expiries: Vec<ExpiryChoice>,
+    /// The last "open" of this volume failed: why.
+    pub error: Option<String>,
 }
 
 pub struct VolumesView {
     pub csrf: String,
     pub rows: Vec<VolumeRow>,
-    /// Status API tokens.
-    pub tokens: Vec<TokenRow>,
     pub error: Option<String>,
 }
 
-pub struct TokenRow {
-    pub id: String,
-    pub label: String,
-    pub created: String,
-    /// "Never" or date (and address) of the last use.
-    pub last_used: String,
-}
-
+/// The libraries page (review Q27): one table of the volumes with their path (muted), their
+/// settings as tags and, for public ones, the public upload: its state, "Open uploads"
+/// (a form behind the button) and "Close uploads" (asks first).
 pub fn admin_volumes(ctx: &Ctx, v: &VolumesView) -> Markup {
     let title = ctx.t("volumes.title");
     let min = crate::shares::MIN_OWN_PASSWORD.to_string();
+    let action = "/.cc/admin/volumes";
+    let mut ctx = ctx.clone();
+    ctx.scripts.extend(["copy.js", "forms.js"]);
+    let ctx = &ctx;
     layout(
         ctx,
         title,
         html! {
             h1 class="volumes__title" { (title) }
             @if let Some(e) = &v.error {
-                p class="form__error" role="alert" { (e) }
+                p class="banner" data-state="error" role="alert" data-js="form-error" { (e) }
             }
-            @for r in &v.rows {
-                section class="volume-config" aria-label=(r.name) {
-                    h2 { a href=(r.href) { (r.name) } }
-                    p class="volume-config__path" { code { (r.path) } }
-                    @if !r.flags.is_empty() {
-                        ul class="volume-config__flags" { @for f in &r.flags { li { (f) } } }
-                    }
-                    @if let Some(p) = &r.public {
-                        section class="public-upload" data-state=(if p.open { "open" } else { "closed" }) {
-                            h3 { (ctx.t("volumes.public_upload")) }
-                            p class="public-upload__state" { (p.state) }
-                            form class="public-upload__open" method="post" action="/.cc/admin/volumes" {
-                                input type="hidden" name="csrf" value=(v.csrf);
-                                input type="hidden" name="vol" value=(r.name);
-                                input type="hidden" name="op" value="open";
-                                fieldset {
-                                    legend { (ctx.t("volumes.open_for")) }
-                                    @for e in &p.expiries {
-                                        label class="choice" {
-                                            input type="radio" name="expiry" value=(e.value) checked[e.checked];
-                                            " " (e.label)
-                                        }
-                                    }
-                                }
-                                label class="field" {
-                                    span class="field__label" { (ctx.t("volumes.own_password")) }
-                                    input class="field__input" type="text" name="own_password" minlength=(min)
-                                        autocomplete="off" spellcheck="false";
-                                    span class="field__hint" { (ctx.tf("volumes.own_password_hint", &[("min", &min)])) }
-                                }
-                                label class="field" {
-                                    span class="field__label" { (ctx.t("share_create.max_size")) }
-                                    input class="field__input" type="number" name="max_mib" min="1" step="1";
-                                }
-                                label class="choice" {
-                                    input type="checkbox" name="notify" value="1";
-                                    " " (ctx.t("volumes.notify"))
-                                }
-                                button type="submit" {
-                                    (if p.open { ctx.t("volumes.reopen") } else { ctx.t("volumes.open") })
-                                }
+            table class="admin-table volumes-table" {
+                thead { tr {
+                    th scope="col" { (ctx.t("users.name")) }
+                    th scope="col" { (ctx.t("volumes.col_flags")) }
+                    th scope="col" { (ctx.t("volumes.public_upload")) }
+                } }
+                tbody {
+                    @for r in &v.rows {
+                        @let id = format!("open-{}", r.name);
+                        tr {
+                            th scope="row" {
+                                a class="admin-table__name" href=(r.href) { (r.name) }
+                                span class="admin-path" { (r.path) }
                             }
-                            @if p.open {
-                                form class="public-upload__close" method="post" action="/.cc/admin/volumes" {
-                                    input type="hidden" name="csrf" value=(v.csrf);
-                                    input type="hidden" name="vol" value=(r.name);
-                                    input type="hidden" name="op" value="close";
-                                    button type="submit" { (ctx.t("volumes.close")) }
-                                }
+                            td class="tags-cell" data-label=(ctx.t("volumes.col_flags")) {
+                                @for (text, long) in &r.tags { (tag(text, long.as_deref(), None)) " " }
                             }
-                        }
-                    }
-                }
-            }
-            section class="api-tokens" id="api-tokens" aria-labelledby="api-tokens-title" {
-                h2 id="api-tokens-title" { (ctx.t("api_tokens.title")) }
-                p class="api-tokens__intro" { (ctx.t("api_tokens.intro")) }
-                @if v.tokens.is_empty() {
-                    p class="api-tokens__empty" { (ctx.t("api_tokens.none")) }
-                } @else {
-                    table class="api-tokens__list" {
-                        thead {
-                            tr {
-                                th scope="col" { (ctx.t("api_tokens.label")) }
-                                th scope="col" { (ctx.t("api_tokens.created")) }
-                                th scope="col" { (ctx.t("api_tokens.last_used")) }
-                                th scope="col" { span class="visually-hidden" { (ctx.t("api_tokens.actions")) } }
-                            }
-                        }
-                        tbody {
-                            @for t in &v.tokens {
-                                tr data-id=(t.id) {
-                                    td { (t.label) }
-                                    td { (t.created) }
-                                    td { (t.last_used) }
-                                    td {
-                                        form method="post" action="/.cc/admin/api-tokens" {
+                            td class="public-upload" data-label=(ctx.t("volumes.public_upload"))
+                                data-state=[r.public.as_ref().map(|p| if p.open { "open" } else { "closed" })] {
+                                @if let Some(p) = &r.public {
+                                    p class="public-upload__state" { (p.state) }
+                                    div class="row-actions" {
+                                        @let open_title = ctx.tf("volumes.open_title", &[("volume", &r.name)]);
+                                        @let submit = if p.open { ctx.t("volumes.reopen") } else { ctx.t("volumes.open") };
+                                        (adder(ctx, &Adder {
+                                            id: &id,
+                                            button: submit,
+                                            plus: false,
+                                            label: &open_title,
+                                            title: &open_title,
+                                            action,
+                                            submit,
+                                            error: p.error.as_deref(),
+                                        }, html! {
                                             input type="hidden" name="csrf" value=(v.csrf);
-                                            input type="hidden" name="op" value="revoke";
-                                            input type="hidden" name="id" value=(t.id);
-                                            button type="submit" { (ctx.t("api_tokens.revoke")) }
+                                            input type="hidden" name="vol" value=(r.name);
+                                            input type="hidden" name="op" value="open";
+                                            fieldset class="adder__group" {
+                                                legend { (ctx.t("volumes.open_for")) }
+                                                @for e in &p.expiries {
+                                                    label class="choice" {
+                                                        input type="radio" name="expiry" value=(e.value) checked[e.checked];
+                                                        " " (e.label)
+                                                    }
+                                                }
+                                            }
+                                            (form_field(&format!("{id}-password"), ctx.t("volumes.own_password"), html! {
+                                                div class="field__control" {
+                                                    input class="field__input" id=(format!("{id}-password")) type="text" name="own_password"
+                                                        minlength=(min) autocomplete="off" spellcheck="false";
+                                                }
+                                            }, Some(&ctx.tf("volumes.own_password_hint", &[("min", &min)]))))
+                                            (form_field(&format!("{id}-max"), ctx.t("share_create.max_size"), html! {
+                                                div class="field__control" {
+                                                    input class="field__input" id=(format!("{id}-max")) type="number" name="max_mib"
+                                                        min="1" step="1" inputmode="numeric";
+                                                }
+                                            }, None))
+                                            label class="choice" {
+                                                input type="checkbox" name="notify" value="1";
+                                                " " (ctx.t("volumes.notify"))
+                                            }
+                                        }))
+                                        @if p.open {
+                                            (row_action(action, html! {
+                                                input type="hidden" name="csrf" value=(v.csrf);
+                                                input type="hidden" name="vol" value=(r.name);
+                                                input type="hidden" name="op" value="close";
+                                            }, ctx.t("volumes.close"), Some(&ctx.tf("volumes.close_confirm", &[("volume", &r.name)]))))
                                         }
                                     }
+                                } @else {
+                                    span class="admin-none" aria-hidden="true" { "–" }
+                                    span class="vh" { (ctx.t("volumes.not_public")) }
                                 }
                             }
                         }
                     }
                 }
-                form class="api-tokens__add" method="post" action="/.cc/admin/api-tokens" {
-                    input type="hidden" name="csrf" value=(v.csrf);
-                    input type="hidden" name="op" value="add";
-                    label class="field" {
-                        span class="field__label" { (ctx.t("api_tokens.label")) }
-                        input class="field__input" type="text" name="label" required maxlength=(crate::auth::apitoken::MAX_LABEL_CHARS)
-                            autocomplete="off" placeholder=(ctx.t("api_tokens.label_example"));
-                    }
-                    button type="submit" { (ctx.t("api_tokens.add")) }
-                }
             }
-        },
-    )
-}
-
-/// A new status API token, shown once.
-pub fn api_token_created(ctx: &Ctx, label: &str, token: &str) -> Markup {
-    let title = ctx.tf("api_tokens.created_title", &[("label", label)]);
-    layout(
-        ctx,
-        &title,
-        html! {
-            h1 class="share-secret__title" { (title) }
-            p class="banner" data-state="warning" role="status" { (ctx.t("api_tokens.once")) }
-            dl class="share-secret" {
-                dt { (ctx.t("api_tokens.token")) }
-                dd {
-                    input class="field__input" id="secret-token" type="text" readonly value=(token);
-                    " " button type="button" data-js="copy" data-copy="secret-token" { (ctx.t("api_tokens.copy")) }
-                }
-            }
-            p { (ctx.t("api_tokens.usage")) }
-            pre { code { "curl -H 'Authorization: Bearer " (token) "' http://<host>/api/v1/status" } }
-            p { a href="/.cc/admin/volumes#api-tokens" { (ctx.t("volumes.back")) } }
+            (confirm_dialog(ctx))
         },
     )
 }

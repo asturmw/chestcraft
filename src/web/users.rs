@@ -10,13 +10,17 @@
 use super::auth::{audit, csrf_ok, forbidden, now};
 use super::files::{Fail, enc, fail};
 use super::query::Query;
-use super::views::{Ctx, layout};
+use super::views::{
+    Adder, AdminPage, Ctx, SecretField, adder, confirm_dialog, form_field, layout, row_action,
+    secret_box, secret_result, tag,
+};
 use super::{AppState, ClientInfo, Current, CurrentUser, Shared, page_ctx};
 use crate::auth::accounts::{self, AccountError};
 use crate::auth::agent::{self, AgentError};
+use crate::auth::apitoken;
 use crate::auth::apppass;
 use crate::auth::perm::{ADMIN_ROLE, Principal};
-use crate::db::{AgentToken, AppPassword, AuditEvent, Session, User};
+use crate::db::{AgentToken, ApiToken, AppPassword, AuditEvent, Session, User};
 use axum::extract::{Extension, Form, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -25,6 +29,7 @@ use serde::Deserialize;
 
 const ACCOUNT: &str = "/.cc/account";
 const USERS: &str = "/.cc/admin/users";
+const API_TOKENS: &str = "/.cc/admin/api-tokens";
 /// Audit entries searched per page view, and shown.
 const AUDIT_SCAN: usize = 5000;
 const AUDIT_SHOW: usize = 200;
@@ -45,7 +50,7 @@ fn actor(cu: &CurrentUser) -> String {
     format!("user:{}", cu.key)
 }
 
-/// One secret, shown once, with a copy button.
+/// Secrets shown once (`secret-0`, `secret-1`, … in the shared box), with the way back.
 fn secret_page(
     ctx: &Ctx,
     title: &str,
@@ -55,20 +60,18 @@ fn secret_page(
 ) -> Response {
     let mut ctx = ctx.clone();
     ctx.scripts.push("copy.js");
-    let body = html! {
-        h1 class="share-secret__title" { (title) }
-        p class="banner" data-state="warning" role="status" { (note) }
-        dl class="share-secret" {
-            @for (i, (label, value)) in rows.iter().enumerate() {
-                dt { (label) }
-                dd {
-                    input class="field__input" id=(format!("secret-{i}")) type="text" readonly value=(value);
-                    " " button type="button" data-js="copy" data-copy=(format!("secret-{i}")) { (ctx.t("access.copy")) }
-                }
-            }
-        }
-        p { a href=(back.0) { (back.1) } }
-    };
+    let ids: Vec<String> = (0..rows.len()).map(|i| format!("secret-{i}")).collect();
+    let fields: Vec<SecretField> = rows
+        .iter()
+        .zip(&ids)
+        .map(|((label, value), id)| SecretField {
+            id,
+            label,
+            value,
+            copy: ctx.t("access.copy"),
+        })
+        .collect();
+    let body = secret_result(title, secret_box(note, &fields), back);
     no_store(layout(&ctx, title, body).into_response())
 }
 
@@ -111,75 +114,96 @@ pub async fn access_view(st: &Shared, cu: &CurrentUser) -> AccessView {
     })
 }
 
+/// Last use for a table cell: "date from address", or "never".
 fn used(ctx: &Ctx, at: Option<i64>, ip: Option<&str>) -> String {
     match (at, ip) {
         (Some(t), Some(ip)) => ctx.tf(
-            "access.used_from",
-            &[("time", &ctx.datetime(t)), ("ip", ip)],
+            "api_tokens.used_from",
+            &[("date", &ctx.datetime(t)), ("ip", ip)],
         ),
-        (Some(t), None) => ctx.tf("access.used", &[("time", &ctx.datetime(t))]),
-        _ => ctx.t("access.never_used").to_string(),
+        (Some(t), None) => ctx.datetime(t),
+        _ => ctx.t("api_tokens.never_used").to_string(),
     }
 }
 
 /// The app password and session sections of the account page. `q` carries the outcome of
-/// the last form (`app=revoked|<error>`, `signed_out=<n>`).
+/// the last form (`app=revoked|<error>`, `signed_out=<n>`): a refused new password opens
+/// its form again with the reason.
 pub fn access_sections(ctx: &Ctx, csrf: &str, v: &AccessView, q: &Query) -> Markup {
-    let app_msg = q.get("app").map(|code| match code {
-        "revoked" => ("ok", ctx.t("access.app_revoked").to_string()),
-        "label" => (
-            "error",
-            ctx.tf(
-                "access.bad_label",
-                &[("max", &apppass::MAX_LABEL_CHARS.to_string())],
-            ),
-        ),
-        "duplicate" => ("error", ctx.t("access.app_duplicate").to_string()),
-        "too_many" => (
-            "error",
-            ctx.tf(
-                "access.app_too_many",
-                &[("max", &apppass::MAX_PER_USER.to_string())],
-            ),
-        ),
-        _ => ("error", ctx.t("ops.failed").to_string()),
+    let code = q.get("app");
+    let add_error = code.and_then(|code| match code {
+        "label" => Some(ctx.tf(
+            "access.bad_label",
+            &[("max", &apppass::MAX_LABEL_CHARS.to_string())],
+        )),
+        "duplicate" => Some(ctx.t("access.app_duplicate").to_string()),
+        "too_many" => Some(ctx.tf(
+            "access.app_too_many",
+            &[("max", &apppass::MAX_PER_USER.to_string())],
+        )),
+        _ => None,
+    });
+    let app_msg = code.filter(|_| add_error.is_none()).map(|code| match code {
+        "revoked" => ("ok", ctx.t("access.app_revoked")),
+        _ => ("error", ctx.t("ops.failed")),
     });
     let others = v.sessions.iter().filter(|(me, _)| !me).count() as u64;
+    let action = "/.cc/account/app-passwords";
     html! {
-        section class="account__app-passwords" id="app-passwords" aria-labelledby="app-passwords-title" {
-            h2 id="app-passwords-title" { (ctx.t("access.app_passwords")) }
-            p { (ctx.t("access.app_intro")) }
-            @if let Some((state, text)) = &app_msg {
-                p class="banner" data-state=(state) role="status" { (text) }
+        section class="admin-section account__app-passwords" id="app-passwords" aria-labelledby="app-passwords-title" {
+            div class="admin-section__head" {
+                h2 id="app-passwords-title" { (ctx.t("access.app_passwords")) }
+                (adder(ctx, &Adder {
+                    id: "add-app-password",
+                    button: ctx.t("access.app_password"),
+                    plus: true,
+                    label: ctx.t("access.app_add"),
+                    title: ctx.t("access.app_add"),
+                    action,
+                    submit: ctx.t("access.app_add"),
+                    error: add_error.as_deref(),
+                }, html! {
+                    input type="hidden" name="csrf" value=(csrf);
+                    input type="hidden" name="op" value="add";
+                    (form_field("app-label", ctx.t("access.device"), html! {
+                        div class="field__control" {
+                            input class="field__input" id="app-label" type="text" name="label" required
+                                maxlength=(apppass::MAX_LABEL_CHARS) placeholder=(ctx.t("access.device_hint")) autocomplete="off";
+                        }
+                    }, None))
+                }))
+            }
+            p class="admin-section__intro" { (ctx.t("access.app_intro")) }
+            @if let Some((state, text)) = app_msg {
+                p class="banner" data-state=(state) role="status" data-js=[(state == "error").then_some("form-error")] { (text) }
             }
             @if v.app_passwords.is_empty() {
-                p class="account__empty" { (ctx.t("access.app_none")) }
+                p class="admin-empty" { (ctx.t("access.app_none")) }
             } @else {
-                ul class="token-list" {
-                    @for r in &v.app_passwords {
-                        li class="token-list__item" {
-                            strong { (r.label) }
-                            " · " (ctx.tf("access.created", &[("time", &ctx.datetime(r.created))]))
-                            " · " (used(ctx, r.last_used, r.last_ip.as_deref()))
-                            form class="token-list__revoke" method="post" action="/.cc/account/app-passwords" {
-                                input type="hidden" name="csrf" value=(csrf);
-                                input type="hidden" name="op" value="revoke";
-                                input type="hidden" name="id" value=(r.id);
-                                button type="submit" { (ctx.t("access.revoke")) }
+                table class="admin-table" {
+                    thead { tr {
+                        th scope="col" { (ctx.t("access.device")) }
+                        th scope="col" { (ctx.t("api_tokens.created")) }
+                        th scope="col" { (ctx.t("api_tokens.last_used")) }
+                        th scope="col" { span class="vh" { (ctx.t("api_tokens.actions")) } }
+                    } }
+                    tbody {
+                        @for r in &v.app_passwords {
+                            tr {
+                                th scope="row" { (r.label) }
+                                td data-label=(ctx.t("api_tokens.created")) { (ctx.datetime(r.created)) }
+                                td data-label=(ctx.t("api_tokens.last_used")) { (used(ctx, r.last_used, r.last_ip.as_deref())) }
+                                td class="actions-cell" { div class="row-actions" {
+                                    (row_action(action, html! {
+                                        input type="hidden" name="csrf" value=(csrf);
+                                        input type="hidden" name="op" value="revoke";
+                                        input type="hidden" name="id" value=(r.id);
+                                    }, ctx.t("access.revoke"), Some(&ctx.tf("access.revoke_confirm", &[("label", &r.label)]))))
+                                } }
                             }
                         }
                     }
                 }
-            }
-            form class="token-add" method="post" action="/.cc/account/app-passwords" {
-                input type="hidden" name="csrf" value=(csrf);
-                input type="hidden" name="op" value="add";
-                label class="field" {
-                    span class="field__label" { (ctx.t("access.device")) }
-                    input class="field__input" type="text" name="label" required
-                        maxlength=(apppass::MAX_LABEL_CHARS) placeholder=(ctx.t("access.device_hint"));
-                }
-                button type="submit" { (ctx.t("access.app_add")) }
             }
         }
         section class="account__sessions" id="sessions" aria-labelledby="sessions-title" {
@@ -204,6 +228,7 @@ pub fn access_sections(ctx: &Ctx, csrf: &str, v: &AccessView, q: &Query) -> Mark
                 }
             }
         }
+        (confirm_dialog(ctx))
     }
 }
 
@@ -330,6 +355,8 @@ pub async fn sessions_submit(
 pub struct UsersData {
     pub people: Vec<User>,
     pub agents: Vec<(User, Vec<AgentToken>)>,
+    /// Status API tokens (review Q27: with the agents under "Machines").
+    pub api_tokens: Vec<ApiToken>,
     /// "admin" and the roles of the config.
     pub roles: Vec<String>,
     pub mcp_on: bool,
@@ -355,11 +382,20 @@ async fn users_data(st: &Shared) -> UsersData {
                 (a, own)
             })
             .collect();
+        let mut api_tokens: Vec<ApiToken> = st
+            .db
+            .api_tokens()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect();
+        api_tokens.sort_by_key(|t| t.created);
         let mut roles = vec![ADMIN_ROLE.to_string()];
         roles.extend(st.cfg.roles.keys().cloned());
         UsersData {
             people,
             agents,
+            api_tokens,
             roles,
             mcp_on: st.cfg.mcp.listen.is_some(),
         }
@@ -368,14 +404,15 @@ async fn users_data(st: &Shared) -> UsersData {
     .unwrap_or(UsersData {
         people: Vec::new(),
         agents: Vec::new(),
+        api_tokens: Vec::new(),
         roles: Vec::new(),
         mcp_on: false,
     })
 }
 
-fn role_select(name: &str, roles: &[String], current: &str, agents: bool) -> Markup {
+fn role_select(id: &str, roles: &[String], current: &str, agents: bool) -> Markup {
     html! {
-        select class="field__input" name=(name) {
+        select class="field__input" id=(id) name="role" {
             @for r in roles.iter().filter(|r| !agents || *r != ADMIN_ROLE) {
                 option value=(r) selected[r == current] { (r) }
             }
@@ -391,165 +428,323 @@ fn hidden(csrf: &str, op: &str, name: &str) -> Markup {
     }
 }
 
+/// The outcome shown on the accounts page: a banner on top, or (`adder`) inside the create
+/// form that failed, which opens again.
+pub struct Msg {
+    state: &'static str,
+    text: String,
+    adder: Option<String>,
+}
+
+impl Msg {
+    fn ok(text: String) -> Msg {
+        Msg {
+            state: "ok",
+            text,
+            adder: None,
+        }
+    }
+
+    fn error(text: String, adder: Option<String>) -> Msg {
+        Msg {
+            state: "error",
+            text,
+            adder,
+        }
+    }
+
+    /// The error for the create form `id`, if it failed.
+    fn for_adder(msg: Option<&Msg>, id: &str) -> Option<String> {
+        msg.filter(|m| m.adder.as_deref() == Some(id))
+            .map(|m| m.text.clone())
+    }
+}
+
+/// The role of a row: a select with its button (a role change is not undone by a slip of
+/// the select, so it doesn't post on change); one's own role as text.
+fn role_cell(ctx: &Ctx, csrf: &str, u: &User, roles: &[String], me: bool) -> Markup {
+    let id = format!("role-{}", u.name);
+    html! {
+        @if me {
+            (u.role)
+        } @else {
+            form class="inline-form" method="post" action=(USERS) {
+                (hidden(csrf, "role", &u.name))
+                label class="vh" for=(id) { (ctx.tf("users.role_of", &[("name", &u.name)])) }
+                (role_select(&id, roles, &u.role, u.is_agent()))
+                button class="btn btn--quiet" type="submit" { (ctx.t("users.set_role")) }
+            }
+        }
+    }
+}
+
+/// Block (asks first) or unblock.
+fn block_action(ctx: &Ctx, csrf: &str, u: &User) -> Markup {
+    if u.disabled {
+        row_action(
+            USERS,
+            hidden(csrf, "enable", &u.name),
+            ctx.t("users.enable"),
+            None,
+        )
+    } else {
+        row_action(
+            USERS,
+            hidden(csrf, "disable", &u.name),
+            ctx.t("users.disable"),
+            Some(&ctx.tf("users.disable_confirm", &[("name", &u.name)])),
+        )
+    }
+}
+
+fn state_tags(ctx: &Ctx, st: &AppState, u: &User) -> Markup {
+    html! {
+        @if u.disabled { " " (tag(ctx.t("users.blocked"), None, Some("off"))) }
+        @if u.must_change_password { " " (tag(ctx.t("users.must_change"), None, None)) }
+        @if !accounts::role_exists(&st.cfg, &u.role) { " " (tag(ctx.t("users.role_missing"), None, Some("warning"))) }
+    }
+}
+
+fn text_field(id: &str, label: &str, name: &str, max: usize, placeholder: Option<&str>) -> Markup {
+    form_field(
+        id,
+        label,
+        html! {
+            div class="field__control" {
+                input class="field__input" id=(id) type="text" name=(name) required maxlength=(max)
+                    autocomplete="off" spellcheck="false" placeholder=[placeholder];
+            }
+        },
+        None,
+    )
+}
+
+fn select_field(id: &str, label: &str, select: Markup) -> Markup {
+    form_field(
+        id,
+        label,
+        html! { div class="field__control" { (select) } },
+        None,
+    )
+}
+
+/// The accounts page (review Q26, Q27): people, then "Machines" (agents with their MCP
+/// tokens, status API tokens). Each part leads with its table; the create forms sit behind
+/// "+ …" buttons, the row actions in the rows.
 fn users_view(
     ctx: &Ctx,
     st: &AppState,
     cu: &CurrentUser,
     d: &UsersData,
-    msg: Option<(&str, String)>,
+    msg: Option<Msg>,
 ) -> Markup {
     let title = ctx.t("users.title");
     let csrf = cu.csrf.as_str();
-    let role_ok = |r: &str| accounts::role_exists(&st.cfg, r);
+    let msg = msg.as_ref();
+    let err = |id: &str| Msg::for_adder(msg, id);
+    let mut ctx = ctx.clone();
+    ctx.scripts.extend(["copy.js", "forms.js"]);
+    let ctx = &ctx;
+    let default_role = d.roles.get(1).map(String::as_str).unwrap_or(ADMIN_ROLE);
     layout(
         ctx,
         title,
         html! {
             h1 class="users__title" { (title) }
-            p { a href="/.cc/admin/audit" { (ctx.t("users.audit_link")) } }
-            @if let Some((state, text)) = &msg {
-                p class="banner" data-state=(state) role="status" { (text) }
+            @if let Some(m) = msg.filter(|m| m.adder.is_none()) {
+                p class="banner" data-state=(m.state) role="status"
+                    data-js=[(m.state == "error").then_some("form-error")] { (m.text) }
             }
-            section class="users__people" aria-labelledby="people-title" {
-                h2 id="people-title" { (ctx.t("users.people")) }
-                table class="users-table" {
+            section class="admin-section" id="people" aria-labelledby="people-title" {
+                div class="admin-section__head" {
+                    h2 id="people-title" { (ctx.t("users.people")) }
+                    (adder(ctx, &Adder {
+                        id: "add-person",
+                        button: ctx.t("nav.account"),
+                        plus: true,
+                        label: ctx.t("users.add"),
+                        title: ctx.t("users.add_title"),
+                        action: USERS,
+                        submit: ctx.t("users.add"),
+                        error: err("add-person").as_deref(),
+                    }, html! {
+                        input type="hidden" name="csrf" value=(csrf);
+                        input type="hidden" name="op" value="add";
+                        (text_field("person-name", ctx.t("users.name"), "name", 32, None))
+                        (select_field("person-role", ctx.t("users.role"), role_select("person-role", &d.roles, default_role, false)))
+                    }))
+                }
+                table class="admin-table users-table" {
                     thead { tr {
                         th scope="col" { (ctx.t("users.name")) }
                         th scope="col" { (ctx.t("users.role")) }
                         th scope="col" { (ctx.t("users.last_login")) }
-                        th scope="col" { (ctx.t("users.actions")) }
+                        th scope="col" { span class="vh" { (ctx.t("users.actions")) } }
                     } }
                     tbody {
                         @for u in &d.people {
                             @let me = User::key(&u.name) == cu.key;
                             tr data-state=(if u.disabled { "disabled" } else { "active" }) {
-                                th scope="row" {
-                                    (u.name)
-                                    @if u.disabled { " · " span class="badge" { (ctx.t("users.blocked")) } }
-                                    @if u.must_change_password { " · " span class="badge" { (ctx.t("users.must_change")) } }
-                                    @if !role_ok(&u.role) { " · " span class="badge" data-state="warning" { (ctx.t("users.role_missing")) } }
+                                th scope="row" { span class="admin-table__name" { (u.name) } (state_tags(ctx, st, u)) }
+                                td data-label=(ctx.t("users.role")) { (role_cell(ctx, csrf, u, &d.roles, me)) }
+                                td data-label=(ctx.t("users.last_login")) {
+                                    @match u.last_login { Some(t) => (ctx.datetime(t)), None => (ctx.t("users.never")) }
                                 }
-                                td {
-                                    @if me {
-                                        (u.role)
-                                    } @else {
-                                        form class="users__role" method="post" action=(USERS) {
-                                            (hidden(csrf, "role", &u.name))
-                                            (role_select("role", &d.roles, &u.role, false))
-                                            " " button type="submit" { (ctx.t("users.set_role")) }
-                                        }
-                                    }
-                                }
-                                td { @match u.last_login { Some(t) => (ctx.datetime(t)), None => (ctx.t("users.never")) } }
-                                td class="users__actions" {
-                                    form method="post" action=(USERS) {
-                                        (hidden(csrf, "passwd", &u.name))
-                                        button type="submit" { (ctx.t("users.passwd")) }
-                                    }
-                                    @if !me {
-                                        form method="post" action=(USERS) {
-                                            (hidden(csrf, if u.disabled { "enable" } else { "disable" }, &u.name))
-                                            button type="submit" { (ctx.t(if u.disabled { "users.enable" } else { "users.disable" })) }
-                                        }
-                                    }
-                                }
+                                td class="actions-cell" { div class="row-actions" {
+                                    (row_action(USERS, hidden(csrf, "passwd", &u.name), ctx.t("users.passwd"),
+                                        Some(&ctx.tf("users.passwd_confirm", &[("name", &u.name)]))))
+                                    @if !me { (block_action(ctx, csrf, u)) }
+                                } }
                             }
                         }
                     }
-                }
-                form class="users__add" method="post" action=(USERS) {
-                    input type="hidden" name="csrf" value=(csrf);
-                    input type="hidden" name="op" value="add";
-                    h3 { (ctx.t("users.add_title")) }
-                    label class="field" {
-                        span class="field__label" { (ctx.t("users.name")) }
-                        input class="field__input" type="text" name="name" required maxlength="32" autocomplete="off";
-                    }
-                    label class="field" {
-                        span class="field__label" { (ctx.t("users.role")) }
-                        (role_select("role", &d.roles, d.roles.get(1).map(String::as_str).unwrap_or(ADMIN_ROLE), false))
-                    }
-                    button type="submit" { (ctx.t("users.add")) }
                 }
             }
-            section class="users__agents" aria-labelledby="agents-title" {
-                h2 id="agents-title" { (ctx.t("users.agents")) }
-                p { (ctx.t("users.agents_intro")) }
-                @if !d.mcp_on { p class="banner" data-state="warning" { (ctx.t("users.mcp_off")) } }
-                @for (a, tokens) in &d.agents {
-                    article class="agent-card" data-state=(if a.disabled { "disabled" } else { "active" }) {
-                        h3 class="agent-card__name" {
-                            (a.name)
-                            span class="badge" { (ctx.t("users.agent_badge")) }
-                            @if a.disabled { " " span class="badge" { (ctx.t("users.blocked")) } }
-                            @if !role_ok(&a.role) { " " span class="badge" data-state="warning" { (ctx.t("users.role_missing")) } }
-                        }
-                        form class="users__role" method="post" action=(USERS) {
-                            (hidden(csrf, "role", &a.name))
-                            (role_select("role", &d.roles, &a.role, true))
-                            " " button type="submit" { (ctx.t("users.set_role")) }
-                        }
-                        form method="post" action=(USERS) {
-                            (hidden(csrf, if a.disabled { "enable" } else { "disable" }, &a.name))
-                            button type="submit" { (ctx.t(if a.disabled { "users.enable" } else { "users.disable" })) }
-                        }
-                        @if tokens.is_empty() {
-                            p { (ctx.t("users.tokens_none")) }
-                        } @else {
-                            ul class="token-list" {
-                                @for t in tokens {
-                                    li class="token-list__item" data-state=(if t.expires.is_some_and(|e| e <= now()) { "expired" } else { "active" }) {
-                                        strong { (t.label) }
-                                        " · " (ctx.tf("access.created", &[("time", &ctx.datetime(t.created))]))
-                                        @if let Some(e) = t.expires {
-                                            " · " (ctx.tf("users.expires_at", &[("time", &ctx.datetime(e))]))
+            section class="admin-section" id="machines" aria-labelledby="machines-title" {
+                h2 id="machines-title" { (ctx.t("users.machines")) }
+                div class="admin-subsection" id="agents" {
+                    div class="admin-section__head" {
+                        h3 id="agents-title" { (ctx.t("users.agents")) }
+                        (adder(ctx, &Adder {
+                            id: "add-agent",
+                            button: ctx.t("users.agent_badge"),
+                            plus: true,
+                            label: ctx.t("users.agent_add"),
+                            title: ctx.t("users.agent_add_title"),
+                            action: USERS,
+                            submit: ctx.t("users.agent_add"),
+                            error: err("add-agent").as_deref(),
+                        }, html! {
+                            input type="hidden" name="csrf" value=(csrf);
+                            input type="hidden" name="op" value="agent_add";
+                            (text_field("agent-name", ctx.t("users.name"), "name", 32, None))
+                            (select_field("agent-role", ctx.t("users.role"), role_select("agent-role", &d.roles, "", true)))
+                        }))
+                    }
+                    p class="admin-section__intro" { (ctx.t("users.agents_intro")) }
+                    @if !d.mcp_on { p class="banner" data-state="warning" { (ctx.t("users.mcp_off")) } }
+                    @if d.agents.is_empty() {
+                        p class="admin-empty" { (ctx.t("users.agents_none")) }
+                    } @else {
+                        table class="admin-table agents-table" {
+                            thead { tr {
+                                th scope="col" { (ctx.t("users.name")) }
+                                th scope="col" { (ctx.t("users.role")) }
+                                th scope="col" { (ctx.t("users.tokens")) }
+                                th scope="col" { span class="vh" { (ctx.t("users.actions")) } }
+                            } }
+                            tbody {
+                                @for (a, tokens) in &d.agents {
+                                    @let adder_id = format!("add-token-{}", a.name);
+                                    tr data-state=(if a.disabled { "disabled" } else { "active" }) {
+                                        th scope="row" { span class="admin-table__name" { (a.name) } (state_tags(ctx, st, a)) }
+                                        td data-label=(ctx.t("users.role")) { (role_cell(ctx, csrf, a, &d.roles, false)) }
+                                        td class="tokens-cell" data-label=(ctx.t("users.tokens")) {
+                                            @if tokens.is_empty() {
+                                                p class="admin-empty" { (ctx.t("users.tokens_none")) }
+                                            } @else {
+                                                ul class="token-list" {
+                                                    @for t in tokens {
+                                                        li class="token-list__item" data-state=(if t.expires.is_some_and(|e| e <= now()) { "expired" } else { "active" }) {
+                                                            span class="token-list__text" {
+                                                                strong { (t.label) }
+                                                                span class="token-list__meta" {
+                                                                    @if let Some(e) = t.expires {
+                                                                        (ctx.tf("users.expires_at", &[("time", &ctx.datetime(e))])) " · "
+                                                                    }
+                                                                    (ctx.t("api_tokens.last_used")) ": " (used(ctx, t.last_used, t.last_ip.as_deref()))
+                                                                }
+                                                            }
+                                                            (row_action(USERS, html! {
+                                                                (hidden(csrf, "agent_revoke", &a.name))
+                                                                input type="hidden" name="id" value=(t.id);
+                                                            }, ctx.t("access.revoke"), Some(&ctx.tf("access.revoke_confirm", &[("label", &t.label)]))))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            @let token_title = ctx.tf("users.token_add_title", &[("agent", &a.name)]);
+                                            (adder(ctx, &Adder {
+                                                id: &adder_id,
+                                                button: ctx.t("users.token"),
+                                                plus: true,
+                                                label: &token_title,
+                                                title: &token_title,
+                                                action: USERS,
+                                                submit: ctx.t("users.token_add"),
+                                                error: err(&adder_id).as_deref(),
+                                            }, html! {
+                                                (hidden(csrf, "agent_token", &a.name))
+                                                (text_field(&format!("{adder_id}-label"), ctx.t("users.token_host"), "label", agent::MAX_LABEL_CHARS, None))
+                                                (select_field(&format!("{adder_id}-expires"), ctx.t("users.token_expires"), html! {
+                                                    select class="field__input" id=(format!("{adder_id}-expires")) name="expires" {
+                                                        @for days in TOKEN_DAYS {
+                                                            option value=(days) selected[days == 90] {
+                                                                @if days == 0 { (ctx.t("users.expires_never")) }
+                                                                @else { (ctx.tn("users.expires_days", u64::from(days))) }
+                                                            }
+                                                        }
+                                                    }
+                                                }))
+                                            }))
                                         }
-                                        " · " (used(ctx, t.last_used, t.last_ip.as_deref()))
-                                        form class="token-list__revoke" method="post" action=(USERS) {
-                                            (hidden(csrf, "agent_revoke", &a.name))
-                                            input type="hidden" name="id" value=(t.id);
-                                            button type="submit" { (ctx.t("access.revoke")) }
-                                        }
+                                        td class="actions-cell" { div class="row-actions" { (block_action(ctx, csrf, a)) } }
                                     }
                                 }
                             }
-                        }
-                        form class="token-add" method="post" action=(USERS) {
-                            (hidden(csrf, "agent_token", &a.name))
-                            label class="field" {
-                                span class="field__label" { (ctx.t("users.token_host")) }
-                                input class="field__input" type="text" name="label" required maxlength=(agent::MAX_LABEL_CHARS);
-                            }
-                            label class="field" {
-                                span class="field__label" { (ctx.t("users.token_expires")) }
-                                select class="field__input" name="expires" {
-                                    @for days in TOKEN_DAYS {
-                                        option value=(days) selected[days == 90] {
-                                            @if days == 0 { (ctx.t("users.expires_never")) }
-                                            @else { (ctx.tn("users.expires_days", u64::from(days))) }
-                                        }
-                                    }
-                                }
-                            }
-                            button type="submit" { (ctx.t("users.token_add")) }
                         }
                     }
                 }
-                form class="users__add" method="post" action=(USERS) {
-                    input type="hidden" name="csrf" value=(csrf);
-                    input type="hidden" name="op" value="agent_add";
-                    h3 { (ctx.t("users.agent_add_title")) }
-                    label class="field" {
-                        span class="field__label" { (ctx.t("users.name")) }
-                        input class="field__input" type="text" name="name" required maxlength="32" autocomplete="off";
+                div class="admin-subsection" id="api-tokens" {
+                    div class="admin-section__head" {
+                        h3 id="api-tokens-title" { (ctx.t("api_tokens.title")) }
+                        (adder(ctx, &Adder {
+                            id: "add-api-token",
+                            button: ctx.t("users.token"),
+                            plus: true,
+                            label: ctx.t("api_tokens.add"),
+                            title: ctx.t("api_tokens.add_title"),
+                            action: API_TOKENS,
+                            submit: ctx.t("api_tokens.add"),
+                            error: err("add-api-token").as_deref(),
+                        }, html! {
+                            input type="hidden" name="csrf" value=(csrf);
+                            input type="hidden" name="op" value="add";
+                            (text_field("api-token-label", ctx.t("api_tokens.label"), "label", apitoken::MAX_LABEL_CHARS, Some(ctx.t("api_tokens.label_example"))))
+                        }))
                     }
-                    label class="field" {
-                        span class="field__label" { (ctx.t("users.role")) }
-                        (role_select("role", &d.roles, "", true))
+                    p class="admin-section__intro" { (ctx.t("api_tokens.intro")) }
+                    @if d.api_tokens.is_empty() {
+                        p class="admin-empty" { (ctx.t("api_tokens.none")) }
+                    } @else {
+                        table class="admin-table api-tokens-table" {
+                            thead { tr {
+                                th scope="col" { (ctx.t("api_tokens.label")) }
+                                th scope="col" { (ctx.t("api_tokens.created")) }
+                                th scope="col" { (ctx.t("api_tokens.last_used")) }
+                                th scope="col" { span class="vh" { (ctx.t("api_tokens.actions")) } }
+                            } }
+                            tbody {
+                                @for t in &d.api_tokens {
+                                    tr data-id=(t.id) {
+                                        th scope="row" { (t.label) }
+                                        td data-label=(ctx.t("api_tokens.created")) { (ctx.datetime(t.created)) }
+                                        td data-label=(ctx.t("api_tokens.last_used")) { (used(ctx, t.last_used, t.last_ip.as_deref())) }
+                                        td class="actions-cell" { div class="row-actions" {
+                                            (row_action(API_TOKENS, html! {
+                                                input type="hidden" name="csrf" value=(csrf);
+                                                input type="hidden" name="op" value="revoke";
+                                                input type="hidden" name="id" value=(t.id);
+                                            }, ctx.t("api_tokens.revoke"), Some(&ctx.tf("access.revoke_confirm", &[("label", &t.label)]))))
+                                        } }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    button type="submit" { (ctx.t("users.agent_add")) }
                 }
             }
+            (confirm_dialog(ctx))
         },
     )
 }
@@ -570,10 +765,9 @@ pub async fn users_page(
     let Some(cu) = admin_of(&principal, &current) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Users);
     let q = Query::parse(uri.query());
-    let msg = q
-        .has("saved")
-        .then(|| ("ok", ctx.t("users.saved").to_string()));
+    let msg = q.has("saved").then(|| Msg::ok(ctx.t("users.saved").into()));
     let d = users_data(&st).await;
     users_view(&ctx, &st, cu, &d, msg).into_response()
 }
@@ -636,16 +830,25 @@ pub async fn users_submit(
     let Some(cu) = admin_of(&principal, &current) else {
         return fail(&ctx, Fail::NotFound);
     };
+    let ctx = ctx.admin_page(AdminPage::Users);
     if !csrf_ok(&headers, &st, cu, &form.csrf) {
         return forbidden(&ctx);
     }
+    // A refused create opens its form again with the reason.
+    let failed_form = match form.op.as_str() {
+        "add" => Some("add-person".to_string()),
+        "agent_add" => Some("add-agent".to_string()),
+        "agent_token" => Some(format!("add-token-{}", form.name.trim())),
+        _ => None,
+    };
     let error = |text: String| {
         let (st, ctx, cu) = (st.clone(), ctx.clone(), cu.clone());
+        let msg = Msg::error(text, failed_form.clone());
         async move {
             let d = users_data(&st).await;
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                users_view(&ctx, &st, &cu, &d, Some(("error", text))),
+                users_view(&ctx, &st, &cu, &d, Some(msg)),
             )
                 .into_response()
         }
@@ -796,7 +999,7 @@ pub async fn users_submit(
                         ),
                         &[(ctx.t("users.token"), &token)],
                         &note,
-                        back,
+                        (&format!("{USERS}#agents"), ctx.t("users.back")),
                     )
                 }
                 Some(Err(e)) => error(agent_error_text(&ctx, &e)).await,
@@ -830,6 +1033,135 @@ pub async fn users_submit(
     }
 }
 
+// ---- admin: status API tokens (with the agents, review Q27) -------------------------------
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct TokenForm {
+    csrf: String,
+    op: String,
+    label: String,
+    id: String,
+}
+
+/// POST `/.cc/admin/api-tokens`: create (shown once) or revoke a status API token; the
+/// answers go back to the accounts page.
+pub async fn tokens_submit(
+    State(st): State<Shared>,
+    Extension(client): Extension<ClientInfo>,
+    Extension(principal): Extension<Principal>,
+    Extension(current): Extension<Current>,
+    headers: HeaderMap,
+    Form(form): Form<TokenForm>,
+) -> Response {
+    let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
+    let Some(cu) = admin_of(&principal, &current) else {
+        return fail(&ctx, Fail::NotFound);
+    };
+    let ctx = ctx.admin_page(AdminPage::Users);
+    if !csrf_ok(&headers, &st, cu, &form.csrf) {
+        return forbidden(&ctx);
+    }
+    let rerender = |text: String, adder: Option<&str>| {
+        let (st, ctx, cu) = (st.clone(), ctx.clone(), cu.clone());
+        let msg = Msg::error(text, adder.map(str::to_string));
+        async move {
+            let d = users_data(&st).await;
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                users_view(&ctx, &st, &cu, &d, Some(msg)),
+            )
+                .into_response()
+        }
+    };
+    match form.op.as_str() {
+        "add" => {
+            let created = {
+                let (st, label, by) = (st.clone(), form.label.clone(), actor(cu));
+                blocking(move || apitoken::create(&st.db, &label, &by, now())).await
+            };
+            let (token, rec) = match created {
+                Some(Ok(t)) => t,
+                Some(Err(e)) => {
+                    let msg = match e {
+                        apitoken::CreateError::BadLabel => ctx.tf(
+                            "api_tokens.bad_label",
+                            &[("max", &apitoken::MAX_LABEL_CHARS.to_string())],
+                        ),
+                        apitoken::CreateError::Duplicate => {
+                            ctx.t("api_tokens.duplicate").to_string()
+                        }
+                        apitoken::CreateError::TooMany => ctx.tf(
+                            "api_tokens.too_many",
+                            &[("max", &apitoken::MAX_TOKENS.to_string())],
+                        ),
+                        apitoken::CreateError::Db(_) => ctx.t("ops.failed").to_string(),
+                    };
+                    return rerender(msg, Some("add-api-token")).await;
+                }
+                None => return rerender(ctx.t("ops.failed").into(), Some("add-api-token")).await,
+            };
+            audit(
+                &st,
+                actor(cu),
+                client.ip,
+                "api_token_created",
+                &rec.label,
+                &rec.id,
+            );
+            api_token_created(&ctx, &rec.label, &token)
+        }
+        "revoke" => {
+            let revoked = {
+                let (st, id) = (st.clone(), form.id.clone());
+                blocking(move || apitoken::revoke(&st.db, &id)).await
+            };
+            match revoked {
+                Some(Ok(Some(rec))) => {
+                    audit(
+                        &st,
+                        actor(cu),
+                        client.ip,
+                        "api_token_revoked",
+                        &rec.label,
+                        &rec.id,
+                    );
+                    Redirect::to(&format!("{USERS}#api-tokens")).into_response()
+                }
+                Some(Ok(None)) => rerender(ctx.t("api_tokens.gone").into(), None).await,
+                _ => rerender(ctx.t("ops.failed").into(), None).await,
+            }
+        }
+        _ => rerender(ctx.t("ops.invalid").into(), None).await,
+    }
+}
+
+/// A new status API token, shown once, with an example request.
+fn api_token_created(ctx: &Ctx, label: &str, token: &str) -> Response {
+    let mut ctx = ctx.clone();
+    ctx.scripts.push("copy.js");
+    let title = ctx.tf("api_tokens.created_title", &[("label", label)]);
+    let body = html! {
+        (secret_box(ctx.t("api_tokens.once"), &[SecretField {
+            id: "secret-token",
+            label: ctx.t("api_tokens.token"),
+            value: token,
+            copy: ctx.t("api_tokens.copy"),
+        }]))
+        p { (ctx.t("api_tokens.usage")) }
+        pre class="secret-result__example" { code { "curl -H 'Authorization: Bearer " (token) "' http://<host>/api/v1/status" } }
+    };
+    let back = format!("{USERS}#api-tokens");
+    no_store(
+        layout(
+            &ctx,
+            &title,
+            secret_result(&title, body, (&back, ctx.t("users.back"))),
+        )
+        .into_response(),
+    )
+}
+
 // ---- admin: audit log -------------------------------------------------------------------
 
 /// GET `/.cc/admin/audit?actor=…&action=…`: the newest entries, filtered by parts of the
@@ -845,6 +1177,7 @@ pub async fn audit_page(
     if admin_of(&principal, &current).is_none() {
         return fail(&ctx, Fail::NotFound);
     }
+    let ctx = ctx.admin_page(AdminPage::Audit);
     let q = Query::parse(uri.query());
     let who = q.get("actor").unwrap_or("").trim().to_lowercase();
     let what = q.get("action").unwrap_or("").trim().to_lowercase();
@@ -864,7 +1197,6 @@ pub async fn audit_page(
         title,
         html! {
             h1 { (title) }
-            p { a href=(USERS) { (ctx.t("audit.users_link")) } }
             form class="audit__filter" method="get" action="/.cc/admin/audit" {
                 label class="field" {
                     span class="field__label" { (ctx.t("audit.actor")) }

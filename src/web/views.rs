@@ -87,7 +87,8 @@ pub enum Section {
 }
 
 /// The sidebar: readable volumes as a tree (the current one opened along the path), the
-/// current volume's free space and, for accounts, the links to shares and trash.
+/// current volume's free space and, for accounts, the links to shares and trash. On the
+/// admin's pages (`admin`) it holds the admin navigation instead (review Q14).
 #[derive(Debug, Clone)]
 pub struct Nav {
     pub section: Section,
@@ -95,6 +96,59 @@ pub struct Nav {
     pub space: Option<SpaceLine>,
     /// Signed in: the number of own active shares.
     pub shares: Option<usize>,
+    /// An admin page: the admin navigation with this page marked.
+    pub admin: Option<AdminPage>,
+}
+
+/// The pages of the admin navigation, in its order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminPage {
+    Dashboard,
+    Alerts,
+    Users,
+    Volumes,
+    Shares,
+    Appearance,
+    Audit,
+}
+
+impl AdminPage {
+    pub const ALL: [AdminPage; 7] = [
+        AdminPage::Dashboard,
+        AdminPage::Alerts,
+        AdminPage::Users,
+        AdminPage::Volumes,
+        AdminPage::Shares,
+        AdminPage::Appearance,
+        AdminPage::Audit,
+    ];
+
+    /// (link, icon, i18n key of the label).
+    fn link(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            AdminPage::Dashboard => ("/.cc/admin/dashboard", "shield", "dashboard.title"),
+            AdminPage::Alerts => ("/.cc/admin/alerts", "warning", "alerts.title"),
+            AdminPage::Users => ("/.cc/admin/users", "user", "users.title"),
+            // The sidebar's word for the libraries (review Q25 unifies the wording).
+            AdminPage::Volumes => ("/.cc/admin/volumes", "drive", "nav.volumes"),
+            AdminPage::Shares => ("/.cc/shares?all=1", "share", "shares.all_title"),
+            AdminPage::Appearance => ("/.cc/admin/appearance", "image", "appearance.title"),
+            AdminPage::Audit => ("/.cc/admin/audit", "list", "audit.title"),
+        }
+    }
+}
+
+impl Nav {
+    /// The sidebar of an admin page.
+    pub fn admin(page: AdminPage) -> Nav {
+        Nav {
+            section: Section::Admin,
+            tree: Vec::new(),
+            space: None,
+            shares: None,
+            admin: Some(page),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +235,11 @@ impl<'a> Ctx<'a> {
             nav: Some(nav),
             ..self
         }
+    }
+
+    /// An admin page: the sidebar holds the admin navigation. Only after the admin check.
+    pub fn admin_page(self, page: AdminPage) -> Ctx<'a> {
+        self.with_nav(Nav::admin(page))
     }
 }
 
@@ -356,9 +415,10 @@ pub fn langswitch(ctx: &Ctx, here: &str) -> Markup {
 fn appbar(ctx: &Ctx, crumbs: &[Crumb]) -> Markup {
     html! {
         header class="appbar" {
-            @if ctx.nav.is_some() {
+            @if let Some(nav) = &ctx.nav {
+                @let label = if nav.admin.is_some() { ctx.t("nav.open_admin_menu") } else { ctx.t("nav.open_menu") };
                 button class="appbar__menu btn btn--icon" type="button" data-js="nav-toggle"
-                    aria-controls="sidenav" aria-expanded="false" aria-label=(ctx.t("nav.open_menu")) {
+                    aria-controls="sidenav" aria-expanded="false" aria-label=(label) {
                     (icon("menu"))
                 }
             }
@@ -551,15 +611,10 @@ fn account_menu(ctx: &Ctx, name: &str, csrf: &str) -> Markup {
         }
         div class="menu account__menu" id="account-menu" role="menu" aria-label=(ctx.t("nav.account_menu")) popover {
             (item("/.cc/account", "user", ctx.t("nav.account")))
-            (item("/.cc/shares", "share", ctx.t("nav.shares")))
-            (item("/.cc/trash", "trash", ctx.t("nav.trash")))
+            // Shares and trash are in the sidebar (and the tab bar / the account page); the
+            // admin pages have their own navigation in the sidebar (review Q14).
             @if ctx.admin {
-                (item("/.cc/admin/dashboard", "shield", ctx.t("dashboard.title")))
-                (item("/.cc/admin/alerts", "warning", ctx.t("alerts.title")))
-                (item("/.cc/admin/users", "user", ctx.t("users.title")))
-                (item("/.cc/admin/volumes", "drive", ctx.t("volumes.title")))
-                (item("/.cc/admin/appearance", "image", ctx.t("appearance.title")))
-                (item("/.cc/admin/audit", "list", ctx.t("audit.title")))
+                (item("/.cc/admin/dashboard", "shield", ctx.t("nav.admin")))
             }
             form class="account__sign-out" method="post" action="/.cc/logout" {
                 input type="hidden" name="csrf" value=(csrf);
@@ -592,6 +647,9 @@ fn tree(nodes: &[TreeNode]) -> Markup {
 }
 
 fn sidenav(ctx: &Ctx, nav: &Nav) -> Markup {
+    if let Some(page) = nav.admin {
+        return admin_nav(ctx, page);
+    }
     html! {
         nav class="sidenav" id="sidenav" aria-label=(ctx.t("nav.volumes")) {
             h2 class="sidenav__title" { (ctx.t("nav.volumes")) }
@@ -628,6 +686,36 @@ fn sidenav(ctx: &Ctx, nav: &Nav) -> Markup {
                             (icon("trash"))
                             (ctx.t("nav.trash"))
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The sidebar of the admin pages (review Q14): every admin page, the current one marked,
+/// and the way back to the libraries. Below 1024 px it is the drawer, like the tree.
+fn admin_nav(ctx: &Ctx, page: AdminPage) -> Markup {
+    html! {
+        nav class="sidenav" id="sidenav" data-variant="admin" aria-label=(ctx.t("nav.admin")) {
+            h2 class="sidenav__title" { (ctx.t("nav.admin")) }
+            // The tree's items: each skin marks the current page in its own way.
+            ul class="tree sidenav__admin" {
+                @for p in AdminPage::ALL {
+                    @let (href, icon_id, key) = p.link();
+                    li class="tree__item" {
+                        a class="tree__link" href=(href) aria-current=[(p == page).then_some("page")] {
+                            (icon(icon_id))
+                            (ctx.t(key))
+                        }
+                    }
+                }
+            }
+            ul class="sidenav__links" {
+                li {
+                    a class="sidenav__link" href="/" {
+                        (icon("chevron-left"))
+                        (ctx.t("nav.admin_back"))
                     }
                 }
             }
@@ -1865,6 +1953,159 @@ pub fn trash(ctx: &Ctx, v: &TrashView) -> Markup {
             }
         },
     )
+}
+
+// ---- admin tables and their forms (review Q26) -------------------------------------------
+
+/// One value of a "shown once" box.
+pub struct SecretField<'a> {
+    /// The field's id (`secret-…`): its label and copy button point at it.
+    pub id: &'a str,
+    pub label: &'a str,
+    pub value: &'a str,
+    /// The copy button's label.
+    pub copy: &'a str,
+}
+
+/// The one "shown once" box (review Q26) for every secret the app shows a single time:
+/// one-time passwords, agent and API tokens, app passwords, share and public-upload
+/// passwords. The warning, then each value in a read-only field with its label (what it is
+/// for) and a copy button (`copy.js` shows the buttons; without script the fields stay
+/// selectable). Pages with a box are sent `no-store`.
+pub fn secret_box(warning: &str, fields: &[SecretField]) -> Markup {
+    html! {
+        div class="secret-box" {
+            p class="banner secret-box__warning" data-state="warning" role="status" { (warning) }
+            @for f in fields {
+                div class="field secret-box__field" {
+                    label class="field__label" for=(f.id) { (f.label) }
+                    div class="field__control" {
+                        input class="field__input secret-box__value" id=(f.id) type="text" readonly value=(f.value)
+                            spellcheck="false" autocomplete="off";
+                        button class="btn btn--quiet secret-box__copy" type="button" data-js="copy" data-copy=(f.id) hidden {
+                            (icon("copy"))
+                            span class="btn__label" { (f.copy) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The answer to a create that made a secret: its title, the box (and whatever `body`
+/// adds), the way back. `forms.js` shows this block in the dialog the form was posted
+/// from; without script it is the page.
+pub fn secret_result(title: &str, body: Markup, back: (&str, &str)) -> Markup {
+    html! {
+        section class="secret-result" data-js="secret-result" aria-labelledby="secret-title" {
+            h1 class="secret-result__title" id="secret-title" { (title) }
+            (body)
+            p class="secret-result__back" data-js="secret-back" { a href=(back.0) { (back.1) } }
+        }
+    }
+}
+
+/// A create form behind its button (review Q26).
+pub struct Adder<'a> {
+    /// Unique on the page (`add-…`).
+    pub id: &'a str,
+    /// The button: a short noun after "+" ("Account"), or (`plus` false) an action of its
+    /// own ("Open uploads").
+    pub button: &'a str,
+    pub plus: bool,
+    /// What the button does, for screen readers ("Create account").
+    pub label: &'a str,
+    pub title: &'a str,
+    pub action: &'a str,
+    pub submit: &'a str,
+    /// The last post of this form failed: open, with the message.
+    pub error: Option<&'a str>,
+}
+
+/// A create form behind a "+ …" button. Without script a `<details>`: the button opens the
+/// form in place and it posts to its page as always. With script (`forms.js`) the form
+/// opens in a dialog, posts in the background and shows the answer there (a "shown once"
+/// box, or the error next to the fields); "Done" loads the page again.
+pub fn adder(ctx: &Ctx, a: &Adder, fields: Markup) -> Markup {
+    let title_id = format!("{}-title", a.id);
+    html! {
+        details class="adder" id=(a.id) data-js="adder" open[a.error.is_some()]
+            data-t-done=(ctx.t("share_dialog.done")) data-t-failed=(ctx.t("ops.failed")) {
+            @if a.plus {
+                summary class="btn adder__button" aria-label=(a.label) title=(a.label) {
+                    span class="adder__plus" aria-hidden="true" { "+" }
+                    span class="btn__label" aria-hidden="true" { (a.button) }
+                }
+            } @else {
+                summary class="btn adder__button" { span class="btn__label" { (a.button) } }
+            }
+            form class="dialog__form adder__form" method="post" action=(a.action) aria-labelledby=(title_id) {
+                h3 class="dialog__title adder__title" id=(title_id) { (a.title) }
+                p class="banner" data-state="error" role="alert" data-js="form-error" hidden[a.error.is_none()] {
+                    (a.error.unwrap_or(""))
+                }
+                (fields)
+                div class="dialog__actions" {
+                    button class="btn" type="button" data-js="dialog-cancel" hidden { (ctx.t("common.cancel")) }
+                    button class="btn btn--primary" type="submit" { (a.submit) }
+                }
+            }
+        }
+    }
+}
+
+/// A labelled field of an admin form (the design's `.field`).
+pub fn form_field(id: &str, label: &str, control: Markup, hint: Option<&str>) -> Markup {
+    html! {
+        div class="field" {
+            label class="field__label" for=(id) { (label) }
+            (control)
+            @if let Some(h) = hint {
+                p class="field__hint" { (h) }
+            }
+        }
+    }
+}
+
+/// An action in a table row: one button that posts `hidden` to `action`. `confirm`
+/// (destructive actions) is asked first in the page's confirm dialog with script; without
+/// script the post goes at once, as it always did.
+pub fn row_action(action: &str, hidden: Markup, label: &str, confirm: Option<&str>) -> Markup {
+    let class = if confirm.is_some() {
+        "btn btn--quiet btn--danger row-action__button"
+    } else {
+        "btn btn--quiet row-action__button"
+    };
+    html! {
+        form class="row-action" method="post" action=(action) data-confirm=[confirm] {
+            (hidden)
+            button class=(class) type="submit" { (label) }
+        }
+    }
+}
+
+/// The confirm dialog for row actions with `data-confirm` (`forms.js`): the question, then
+/// Cancel and the action's own label.
+pub fn confirm_dialog(ctx: &Ctx) -> Markup {
+    html! {
+        dialog class="dialog" data-js="confirm-dialog" aria-labelledby="confirm-title" {
+            form class="dialog__form" method="dialog" {
+                h2 class="dialog__title" id="confirm-title" data-js="confirm-text" {}
+                div class="dialog__actions" {
+                    button class="btn" type="button" data-js="dialog-cancel" { (ctx.t("common.cancel")) }
+                    button class="btn btn--primary" type="submit" value="ok" data-js="confirm-ok" {}
+                }
+            }
+        }
+    }
+}
+
+/// Small tags in an admin table (volume flags, account states). `title`: the long text.
+pub fn tag(text: &str, title: Option<&str>, state: Option<&str>) -> Markup {
+    html! {
+        span class="tag" title=[title] data-state=[state] { (text) }
+    }
 }
 
 pub fn error_page(ctx: &Ctx, title: &str, body: &str) -> Markup {

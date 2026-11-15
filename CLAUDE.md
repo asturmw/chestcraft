@@ -417,6 +417,19 @@ public write, shares from the UI), and the next UI slices as the design delivers
   stays as the no-JS fallback. `copy.js` → `cc.copyText` (clipboard, else select the field).
   Several items selected: Share is `aria-disabled` with `aria-describedby` + `title`; a tap,
   click or Vim `s` shows the `#share-multi-hint` bubble.
+  Step 7 done (admin, Q14/Q26/Q27): on every admin page and admins' `/.cc/shares?all=1` the
+  sidebar is the admin nav (`Nav::admin(page)`, `nav.sidenav[data-variant="admin"]`, tree
+  items, back link; on phones the drawer button shows only there). Account popover:
+  Account, Admin (admins), Sign out. Create forms are adders: `<details data-js="adder">`
+  without JS (a refused create re-renders with it open + the error); with JS
+  `assets/forms.js` moves the form into a dialog, posts it urlencoded and parses the HTML
+  answer (secret result in the dialog, error above the fields, "Done" reloads by GET).
+  Shown-once secrets go through `views::secret_box` inside `secret_result` (`no-store`;
+  also the public-upload password page now). Destructive row actions carry `data-confirm`
+  (dialog with JS, direct POST without). Status-API tokens moved to the accounts page
+  ("Machines": agents + tokens; `tokens_submit` now in `web/users.rs`, same route); the
+  volumes page is one table (muted path, tags, public uploads). Admin tables become cards
+  below 720 px. Dashboard with the sidebar: 4-column charts from 860 px container width.
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a
