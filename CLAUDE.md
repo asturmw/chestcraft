@@ -455,6 +455,9 @@ public write, shares from the UI), and the next UI slices as the design delivers
   the server (`cc.numberedName`, mirrors `fs/names.rs`): `x (1).ext` first.
   All ten backend steps of the review are done; the design requests (section 4 of the
   review file) are open.
+  Landing (2026-11-15, owner: the white bars look out of place): libraries as cards
+  (drive icon, name, the design's `.bar` SVG as in the sidebar instead of a native
+  `<meter>`, free space); provisional in `provisional.css` until the design delivers the landing.
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, the upload split button (provisional), an

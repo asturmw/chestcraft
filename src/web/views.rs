@@ -829,10 +829,19 @@ pub fn landing(ctx: &Ctx, cards: &[VolumeCard], health: Option<HealthLine>) -> M
                 ul class="volume-list" {
                     @for c in cards {
                         li class="volume-list__item" {
-                            a class="volume-list__link" href=(c.href) { (c.name) }
-                            @if let (Some(used), Some(total), Some(free)) = (c.used, c.total, &c.free_text) {
-                                meter class="volume-list__meter" min="0" max=(total) value=(used) {}
-                                p class="volume-list__free" { (free) }
+                            a class="volume-list__link" href=(c.href) {
+                                span class="volume-list__name" { (icon("drive")) (c.name) }
+                                @if let (Some(used), Some(total), Some(free)) = (c.used, c.total, &c.free_text) {
+                                    @let percent = (used.saturating_mul(100) / total.max(1)).min(100);
+                                    // The design's bar (as in the sidebar), not a <meter>: browsers
+                                    // draw that in their own colours over every skin.
+                                    svg class="bar volume-list__bar" viewBox="0 0 100 6" preserveAspectRatio="none"
+                                        role="img" aria-label=(ctx.tf("nav.space_used", &[("percent", &percent.to_string())])) {
+                                        rect class="bar__track" width="100" height="6" {}
+                                        rect class="bar__fill" width=(percent) height="6" {}
+                                    }
+                                    span class="volume-list__free" { (free) }
+                                }
                             }
                         }
                     }

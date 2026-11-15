@@ -667,3 +667,20 @@ a.menu__item { text-decoration: none; }
 /* The admin navigation uses the tree's items (each skin marks the current page), but its
    pages don't open: no expander (the classic skin draws one on every tree link). */
 .sidenav[data-variant="admin"] .tree__link::before { content: none; }
+
+/* Landing: libraries as cards (name, the design's space bar, free space). */
+.panel ul.volume-list {
+  list-style: none; padding: 0; margin-block: 12px 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px;
+}
+.panel a.volume-list__link {
+  display: grid; gap: 8px; padding: 14px 16px; border-radius: var(--radius-m);
+  border: 1px solid var(--panel-line); background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  color: var(--text); text-decoration: none;
+}
+.panel a.volume-list__link:hover { background: color-mix(in srgb, var(--surface-3) 75%, transparent); }
+.panel a.volume-list__link:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+[data-glass="clear"] .panel a.volume-list__link { background: transparent; border-color: var(--clear-line); }
+.volume-list__name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.volume-list__name .icon { width: 20px; height: 20px; color: var(--text-muted); }
+.volume-list__free { font-size: var(--fs-sm); color: var(--text-muted); }
