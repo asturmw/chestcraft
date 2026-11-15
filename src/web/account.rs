@@ -1,13 +1,14 @@
-//! The account page (language, theme, skin, shortcuts, background rotation), the
-//! background editor (an account's own background per skin, and the admin's defaults),
-//! the admin's appearance page, and the files pages load for their backdrop.
+//! The account page (language, shortcuts, folder view; the look menu posts its theme, glass
+//! and skin here too), the background editor (an account's own background for the skin in
+//! use, and the admin's defaults per skin), the admin's appearance page, and the files
+//! pages load for their backdrop.
 //!
 //! Background pictures are visible to their owner, and to everyone once the admin uses
 //! them as a default (share pages show them to visitors without an account).
 
 use super::account_views::{
-    self as av, AccountView, AppearanceView, BackgroundRow, BackgroundsView, Opt, SetCard, Tab,
-    UploadState,
+    self as av, AccountView, AppearanceView, BackgroundRow, BackgroundsView, Opt, Preview, Tab,
+    Tile, TileKind, UploadState,
 };
 use super::auth::{audit, csrf_ok, forbidden, same_origin};
 use super::files::{Fail, enc, fail};
@@ -316,11 +317,16 @@ pub async fn picture(
     }
 }
 
-/// `/.cc/backdrop.css?c=1a2b3c-445566&a=135`: the backdrop color as a stylesheet (the page
-/// policy forbids inline styles). Depends on the URL only.
+/// `/.cc/backdrop.css?c=1a2b3c-445566&a=135[&for=preview]`: the backdrop color as a
+/// stylesheet (the page policy forbids inline styles); `for` scopes it to the background
+/// editor's preview or one of its tiles. Depends on the URL only.
 pub async fn backdrop_css(uri: Uri) -> Response {
     let q = Query::parse(uri.query());
-    match look::color_css(q.get("c").unwrap_or(""), q.get("a").unwrap_or("")) {
+    match look::color_css(
+        q.get("c").unwrap_or(""),
+        q.get("a").unwrap_or(""),
+        q.get("for"),
+    ) {
         Some(css) => (
             [
                 (header::CONTENT_TYPE, "text/css; charset=utf-8"),
@@ -340,7 +346,7 @@ fn presets_css_url() -> String {
     URL.clone()
 }
 
-/// `/.cc/presets.css`: the gradient of every preset swatch (no inline styles allowed).
+/// `/.cc/presets.css`: the gradient of every preset tile (no inline styles allowed).
 pub async fn presets_css() -> Response {
     (
         [
@@ -365,7 +371,6 @@ fn opt(value: &str, label: impl Into<String>, selected: bool) -> Opt {
 
 fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> AccountView {
     let s = &cu.settings;
-    let a = st.looks.appearance();
     let lang = s.lang.as_deref().filter(|c| st.i18n.by_code(c).is_some());
     let mut langs = vec![opt("", ctx.t("account.language_auto"), lang.is_none())];
     langs.extend(
@@ -373,33 +378,6 @@ fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> Acco
             .languages()
             .map(|(_, code, name)| opt(code, name, lang == Some(code))),
     );
-    let theme = s.theme.as_deref().unwrap_or("system");
-    let themes = ["system", "dark", "light"]
-        .map(|t| opt(t, ctx.tf(&format!("account.theme_{t}"), &[]), theme == t))
-        .into();
-    let skins = if st.skins.len() > 1 {
-        let default_skin = look::pick_skin(&st.skins, a.default_skin.as_deref(), None);
-        let own = s
-            .skin
-            .as_deref()
-            .filter(|k| st.skins.iter().any(|x| x == k));
-        let mut v = vec![opt(
-            "",
-            ctx.tf(
-                "account.skin_default",
-                &[("skin", &skin_label(ctx, &default_skin))],
-            ),
-            own.is_none(),
-        )];
-        v.extend(
-            st.skins
-                .iter()
-                .map(|k| opt(k, skin_label(ctx, k), own == Some(k.as_str()))),
-        );
-        v
-    } else {
-        Vec::new()
-    };
     let keys_now = s.keys.as_deref().unwrap_or("standard");
     let keys = ["standard", "vim", "off"]
         .map(|k| {
@@ -410,21 +388,6 @@ fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> Acco
             )
         })
         .into();
-    let default_mode = a.rotation.as_deref().unwrap_or(DEFAULT_ROTATION);
-    let mode = s.rotation.as_deref().filter(|m| look::is_rotation(m));
-    let mut rotations = vec![opt(
-        "",
-        ctx.tf(
-            "account.rotation_default",
-            &[("mode", &rotation_label(ctx, default_mode))],
-        ),
-        mode.is_none(),
-    )];
-    rotations.extend(
-        look::ROTATIONS
-            .iter()
-            .map(|m| opt(m, rotation_label(ctx, m), mode == Some(*m))),
-    );
     let layout = s.layout.as_deref().and_then(Layout::parse);
     let mut layouts = vec![opt("", ctx.t("account.folder_view_auto"), layout.is_none())];
     layouts.extend(
@@ -440,12 +403,9 @@ fn account_view(st: &AppState, ctx: &Ctx, cu: &CurrentUser, saved: bool) -> Acco
         role: cu.role.clone(),
         saved,
         langs,
-        themes,
-        skins,
         keys,
-        rotations,
         layouts,
-        admin: cu.role == ADMIN_ROLE,
+        skin: skin_label(ctx, &ctx.skin),
         access: maud::html! {},
     }
 }
@@ -474,7 +434,7 @@ pub async fn page(
     .await;
     let mut ctx = ctx.with_nav(nav);
     // App passwords: the create form in a dialog, revoking asks first, the copy button.
-    ctx.scripts.extend(["copy.js", "forms.js"]);
+    ctx.scripts.extend(["copy.js", "forms.js", "account.js"]);
     let q = Query::parse(uri.query());
     let mut v = account_view(&st, &ctx, &cu, q.has("saved"));
     let access = super::users::access_view(&st, &cu).await;
@@ -520,7 +480,7 @@ fn referer_path(headers: &HeaderMap) -> Option<String> {
 
 /// POST `/.cc/account`: save preferences. Every field is optional, so a quick switch can
 /// send just one (with `next` to return to its page, or `back` to return to the referring
-/// one: the app bar's look switches). `glass` applies to the skin in use after the save.
+/// one: the app bar's look menu). `glass` applies to the skin in use after the save.
 pub async fn save_prefs(
     State(st): State<Shared>,
     Extension(principal): Extension<Principal>,
@@ -643,7 +603,8 @@ impl Target {
 
     fn href(&self) -> String {
         match self {
-            Target::Own(s) => format!("/.cc/account/backgrounds?skin={}", enc(s)),
+            // The editor edits the skin in use.
+            Target::Own(_) => "/.cc/account/backgrounds".into(),
             Target::Default(s) => format!("/.cc/admin/appearance?edit=default:{}", enc(s)),
             Target::Share => "/.cc/admin/appearance?edit=share".into(),
         }
@@ -701,38 +662,155 @@ fn upload_state(st: &AppState, cu: &CurrentUser, count: usize) -> UploadState {
 
 const DEFAULT_COLORS: [&str; 3] = ["#1e293b", "#475569", "#94a3b8"];
 
+/// A backdrop's color stylesheet scoped to the editor's `scope` (its preview or a tile),
+/// so it doesn't recolor the page's own backdrop. Returns the scope when there was one.
+fn scope_color(
+    b: &mut Backdrop,
+    scope: &'static str,
+    styles: &mut Vec<String>,
+) -> Option<&'static str> {
+    let url = b.stylesheet.take()?;
+    styles.push(format!("{url}&for={scope}"));
+    Some(scope)
+}
+
+/// The background editor for `target`, showing the saved state.
+#[allow(clippy::too_many_arguments)]
 fn editor_view(
     st: &AppState,
     ctx: &Ctx,
     cu: &CurrentUser,
     target: &Target,
     error: Option<String>,
+    upload_error: Option<String>,
     saved: bool,
 ) -> BackgroundsView {
     let a = st.looks.appearance();
     let stored = target.stored(&a, &cu.settings.backgrounds);
-    let fill = match stored.as_ref().map(|b| &b.fill) {
-        None if matches!(target, Target::Own(_)) => "default",
-        None | Some(Fill::None) => "none",
-        Some(Fill::Color { .. }) => "color",
-        Some(Fill::Images { .. }) => "images",
+    let skin = match target {
+        Target::Own(k) | Target::Default(k) => k.clone(),
+        Target::Share => look::pick_skin(
+            &st.skins,
+            a.share_skin.as_deref(),
+            Some(&look::pick_skin(&st.skins, a.default_skin.as_deref(), None)),
+        ),
     };
+    let presets = look::presets_for(&skin);
     let mut colors = DEFAULT_COLORS.map(String::from);
     let (mut stops, mut angle) = (2, 135);
-    if let Some(Fill::Color {
-        colors: c,
-        angle: g,
-    }) = stored.as_ref().map(|b| &b.fill)
+    let mut preset_id = None;
+    if let Some(
+        fill @ Fill::Color {
+            colors: c,
+            angle: g,
+        },
+    ) = stored.as_ref().map(|b| &b.fill)
     {
         for (slot, value) in colors.iter_mut().zip(c) {
             *slot = value.clone();
         }
-        (stops, angle) = (c.len(), *g);
+        (stops, angle) = (c.len().clamp(1, look::MAX_COLORS), *g);
+        preset_id = presets
+            .iter()
+            .find(|p| look::preset_fill(p) == *fill)
+            .map(|p| p.id);
     }
+    let fill = match stored.as_ref().map(|b| &b.fill) {
+        None if !target.admin_only() => "default".to_string(),
+        None | Some(Fill::None) => "none".into(),
+        Some(Fill::Color { .. }) => preset_id.map_or("color".into(), |id| format!("preset:{id}")),
+        Some(Fill::Images { .. }) => "images".into(),
+    };
     let selected: Vec<String> = stored
         .as_ref()
         .map(|b| look::set_ids(b).to_vec())
         .unwrap_or_default();
+
+    // The glass and opacity in effect: stored, else the admin's default for the skin.
+    let panels = target.panels(&a, &cu.settings.panels);
+    let fallback = admin_panels(st, target);
+    let glass = panels.glass.or(fallback.glass).unwrap_or_default();
+    let opacity = panels
+        .opacity
+        .or(fallback.opacity)
+        .filter(|o| (1..=look::MAX_OPACITY).contains(o));
+
+    let day = look::day_number(jiff::Timestamp::now(), &st.cfg.server.timezone);
+    let owner = (!target.admin_only()).then_some(cu.key.as_str());
+    let skin_own = || skin_backdrop(st, &skin, glass, None, 0);
+    let admin_default = || {
+        a.backgrounds
+            .get(&skin)
+            .and_then(|bg| backdrop(st, &skin, glass, bg, None, "never", Seed::Anonymous, day))
+            .unwrap_or_else(skin_own)
+    };
+    let mut styles = vec![presets_css_url()];
+    let mut preview = match &stored {
+        Some(bg) => backdrop(st, &skin, glass, bg, owner, "never", Seed::Anonymous, day),
+        None => None,
+    }
+    .unwrap_or_else(|| {
+        if target.admin_only() {
+            skin_own()
+        } else {
+            admin_default()
+        }
+    });
+    scope_color(&mut preview, "preview", &mut styles);
+
+    // The tiles show each background bare: no veil, no blur.
+    let bare = |mut b: Backdrop| {
+        (b.dim, b.blur) = (0, 0);
+        b
+    };
+    let fill_tile = |value: String, label: String, backdrop: Backdrop| Tile {
+        checked: fill == value,
+        kind: TileKind::Fill(value),
+        label,
+        backdrop: bare(backdrop),
+        preset: None,
+        scope: None,
+    };
+    let mut tiles = Vec::new();
+    if !target.admin_only() {
+        let mut t = fill_tile(
+            "default".into(),
+            ctx.t("backgrounds.fill_default").into(),
+            admin_default(),
+        );
+        t.scope = scope_color(&mut t.backdrop, "default", &mut styles);
+        tiles.push(t);
+    }
+    tiles.push(fill_tile(
+        "none".into(),
+        ctx.t("backgrounds.fill_none").into(),
+        skin_own(),
+    ));
+    let color = || Backdrop {
+        state: "color",
+        ..Backdrop::default()
+    };
+    for p in &presets {
+        let mut t = fill_tile(
+            format!("preset:{}", p.id),
+            ctx.tf(&format!("presets.{}", p.id), &[]),
+            color(),
+        );
+        t.preset = Some(p.id);
+        tiles.push(t);
+    }
+    let mut own = fill_tile(
+        "color".into(),
+        ctx.t("backgrounds.fill_color").into(),
+        color(),
+    );
+    own.scope = Some("color");
+    styles.push(format!(
+        "/.cc/backdrop.css?{}&for=color",
+        look::color_query(&colors[..stops], angle)
+    ));
+    tiles.push(own);
+
     let mut shown = st.looks.sets_of(&cu.key);
     let own_count = shown.len();
     if target.admin_only() {
@@ -745,47 +823,39 @@ fn editor_view(
             }
         }
     }
-    let card = |id: String, set: &SetRef, name: String, deletable: bool| SetCard {
-        selected: selected.contains(&id),
-        id,
-        name,
-        deletable,
-        pictures: set
+    let set_tile = |id: String, set: &SetRef, label: String, delete: Option<String>| {
+        let first = set
             .slots()
-            .into_iter()
-            .map(|slot| {
-                (
-                    ctx.tf(&format!("backgrounds.slot_{slot}"), &[]),
-                    set.url(slot, true),
-                )
-            })
-            .collect(),
+            .first()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let url = |shape: &str| set.url(set.slot_for(shape).unwrap_or(first.as_str()), true);
+        Tile {
+            checked: selected.contains(&id),
+            kind: TileKind::Set { id, delete },
+            label,
+            backdrop: Backdrop {
+                state: "image",
+                pictures: Some(Pictures::Shapes([url("wide"), url("square"), url("tall")])),
+                ..Backdrop::default()
+            },
+            preset: None,
+            scope: None,
+        }
     };
-    let mut sets: Vec<SetCard> = st
-        .builtin_sets
-        .iter()
-        .map(|b| {
-            let name = ctx.tf(&format!("backgrounds.set_{}", b.name), &[]);
-            card(b.id(), &SetRef::Builtin(b), name, false)
-        })
-        .collect();
-    sets.extend(shown.into_iter().enumerate().map(|(n, s)| {
+    for b in &st.builtin_sets {
+        let name = ctx.tf(&format!("backgrounds.set_{}", b.name), &[]);
+        tiles.push(set_tile(b.id(), &SetRef::Builtin(b), name, None));
+    }
+    for (n, s) in shown.into_iter().enumerate() {
         let name = ctx.tf("backgrounds.set_n", &[("n", &(n + 1).to_string())]);
-        let deletable = s.owner == cu.key;
-        card(s.id.clone(), &SetRef::Own(s), name, deletable)
-    }));
-    let (dim, blur) = stored.as_ref().map_or((None, 0), |b| (b.dim, b.blur));
-    let panels = target.panels(&a, &cu.settings.panels);
+        let delete = (s.owner == cu.key).then(|| format!("bg-delete-{}", n + 1));
+        tiles.push(set_tile(s.id.clone(), &SetRef::Own(s), name, delete));
+    }
+
     let skins = skin_names(st);
     let tabs = match target {
-        Target::Own(current) => skins
-            .iter()
-            .map(|k| Tab {
-                label: skin_label(ctx, k),
-                href: Target::Own(k.clone()).href(),
-                current: k == current,
-            })
-            .collect(),
+        Target::Own(_) => Vec::new(),
         _ => skins
             .iter()
             .map(|k| Target::Default(k.clone()))
@@ -800,9 +870,30 @@ fn editor_view(
             })
             .collect(),
     };
+    let rotation = (!target.admin_only()).then(|| {
+        let default_mode = a.rotation.as_deref().unwrap_or(DEFAULT_ROTATION);
+        let mode = cu
+            .settings
+            .rotation
+            .as_deref()
+            .filter(|m| look::is_rotation(m));
+        let mut opts = vec![opt(
+            "",
+            ctx.tf(
+                "account.rotation_default",
+                &[("mode", &rotation_label(ctx, default_mode))],
+            ),
+            mode.is_none(),
+        )];
+        opts.extend(
+            look::ROTATIONS
+                .iter()
+                .map(|m| opt(m, rotation_label(ctx, m), mode == Some(*m))),
+        );
+        (opts, selected.len() >= 2)
+    });
     let max = st.cfg.appearance.max_backgrounds_per_user;
-    let admin = cu.role == ADMIN_ROLE;
-    let count = if admin {
+    let count = if cu.role == ADMIN_ROLE {
         ctx.tn("backgrounds.count_unlimited", own_count as u64)
     } else {
         ctx.tnf(
@@ -827,29 +918,25 @@ fn editor_view(
     } else {
         (ctx.t("account.title"), "/.cc/account")
     };
-    let skin = match target {
-        Target::Own(k) | Target::Default(k) => k.clone(),
-        Target::Share => look::pick_skin(
-            &st.skins,
-            a.share_skin.as_deref(),
-            Some(&look::pick_skin(&st.skins, a.default_skin.as_deref(), None)),
-        ),
-    };
-    let presets = look::presets_for(&skin)
-        .into_iter()
-        .map(|p| (p.id, ctx.tf(&format!("presets.{}", p.id), &[])))
-        .collect();
+    let (dim, blur) = stored.as_ref().map_or((None, 0), |b| (b.dim, b.blur));
     BackgroundsView {
         csrf: cu.csrf.clone(),
         title,
         target: target.code(),
         tabs,
-        fill,
-        allow_default: !target.admin_only(),
+        preview: Preview {
+            backdrop: preview,
+            glass: glass.code(),
+            opacity,
+        },
+        images: fill == "images",
+        color_open: fill == "color",
+        tiles,
         colors,
         stops,
         angle,
-        presets,
+        glass: [Glass::Frosted, Glass::Clear].map(|g| (g.code(), glass_label(ctx, g), g == glass)),
+        glass_auto: (panels.glass.is_none() && !target.admin_only()).then_some(glass.code()),
         dim: steps_opts(
             ctx,
             dim,
@@ -859,10 +946,8 @@ fn editor_view(
             ctx.t("backgrounds.dim_auto"),
         ),
         blur,
-        glass: glass_opts(st, ctx, target, panels.glass),
         opacity: opacity_opts(st, ctx, target, panels.opacity),
-        presets_css: presets_css_url(),
-        sets,
+        rotation,
         count,
         upload: upload_state(st, cu, own_count),
         limit_text: Some(ctx.tf(
@@ -870,11 +955,16 @@ fn editor_view(
             &[("max", &ctx.number(u64::from(max)))],
         )),
         error,
+        upload_error,
         saved,
         back: Some((back.0.to_string(), back.1.to_string())),
+        styles,
     }
 }
 
+/// GET `/.cc/account/backgrounds`: the editor of the account's own background for the
+/// skin in use (review Q32; another skin's background is edited after switching to it,
+/// so `?skin=` of older links is ignored).
 pub async fn backgrounds_page(
     State(st): State<Shared>,
     Extension(principal): Extension<Principal>,
@@ -887,15 +977,10 @@ pub async fn backgrounds_page(
     };
     let ctx = page_ctx(&st, &headers, &principal, current.as_deref());
     let q = Query::parse(uri.query());
-    let skin = q
-        .get("skin")
-        .filter(|k| st.skins.iter().any(|x| x == k))
-        .map(str::to_string)
-        .unwrap_or_else(|| ctx.skin.clone());
-    let target = Target::Own(skin);
+    let target = Target::Own(ctx.skin.clone());
     av::backgrounds(
         &ctx,
-        &editor_view(&st, &ctx, &cu, &target, None, q.has("saved")),
+        &editor_view(&st, &ctx, &cu, &target, None, None, q.has("saved")),
     )
     .into_response()
 }
@@ -939,27 +1024,6 @@ fn admin_panels(st: &AppState, target: &Target) -> Panels {
     }
 }
 
-fn glass_opts(st: &AppState, ctx: &Ctx, target: &Target, current: Option<Glass>) -> Vec<Opt> {
-    let mut v = Vec::new();
-    if !target.admin_only() {
-        let fallback = admin_panels(st, target).glass.unwrap_or_default();
-        v.push(opt(
-            "",
-            ctx.tf(
-                "backgrounds.glass_default",
-                &[("glass", &glass_label(ctx, fallback))],
-            ),
-            current.is_none(),
-        ));
-    }
-    for g in [Glass::Frosted, Glass::Clear] {
-        let selected =
-            current == Some(g) || (target.admin_only() && current.is_none() && g == Glass::Frosted);
-        v.push(opt(g.code(), glass_label(ctx, g), selected));
-    }
-    v
-}
-
 fn opacity_opts(st: &AppState, ctx: &Ctx, target: &Target, current: Option<u8>) -> Vec<Opt> {
     let skin_own = ctx.t("backgrounds.opacity_skin").to_string();
     let unset = if target.admin_only() {
@@ -999,6 +1063,9 @@ fn parsed_panels(form: &Query) -> Result<Panels, ()> {
         None | Some("") => None,
         Some(g) => Some(Glass::parse(g).ok_or(())?),
     };
+    // The editor shows the default glass when none is stored, and says which (`glass_auto`):
+    // saving it unchanged keeps it unset, so it still follows the admin's default.
+    let glass = glass.filter(|g| form.get("glass_auto") != Some(g.code()));
     let opacity = step(form.get("opacity"), 1, look::MAX_OPACITY)?;
     Ok(Panels { glass, opacity })
 }
@@ -1020,6 +1087,10 @@ fn parsed_choice(
         "default" if !target.admin_only() => return Ok(None),
         "none" if target.admin_only() => return Ok(None),
         "none" => Fill::None,
+        // A preset tile: its gradient, stored like any other color.
+        p if p.starts_with("preset:") => {
+            look::preset_fill(look::preset(&p["preset:".len()..]).ok_or(None)?)
+        }
         "color" => {
             let stops: usize = form
                 .get("stops")
@@ -1159,40 +1230,16 @@ pub async fn backgrounds_submit(
         return Redirect::to(&target.href()).into_response();
     }
 
-    if let Some(id) = form.get("preset") {
-        // A swatch: its gradient becomes the background, stored like any other color; the
-        // veil, blur and panels stay.
-        let Some(p) = look::preset(id) else {
-            return fail(&ctx, Fail::BadRequest);
-        };
-        let (st2, key, t2) = (st.clone(), cu.key.clone(), target.clone());
-        let keep = move |old: Option<Background>| {
-            Some(Background {
-                fill: look::preset_fill(p),
-                dim: old.as_ref().and_then(|b| b.dim),
-                blur: old.map_or(0, |b| b.blur),
-            })
-        };
-        if !matches!(
-            blocking(move || store_choice(&st2, &key, &t2, keep, None)).await,
-            Some(Ok(()))
-        ) {
-            return fail(&ctx, Fail::Internal);
-        }
-        if target.admin_only() {
-            audit(
-                &st,
-                actor,
-                client.ip,
-                "appearance_changed",
-                &target.code(),
-                id,
-            );
-        }
-        return Redirect::to(&target.saved_href()).into_response();
-    }
     let Ok(panels) = parsed_panels(&form) else {
         return fail(&ctx, Fail::BadRequest);
+    };
+    // How often an account's picture sets change: in its own editor (review Q32).
+    let rotation = match target {
+        Target::Own(_) => match change(&form, "rotation", &[""], look::is_rotation) {
+            Ok(r) => r,
+            Err(()) => return fail(&ctx, Fail::BadRequest),
+        },
+        _ => None,
     };
     let choice = match parsed_choice(&st, &ctx, &cu, &target, &form) {
         Ok(c) => c,
@@ -1202,17 +1249,25 @@ pub async fn backgrounds_submit(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 av::backgrounds(
                     &ctx,
-                    &editor_view(&st, &ctx, &cu, &target, Some(msg), false),
+                    &editor_view(&st, &ctx, &cu, &target, Some(msg), None, false),
                 ),
             )
                 .into_response();
         }
     };
     let (st2, key, t2) = (st.clone(), cu.key.clone(), target.clone());
-    if !matches!(
-        blocking(move || store_choice(&st2, &key, &t2, |_| choice, Some(panels))).await,
-        Some(Ok(()))
-    ) {
+    let stored = blocking(move || {
+        store_choice(&st2, &key, &t2, |_| choice, Some(panels))?;
+        match rotation {
+            Some(r) => match st2.db.update_user(&key, |u| u.settings.rotation = r) {
+                Ok(Some(_)) => Ok(()),
+                _ => Err(()),
+            },
+            None => Ok(()),
+        }
+    })
+    .await;
+    if !matches!(stored, Some(Ok(()))) {
         return fail(&ctx, Fail::Internal);
     }
     if target.admin_only() {
@@ -1291,12 +1346,13 @@ pub async fn upload(
         Err(res) => return *res,
     };
     let slot_label = |slot: &str| ctx.tf(&format!("backgrounds.slot_{slot}"), &[]);
+    // The editor again, with the message in its upload form (open).
     let refuse = |msg: String| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             av::backgrounds(
                 &ctx,
-                &editor_view(&st, &ctx, &cu, &target, Some(msg), false),
+                &editor_view(&st, &ctx, &cu, &target, None, Some(msg), false),
             ),
         )
             .into_response()
@@ -1490,8 +1546,11 @@ pub async fn appearance_page(
     let q = Query::parse(uri.query());
     if let Some(edit) = q.get("edit") {
         return match Target::parse(edit, &skin_names(&st)).filter(Target::admin_only) {
-            Some(t) => av::backgrounds(&ctx, &editor_view(&st, &ctx, cu, &t, None, q.has("saved")))
-                .into_response(),
+            Some(t) => av::backgrounds(
+                &ctx,
+                &editor_view(&st, &ctx, cu, &t, None, None, q.has("saved")),
+            )
+            .into_response(),
             None => fail(&ctx, Fail::NotFound),
         };
     }

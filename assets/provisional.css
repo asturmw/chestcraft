@@ -50,8 +50,30 @@ a.menu__item { text-decoration: none; }
 }
 .panel button:not(.btn, .menu__item):hover { background: var(--surface-3); }
 .panel a { color: var(--accent-ink); }
-/* Account page: the way to the trash (the phone's tab bar has none, review Q23). */
-.account__trash a { display: inline-flex; align-items: center; gap: 6px; }
+/* Account page (review Q24) as cards until the design delivers it: profile, preferences,
+   app passwords (the whole row), sessions, look. The trash link is in the profile (the
+   phone's tab bar has none, review Q23). */
+.account-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); align-items: start; }
+.account-card {
+  min-width: 0; padding: 14px 16px 16px; border: 1px solid var(--panel-line); border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+}
+[data-glass="clear"] .account-card { background: transparent; }
+.account-card--wide { grid-column: 1 / -1; }
+.panel .account-cards .account-card { margin: 0; }
+.panel .account-card__title { margin: 0 0 10px; font-size: var(--fs-md); }
+.panel .account-card > :last-child, .panel .account-card form:last-child { margin-bottom: 0; }
+.panel .account__identity { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 16px; margin-top: 0; }
+.account__identity dt { color: var(--text-muted); }
+.account__identity dd { margin: 0; overflow-wrap: anywhere; }
+.panel .account-card__links { list-style: none; padding: 0; display: grid; gap: 6px; }
+:is(.account-card__links, .account__look) a { display: inline-flex; align-items: center; gap: 6px; }
+.panel .account-card__text { color: var(--text-muted); font-size: var(--fs-sm); }
+.panel .account-card .field__input { max-width: none; }
+.panel .prefs__form { margin: 0; }
+.prefs__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.panel .prefs .form__saved { margin: 0; min-height: 1.4em; color: var(--text-muted); font-size: var(--fs-sm); }
+.panel .account__sessions .session-list { padding-left: 18px; }
 .panel :is(.viewer__image, .viewer__video) { max-width: 100%; max-height: 75vh; }
 .panel .viewer__pdf { width: 100%; height: 75vh; border: 0; }
 .panel .viewer__text { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -249,46 +271,117 @@ a.menu__item { text-decoration: none; }
   .shell:has(> .layout > .sidenav[data-variant="admin"]) .appbar .appbar__menu { display: inline-flex; order: -1; }
 }
 
-/* Background editor: picture sets as rows of small previews, so the upload form below
-   stays in reach. */
-.panel .bg-sets { list-style: none; padding: 0; display: grid; gap: 10px; }
-.panel .bg-set {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-  padding: 10px; border: 1px solid var(--panel-line); border-radius: var(--radius-m);
+/* Background editor (review Q9, Q32) until the design delivers it: the preview on top
+   with the glass switch, then one grid of background tiles (each a miniature of its
+   background: the same .backdrop markup as the page, scaled into the tile); the own
+   color's fields and "Fine-tune" fold away. */
+.bg-editor { display: grid; gap: 18px; }
+.panel .bg-editor fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.panel .bg-editor legend, .bg-editor__label { padding: 0; margin-bottom: 8px; font-weight: 600; }
+.bg-editor__top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 24px; }
+.bg-preview {
+  position: relative; isolation: isolate; overflow: hidden; flex: 1 1 300px; max-width: 520px; aspect-ratio: 16 / 10;
+  border-radius: var(--radius-m); border: 1px solid var(--panel-line); box-shadow: var(--panel-shadow);
+  /* --glass is resolved on :root; again here, so the preview's own opacity counts. */
+  --glass: color-mix(in srgb, var(--glass-tint) calc(var(--glass-alpha) * 100%), transparent);
+  --pv-bg: var(--glass); --pv-line: var(--glass-line); --pv-filter: var(--glass-filter);
 }
-.panel .bg-set[data-state="selected"] { border-color: var(--accent-ink); background: var(--row-select); }
-.panel .bg-set__pick { flex: 1 1 100%; margin: 0; font-weight: 600; }
-.panel .bg-set__picture { margin: 0; display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--text-muted); }
-.panel .bg-set__picture img { height: 72px; width: auto; max-width: 160px; object-fit: cover; border-radius: var(--radius-s); }
-.panel .bg-set__delete { margin-left: auto; }
-/* Gradient presets as a row of swatch buttons (/.cc/presets.css sets --preset on each),
-   and color fields of a size one can see and hit: .field__input alone has width 0. */
-.panel .bg-presets { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-.panel button.bg-preset {
-  display: grid; gap: 6px; width: 132px; min-height: 0; padding: 6px 6px 8px;
-  font-size: var(--fs-sm); text-align: left;
+.bg-preview[data-glass="clear"] { --pv-bg: transparent; --pv-line: var(--clear-line); --pv-filter: none; }
+.bg-preview > .backdrop, .bg-tile__swatch > .backdrop { position: absolute; z-index: 0; }
+.bg-preview__window {
+  position: absolute; inset: 7%; z-index: 1; display: grid; gap: 8px;
+  grid-template-columns: 24% minmax(0, 1fr); grid-template-rows: 13% minmax(0, 1fr);
 }
-.panel .bg-preset::before {
-  content: ""; height: 56px; border-radius: var(--radius-s);
-  background: var(--preset, var(--surface-3)); box-shadow: inset 0 0 0 1px var(--panel-line);
+.bg-preview__window > span {
+  border-radius: 8px; background: var(--pv-bg); border: 1px solid var(--pv-line);
+  -webkit-backdrop-filter: var(--pv-filter); backdrop-filter: var(--pv-filter);
 }
+.bg-preview__bar { grid-column: 1 / -1; }
+.bg-preview__panel { display: grid; align-content: start; gap: 10px; padding: 7%; }
+.bg-preview__line { display: block; height: 7px; border-radius: 4px; background: var(--text); opacity: 0.55; }
+.bg-preview__line:nth-child(2) { width: 72%; }
+.bg-preview__line:nth-child(3) { width: 86%; }
+.bg-preview[data-glass="clear"] .bg-preview__line { box-shadow: 0 0 6px var(--sunk); }
+/* The glass switch: the design's .seg with radios (state from :checked, so it works
+   without script). */
+.panel .bg-glass .bg-glass__item { display: inline-flex; align-items: center; width: auto; min-height: 34px; margin: 0; --btn-px: 14px; cursor: pointer; }
+.bg-glass .bg-glass__item:has(:checked) { background: var(--surface-3); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.bg-glass .bg-glass__item:has(:focus-visible) { outline: 2px solid var(--accent-ink); outline-offset: 1px; }
+/* Tiles: radios for one background, checkboxes for picture sets (several take turns). */
+.bg-tiles__grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+.bg-tile { position: relative; min-width: 0; }
+.panel .bg-tile__pick {
+  display: grid; gap: 6px; height: 100%; margin: 0; padding: 6px 6px 8px; cursor: pointer;
+  border: 1px solid var(--panel-line); border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+}
+[data-glass="clear"] .panel .bg-tile__pick { background: transparent; }
+.panel .bg-tile__pick:hover { border-color: var(--line-strong); }
+.panel .bg-tile:has(.bg-tile__input:checked) .bg-tile__pick {
+  border-color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent-ink); background: var(--row-select);
+}
+.bg-tile__pick:has(:focus-visible) { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+.bg-tile__input { position: absolute; top: 12px; left: 12px; z-index: 1; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-ink); }
+.bg-tile__swatch {
+  position: relative; isolation: isolate; overflow: hidden; display: block; aspect-ratio: 16 / 10;
+  border-radius: var(--radius-s); box-shadow: inset 0 0 0 1px var(--panel-line);
+}
+/* Presets: /.cc/presets.css sets --preset on the tile. */
+.bg-tile[data-preset] .bg-tile__swatch > .backdrop { --backdrop-color: var(--preset); }
+.bg-tile__name { font-size: var(--fs-sm); font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.bg-tile__note { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.3; }
+.panel .bg-tile__delete {
+  position: absolute; top: 10px; right: 10px; z-index: 1; width: 30px; min-height: 30px; padding: 0;
+  background: var(--bar-bg); border: 1px solid var(--bar-line);
+}
+.bg-tile--upload > summary { list-style: none; }
+.bg-tile--upload > summary::-webkit-details-marker { display: none; }
+.bg-tile__swatch--upload {
+  display: grid; place-items: center; color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-2) 50%, transparent); box-shadow: none; border: 1px dashed var(--line-strong);
+}
+.bg-tile__swatch--upload .icon { width: 24px; height: 24px; }
+.bg-tile--upload[data-state="off"] .bg-tile__pick { cursor: default; }
+.bg-tile--upload[open] { grid-column: 1 / -1; }
+.bg-tile--upload[open] > summary { width: min(100%, 220px); height: auto; }
+.bg-upload { display: grid; gap: 4px; margin-top: 10px; padding: 14px 16px; border: 1px solid var(--panel-line); border-radius: var(--radius-m); }
+.panel .bg-upload .field { margin-block: 4px; }
+.bg-upload__count { color: var(--text-muted); font-size: var(--fs-sm); }
+.bg-upload .banner[data-state="error"] { margin: 0 0 4px; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface-2)); }
+.bg-upload-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
+.bg-upload-dialog .bg-upload { margin: 0; padding: 0; border: 0; gap: 8px; }
+.bg-upload-dialog .field { display: grid; gap: 4px; }
+.bg-upload-dialog .bg-upload__count { margin: 0; }
+/* The "pictures" radio, for pages without script (the script hides it). */
+.panel .bg-tiles__images { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-weight: 600; cursor: pointer; }
+.bg-tiles__images input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent-ink); }
+.bg-editor__more > summary { cursor: pointer; font-weight: 600; width: fit-content; }
+.bg-editor__more[open] > summary { margin-bottom: 4px; }
+.panel .bg-editor__rotation .field { margin: 0; }
+.bg-editor__foot { display: flex; flex-wrap: wrap; gap: 8px; }
 .panel .bg-colors { display: flex; flex-wrap: wrap; gap: 0 16px; }
 .panel input[type="color"].field__input {
   flex: none; width: 72px; height: 40px; min-height: 0; padding: 3px; cursor: pointer;
   border: 1px solid var(--line-strong); border-radius: var(--radius-s); background: var(--field-bg);
 }
+/* The admin's editor: one tab per skin, and the share pages. */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.panel .tabs__item {
+  padding: 4px 12px; border-radius: var(--radius-pill); border: 1px solid var(--panel-line);
+  color: var(--text); text-decoration: none; font-size: var(--fs-sm);
+}
+.panel .tabs__item[aria-current] { background: var(--surface-3); border-color: var(--line-strong); font-weight: 600; }
+
 .panel fieldset { border: 1px solid var(--panel-line); border-radius: var(--radius-m); padding: 10px 14px; margin-block: 12px; min-width: 0; }
 .panel legend { padding: 0 6px; font-weight: 600; }
 
-/* Look switches in the app bar (theme and glass toggles, skin menu) until the design
-   delivers them. In the app layer, unlike the rest of this file: they are built from the
-   design's .seg, .btn and .menu, so the skins and the clear-glass layer style them too.
-   From 1280 px the toggles sit in the bar and the menu holds the skins; below, only the
-   menu button shows (its icon alone on phones) and the menu holds all three (1280, not
-   1100, since the app bar holds the search field too). */
+/* The look button in the app bar (review Q4, Q38) until the design delivers it: one
+   button at every width (icon and skin name from 1280 px, the icon alone below), its menu
+   holds theme, glass, skins and the way to the background editor. In the app layer,
+   unlike the rest of this file: it is built from the design's .btn and .menu, so the
+   skins and the clear-glass layer style it too. */
 @layer app {
-  .look { display: flex; align-items: center; gap: 6px; }
-  .look__seg .look__opt { width: auto; min-height: 30px; --btn-px: 10px; font-size: var(--fs-xs); }
+  .look { display: flex; align-items: center; margin: 0; }
   .look__button { --btn-px: 10px; gap: 6px; }
   .look__button .look__caret { width: 14px; height: 14px; }
   .look__menu { min-width: 220px; }
@@ -297,21 +390,12 @@ a.menu__item { text-decoration: none; }
   .look__menu .look__item { align-items: center; padding-block: 6px; }
   .look__blank { width: 20px; flex: none; }
   .look__item[aria-checked="true"] .icon { color: var(--accent-ink); }
-  /* "System" theme: no toggle is pressed; mark the one the system picks. */
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) .look__opt[value="dark"] { background: var(--surface-3); color: var(--text); }
-  }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme]) .look__opt[value="light"] { background: var(--surface-3); color: var(--text); }
-  }
-  @media (min-width: 1280px) {
-    .look__menu :is(.look__group[data-look="theme"], .look__group[data-look="glass"]) { display: none; }
-    .look__menu .look__group[data-look="skin"] { margin-top: 0; padding-top: 0; border-top: 0; }
+  /* Without script nobody places the popover next to its button: below the app bar, at
+     the right edge. */
+  .look__menu:popover-open:not([style]) {
+    top: 70px; right: var(--float); bottom: auto; left: auto; max-height: calc(100dvh - 86px); overflow-y: auto;
   }
   @media (max-width: 1279px) {
-    .look__seg { display: none; }
-  }
-  @media (max-width: 719px) {
     .look__name, .look__button .look__caret { display: none; }
     .look__button { width: var(--tap); min-height: var(--tap); padding: 0; }
   }
@@ -349,7 +433,7 @@ a.menu__item { text-decoration: none; }
   /* The View menu in the title row (review Q29) until the design delivers it: list/grid,
      sort column, direction, hidden files (admins). Below 1024 px it replaces the list/grid
      toggle (phones have no column headers either); from 1024 px the toggle stays and
-     the menu keeps the rest. Built from .btn and .menu like the look switches. */
+     the menu keeps the rest. Built from .btn and .menu like the look button. */
   .viewmenu__toggle { flex: none; --btn-px: 10px; gap: 6px; min-height: 36px; }
   .viewmenu { min-width: 220px; }
   .viewmenu__heading { margin: 6px 10px 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }

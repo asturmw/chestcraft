@@ -118,12 +118,39 @@ async fn preferences_change_how_pages_render() {
     let e = env();
     let s = e.session("jana", "familie").await;
     let page = e.page_of(&s, "/.cc/account").await;
+    // Cards (review Q24): profile, preferences, app passwords, sessions, look. Theme and
+    // skin live in the app bar's look menu, the rotation in the background editor.
+    for want in [
+        "class=\"account-card account__profile\"",
+        "class=\"account-card prefs\"",
+        "account-card account-card--wide account__app-passwords",
+        "class=\"account-card account__sessions\"",
+        "class=\"account-card account__look\"",
+        "data-js=\"prefs\"",
+        "<select class=\"field__input\" name=\"lang\">",
+        "<select class=\"field__input\" name=\"keys\">",
+        "<select class=\"field__input\" name=\"layout\">",
+        "data-js=\"prefs-submit\"",
+        "role=\"status\" data-js=\"prefs-status\"",
+        "href=\"/.cc/account/backgrounds\"",
+        "account.js",
+    ] {
+        assert!(page.contains(want), "{want} missing:\n{page}");
+    }
+    for gone in [
+        "<select class=\"field__input\" name=\"theme\">",
+        "<select class=\"field__input\" name=\"skin\">",
+        "<select class=\"field__input\" name=\"rotation\">",
+        "/.cc/admin/appearance",
+    ] {
+        assert!(!page.contains(gone), "{gone} still there:\n{page}");
+    }
+    // Signing out the other devices asks first.
     assert!(
-        page.contains("action=\"/.cc/account\"") && page.contains("name=\"rotation\""),
+        !page.contains("action=\"/.cc/account/sessions\"")
+            || page.contains("action=\"/.cc/account/sessions\" data-confirm=\""),
         "{page}"
     );
-    // One skin (or none) means nothing to choose.
-    assert!(!page.contains("name=\"skin\""), "{page}");
 
     let r = e
         .form_post(
@@ -232,8 +259,12 @@ async fn skins_come_from_the_account_then_the_admin_then_the_first() {
             .contains("data-skin=\"classic\"")
     );
 
+    // The look menu marks the skin in effect.
     let page = e.page_of(&jana, "/.cc/account").await;
-    assert!(page.contains("Default (Sleek)"), "{page}");
+    assert!(
+        page.contains("name=\"skin\" value=\"sleek\" aria-checked=\"true\""),
+        "{page}"
+    );
     e.form_post(&jana, "/.cc/account", &[("skin", "classic")])
         .await;
     assert!(
@@ -286,10 +317,7 @@ async fn own_pictures_upload_show_rotate_and_delete() {
         .await;
     assert_eq!(
         (r.status, r.header("location")),
-        (
-            StatusCode::SEE_OTHER,
-            "/.cc/account/backgrounds?skin=default&saved=1"
-        ),
+        (StatusCode::SEE_OTHER, "/.cc/account/backgrounds?saved=1"),
         "{}",
         r.text()
     );
@@ -628,8 +656,10 @@ async fn upload_rights_limits_and_bad_files() {
     assert!(r.text().contains("can't upload pictures"), "{}", r.text());
     let editor = e.page_of(&reader, "/.cc/account/backgrounds").await;
     assert!(
-        editor.contains("class=\"bg-upload\" data-state=\"denied\"")
-            && !editor.contains("type=\"file\""),
+        editor.contains("class=\"bg-tile bg-tile--upload\" data-state=\"off\"")
+            && editor.contains("can't upload pictures")
+            && !editor.contains("type=\"file\"")
+            && !editor.contains("id=\"bg-upload\""),
         "{editor}"
     );
 
@@ -744,11 +774,15 @@ async fn modern_is_the_skin_out_of_the_box() {
     let page = e.page_of(&jana, "/").await;
     assert!(page.contains("data-skin=\"modern\""), "{page}");
     let page = e.page_of(&jana, "/.cc/account").await;
-    assert!(page.contains("Default (Modern)"), "{page}");
+    assert!(
+        page.contains("aria-label=\"Look: Modern\"")
+            && page.contains("Change the background for Modern"),
+        "{page}"
+    );
     e.form_post(&jana, "/.cc/account", &[("lang", "de")]).await;
     let page = e.page_of(&jana, "/.cc/account").await;
     assert!(
-        page.contains("Standard (Modern)") && page.contains(">Elegant<"),
+        page.contains("aria-label=\"Aussehen: Modern\"") && page.contains(">Elegant<"),
         "{page}"
     );
 }
@@ -767,11 +801,11 @@ async fn glass_and_opacity_per_skin_with_admin_defaults() {
             && page.contains("class=\"backdrop\" data-state=\"none\" data-dim=\"0\""),
         "{page}"
     );
-    let editor = e
-        .page_of(&jana, "/.cc/account/backgrounds?skin=classic")
-        .await;
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
+    // The glass switch shows the default in effect, and says it is the default.
     assert!(
-        editor.contains("<option value=\"\" selected>Default (Frosted)</option>")
+        editor.contains("name=\"glass\" value=\"frosted\" checked")
+            && editor.contains("name=\"glass_auto\" value=\"frosted\"")
             && editor.contains("Default (As the skin has it)")
             && editor.contains("hard to read over bright pictures"),
         "{editor}"
@@ -803,12 +837,37 @@ async fn glass_and_opacity_per_skin_with_admin_defaults() {
             && page.contains("data-state=\"color\" data-dim=\"2\""),
         "{page}"
     );
-    let editor = e
-        .page_of(&jana, "/.cc/account/backgrounds?skin=classic")
-        .await;
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
     assert!(
-        editor.contains("Default (Clear)") && editor.contains("Default (70%)"),
+        editor.contains("name=\"glass\" value=\"clear\" checked")
+            && editor.contains("name=\"glass_auto\" value=\"clear\"")
+            && editor.contains("Default (70%)")
+            && editor.contains("data-glass=\"clear\" data-opacity=\"4\""),
         "{editor}"
+    );
+    // Saving the default glass unchanged keeps it unset (it follows the admin's).
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[
+                ("target", "user:classic"),
+                ("fill", "default"),
+                ("glass", "clear"),
+                ("glass_auto", "clear"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    assert!(
+        e.state
+            .db
+            .user("jana")
+            .unwrap()
+            .unwrap()
+            .settings
+            .panels
+            .is_empty()
     );
     // Not for the other skin, nor for visitors.
     e.form_post(&jana, "/.cc/account", &[("skin", "sleek")])
@@ -919,19 +978,18 @@ async fn presets_become_an_ordinary_gradient() {
     let mut e = env();
     all_skins(&mut e);
     let jana = e.session("jana", "familie").await;
-    let editor = e
-        .page_of(&jana, "/.cc/account/backgrounds?skin=gaming")
+    e.form_post(&jana, "/.cc/account", &[("skin", "gaming")])
         .await;
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
     let order: Vec<usize> = ["\"neon\"", "\"graphite\"", "\"sakura-dusk\"", "\"mint\""]
         .iter()
         .map(|id| editor.find(&format!("data-preset={id}")).expect(id))
         .collect();
     assert!(order.windows(2).all(|w| w[0] < w[1]), "{editor}");
     assert!(editor.contains("/.cc/presets.css?v="), "{editor}");
-    // What the swatch styles hang on: the preset buttons that presets.css colors, and the
-    // three color fields in one row.
+    // Presets are tiles: a radio in the fill group, colored by presets.css.
     assert!(
-        editor.contains(r#"<button class="bg-preset" type="submit" form="bg-preset" name="preset" value="neon" data-preset="neon""#),
+        editor.contains(r#"<div class="bg-tile" data-kind="radio" data-preset="neon"><label class="bg-tile__pick"><input class="bg-tile__input" type="radio" name="fill" value="preset:neon""#),
         "{editor}"
     );
     let colors = editor
@@ -946,34 +1004,25 @@ async fn presets_become_an_ordinary_gradient() {
     assert_eq!(css.header("content-type"), "text/css; charset=utf-8");
     assert!(
         css.text()
-            .contains(".bg-preset[data-preset=\"neon\"] { --preset: linear-gradient(135deg, #070a14, #2a0b3d, #0f5f73); }"),
+            .contains("[data-preset=\"neon\"] { --preset: linear-gradient(135deg, #070a14, #2a0b3d, #0f5f73); }"),
         "{}",
         css.text()
     );
 
-    // A stored dim and the panels stay when a swatch is picked.
-    e.form_post(
-        &jana,
-        "/.cc/account/backgrounds",
-        &[
-            ("target", "user:gaming"),
-            ("fill", "none"),
-            ("dim", "3"),
-            ("glass", "clear"),
-        ],
-    )
-    .await;
+    // Picking one stores its gradient like any color, with the veil and glass of the form.
     let r = e
         .form_post(
             &jana,
             "/.cc/account/backgrounds",
-            &[("target", "user:gaming"), ("preset", "sakura-dusk")],
+            &[
+                ("target", "user:gaming"),
+                ("fill", "preset:sakura-dusk"),
+                ("dim", "3"),
+                ("glass", "clear"),
+            ],
         )
         .await;
-    assert_eq!(
-        r.header("location"),
-        "/.cc/account/backgrounds?skin=gaming&saved=1"
-    );
+    assert_eq!(r.header("location"), "/.cc/account/backgrounds?saved=1");
     let settings = e.state.db.user("jana").unwrap().unwrap().settings;
     assert_eq!(
         settings.backgrounds["gaming"],
@@ -990,29 +1039,63 @@ async fn presets_become_an_ordinary_gradient() {
         settings.panels["gaming"].glass,
         Some(crate::db::Glass::Clear)
     );
-    e.form_post(&jana, "/.cc/account", &[("skin", "gaming")])
-        .await;
     let page = e.page_of(&jana, "/").await;
     assert!(
         page.contains("/.cc/backdrop.css?c=3b3a7d-ef9bb8-ffcba0&amp;a=160"),
         "{page}"
     );
-    // The editor shows it as a color, ready to change.
-    let editor = e
-        .page_of(&jana, "/.cc/account/backgrounds?skin=gaming")
-        .await;
+    // The editor marks the preset's tile, and the own color's fields hold its colors.
+    // The preview's color comes from a stylesheet scoped to it.
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
     assert!(
-        editor.contains("value=\"color\" checked") && editor.contains("value=\"#ef9bb8\""),
+        editor.contains("value=\"preset:sakura-dusk\" checked")
+            && !editor.contains("value=\"color\" checked")
+            && editor.contains("value=\"#ef9bb8\"")
+            && editor
+                .contains("/.cc/backdrop.css?c=3b3a7d-ef9bb8-ffcba0&amp;a=160&amp;for=preview")
+            && editor.contains("data-bg=\"preview\" data-glass=\"clear\""),
         "{editor}"
     );
-    let r = e
-        .form_post(
-            &jana,
-            "/.cc/account/backgrounds",
-            &[("target", "user:gaming"), ("preset", "plaid")],
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let css = e.get("/.cc/backdrop.css?c=3b3a7d&a=0&for=preview").await;
+    assert_eq!(
+        css.text(),
+        "[data-bg=\"preview\"] .backdrop[data-state=\"color\"] { --backdrop-color: #3b3a7d; }\n"
+    );
+    assert_eq!(
+        e.get("/.cc/backdrop.css?c=3b3a7d&a=0&for=x%7D")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // Other colors: the own color tile.
+    e.form_post(
+        &jana,
+        "/.cc/account/backgrounds",
+        &[
+            ("target", "user:gaming"),
+            ("fill", "color"),
+            ("stops", "2"),
+            ("c1", "#3b3a7d"),
+            ("c2", "#000000"),
+            ("angle", "160"),
+        ],
+    )
+    .await;
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
+    assert!(
+        editor.contains("value=\"color\" checked") && editor.contains("data-js=\"bg-colors\" open"),
+        "{editor}"
+    );
+    for bad in [
+        vec![("fill", "preset:plaid")],
+        // The swatch buttons of before posted only this.
+        vec![("preset", "mint")],
+    ] {
+        let mut pairs = vec![("target", "user:gaming")];
+        pairs.extend(bad);
+        let r = e.form_post(&jana, "/.cc/account/backgrounds", &pairs).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
 }
 
 #[tokio::test]
@@ -1031,10 +1114,10 @@ async fn built_in_sets_are_for_everyone_and_never_deleted() {
     let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
     let small = crate::web::assets::url("backgrounds/mountains-wide.small.jpg");
     assert!(
-        editor.contains("value=\"builtin:mountains\"")
-            && editor.contains("Use Mountains")
+        editor.contains("type=\"checkbox\" name=\"sets\" value=\"builtin:mountains\"")
+            && editor.contains("<span class=\"bg-tile__name\">Mountains</span>")
             && editor.contains(&small)
-            && !editor.contains("value=\"builtin:mountains\">Delete"),
+            && !editor.contains("bg-tile__delete"),
         "{editor}"
     );
 
@@ -1233,15 +1316,36 @@ async fn look_switches_in_the_app_bar_return_to_the_page() {
     all_skins(&mut e);
     let jana = e.session("jana", "familie").await;
     let page = e.page_of(&jana, "/.cc/trash").await;
+    // One look button at every width (review Q4, Q38): its menu holds theme (with System),
+    // glass, the skins and the way to the background editor; no toggles in the bar.
+    let radio = |name: &str, value: &str, on: bool| {
+        format!("role=\"menuitemradio\" name=\"{name}\" value=\"{value}\" aria-checked=\"{on}\"")
+    };
     for want in [
-        "data-js=\"look\"",
-        "name=\"back\" value=\"1\"",
-        "name=\"glass\" value=\"frosted\" aria-pressed=\"true\" aria-current=\"true\"",
-        "name=\"theme\" value=\"dark\" aria-pressed=\"false\"",
-        "aria-label=\"Look: Modern\"",
-        "role=\"menuitemradio\" name=\"skin\" value=\"gaming\" aria-checked=\"false\"",
+        "data-js=\"look\"".to_string(),
+        "name=\"back\" value=\"1\"".into(),
+        "aria-label=\"Look: Modern\"".into(),
+        "popovertarget=\"look-menu\"".into(),
+        radio("theme", "dark", false),
+        radio("theme", "light", false),
+        radio("theme", "system", true),
+        radio("glass", "frosted", true),
+        radio("glass", "clear", false),
+        radio("skin", "gaming", false),
+        radio("skin", "modern", true),
+        "<a class=\"menu__item look__more\" role=\"menuitem\" href=\"/.cc/account/backgrounds\">"
+            .into(),
+        "Change background …".into(),
     ] {
-        assert!(page.contains(want), "{want} missing:\n{page}");
+        assert!(page.contains(&want), "{want} missing:\n{page}");
+    }
+    assert_eq!(
+        page.matches("class=\"btn btn--quiet look__button\"")
+            .count(),
+        1
+    );
+    for gone in ["look__seg", "look__opt", "aria-pressed"] {
+        assert!(!page.contains(gone), "{gone} still there:\n{page}");
     }
     // Visitors have no account to keep a choice in.
     assert!(!e.get("/").await.text().contains("data-js=\"look\""));
@@ -1271,7 +1375,7 @@ async fn look_switches_in_the_app_bar_return_to_the_page() {
     let page = e.page_of(&jana, "/.cc/trash").await;
     assert!(
         page.contains("data-skin=\"modern\" data-glass=\"clear\"")
-            && page.contains("name=\"glass\" value=\"clear\" aria-pressed=\"true\""),
+            && page.contains("name=\"glass\" value=\"clear\" aria-checked=\"true\""),
         "{page}"
     );
     // Glass belongs to the skin: another skin keeps its own (frosted by default).
@@ -1291,8 +1395,21 @@ async fn look_switches_in_the_app_bar_return_to_the_page() {
     let page = e.page_of(&jana, "/").await;
     assert!(
         page.contains("data-theme=\"light\"")
-            && page.contains("name=\"theme\" value=\"light\" aria-pressed=\"true\""),
+            && page.contains("name=\"theme\" value=\"light\" aria-checked=\"true\"")
+            && page.contains("name=\"theme\" value=\"system\" aria-checked=\"false\""),
         "{page}"
+    );
+    // System clears the explicit theme: the page follows the device again.
+    switch(vec![("theme", "system")], "http://127.0.0.1/").await;
+    let page = e.page_of(&jana, "/").await;
+    assert!(
+        !page.contains("data-theme=")
+            && page.contains("name=\"theme\" value=\"system\" aria-checked=\"true\""),
+        "{page}"
+    );
+    assert_eq!(
+        e.state.db.user("jana").unwrap().unwrap().settings.theme,
+        None
     );
     // Only the referer's path counts: no way off the site.
     let r = switch(vec![("theme", "dark")], "https://elsewhere.example/landing").await;
@@ -1301,4 +1418,151 @@ async fn look_switches_in_the_app_bar_return_to_the_page() {
     assert_eq!(r.header("location"), "/");
     let r = switch(vec![("glass", "smoked")], "http://127.0.0.1/").await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn the_editor_edits_the_skin_in_use_with_tiles_and_a_preview() {
+    let mut e = env();
+    all_skins(&mut e);
+    let jana = e.session("jana", "familie").await;
+    let admin = e.session("Robin", "admin").await;
+    // Settings stored before this layout (another skin's background, a rotation, panels)
+    // load as they are.
+    e.state
+        .db
+        .update_user("jana", |u| {
+            let s = &mut u.settings;
+            s.rotation = Some("load".into());
+            s.backgrounds.insert(
+                "anime".into(),
+                crate::db::Background {
+                    fill: crate::db::Fill::Images {
+                        sets: vec!["builtin:sakura".into()],
+                    },
+                    dim: Some(2),
+                    blur: 1,
+                },
+            );
+            s.panels.insert(
+                "anime".into(),
+                crate::db::Panels {
+                    glass: Some(crate::db::Glass::Clear),
+                    opacity: Some(2),
+                },
+            );
+        })
+        .unwrap();
+    let jana = Login {
+        cookie: jana.cookie.clone(),
+        csrf: jana.csrf.clone(),
+    };
+
+    // Users: the skin in use only (no tabs; `?skin=` of old links changes nothing).
+    let editor = e
+        .page_of(&jana, "/.cc/account/backgrounds?skin=anime")
+        .await;
+    for want in [
+        "Your background for Modern",
+        "name=\"target\" value=\"user:modern\"",
+        // The preview, then the glass switch.
+        "class=\"bg-preview\" data-js=\"bg-preview\" data-bg=\"preview\" data-glass=\"frosted\"",
+        "name=\"glass\" value=\"frosted\" checked",
+        // Tiles: default, the skin's own, presets, own color, sets, upload.
+        "type=\"radio\" name=\"fill\" value=\"default\" checked",
+        "type=\"radio\" name=\"fill\" value=\"none\"",
+        "type=\"radio\" name=\"fill\" value=\"preset:mint\"",
+        "type=\"radio\" name=\"fill\" value=\"color\"",
+        "type=\"checkbox\" name=\"sets\" value=\"builtin:garden\"",
+        "data-bg=\"color\"",
+        "/.cc/backdrop.css?c=1e293b-475569&amp;a=135&amp;for=color",
+        "data-js=\"bg-upload\"",
+        "form=\"bg-upload\"",
+        "<form id=\"bg-upload\" method=\"post\" action=\"/.cc/account/backgrounds/upload\" enctype=\"multipart/form-data\">",
+        "0 of 10 picture sets",
+        // The rotation is here now, hidden until two sets are ticked.
+        "data-js=\"bg-rotation\" hidden",
+        "<option value=\"load\" selected>",
+        "<summary>Fine-tune</summary>",
+        "name=\"dim\"",
+        "name=\"blur\"",
+        "name=\"opacity\"",
+    ] {
+        assert!(editor.contains(want), "{want} missing:\n{editor}");
+    }
+    assert!(!editor.contains("class=\"tabs\""), "{editor}");
+
+    // Anime (switched to): its stored background, ticked; the rotation shows from two sets
+    // and saves with the background.
+    e.form_post(&jana, "/.cc/account", &[("skin", "anime")])
+        .await;
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
+    assert!(
+        editor.contains("value=\"builtin:sakura\" checked")
+            && editor.contains("name=\"fill\" value=\"images\" checked")
+            && editor.contains("data-glass=\"clear\" data-opacity=\"2\"")
+            && editor.contains("data-state=\"image\" data-dim=\"2\" data-blur=\"1\"")
+            && editor.contains("data-js=\"bg-rotation\" hidden"),
+        "{editor}"
+    );
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[
+                ("target", "user:anime"),
+                ("fill", "images"),
+                ("sets", "builtin:sakura"),
+                ("sets", "builtin:garden"),
+                ("glass", "clear"),
+                ("rotation", "day"),
+            ],
+        )
+        .await;
+    assert_eq!(r.header("location"), "/.cc/account/backgrounds?saved=1");
+    assert_eq!(
+        e.state
+            .db
+            .user("jana")
+            .unwrap()
+            .unwrap()
+            .settings
+            .rotation
+            .as_deref(),
+        Some("day")
+    );
+    let editor = e.page_of(&jana, "/.cc/account/backgrounds").await;
+    assert!(
+        editor.contains("data-js=\"bg-rotation\"><label")
+            && editor.contains("<option value=\"day\" selected>"),
+        "{editor}"
+    );
+    let r = e
+        .form_post(
+            &jana,
+            "/.cc/account/backgrounds",
+            &[
+                ("target", "user:anime"),
+                ("fill", "none"),
+                ("rotation", "hourly"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // The admin's editor keeps one tab per skin and the share pages, without the
+    // account's "default" tile or rotation.
+    let editor = e
+        .page_of(&admin, "/.cc/admin/appearance?edit=default:gaming")
+        .await;
+    assert!(
+        editor.contains("class=\"tabs\"")
+            && editor.contains("href=\"/.cc/admin/appearance?edit=default:anime\"")
+            && editor.contains("href=\"/.cc/admin/appearance?edit=share\"")
+            && editor.contains("name=\"target\" value=\"default:gaming\"")
+            && editor.contains("name=\"fill\" value=\"none\" checked")
+            && !editor.contains("name=\"fill\" value=\"default\"")
+            && !editor.contains("bg-rotation")
+            && !editor.contains("glass_auto"),
+        "{editor}"
+    );
 }

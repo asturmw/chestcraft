@@ -1,7 +1,7 @@
 // chestcraft page basics, on every page: menus (popovers) placed next to the button that
 // opened them, arrow keys inside menus, the password reveal button, dialog cancel buttons,
 // the type icon for thumbnails that fail to load, the sidebar drawer on narrow screens, the
-// look switches in the app bar, the search field (`/`, no empty search) and a message
+// look menu in the app bar, the search field (`/`, no empty search) and a message
 // shown after a reload.
 // Hooks are data-js attributes and ARIA roles; JS never relies on classes (ui-handoff §5).
 (() => {
@@ -179,7 +179,7 @@
     addEventListener('resize', () => { if (innerWidth >= 1024 && nav.dataset.state === 'open') setNav(false); });
   }
 
-  // Look switches (theme, glass, skin) in the app bar: show the new theme or glass at
+  // The look menu (theme, glass, skin) in the app bar: show the new theme or glass at
   // once, save in the background, then reload, which keeps the scroll position (a plain
   // form post would land at the top). Without script the form posts and the server sends
   // this page again.
@@ -189,7 +189,10 @@
     e.preventDefault();
     const btn = e.submitter;
     const html = document.documentElement;
-    if (btn && btn.name === 'theme') html.dataset.theme = btn.value;
+    if (btn && btn.name === 'theme') {
+      if (btn.value === 'system') delete html.dataset.theme;
+      else html.dataset.theme = btn.value;
+    }
     if (btn && btn.name === 'glass') html.dataset.glass = btn.value;
     let ok = false;
     try {

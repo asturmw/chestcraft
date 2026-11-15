@@ -150,9 +150,9 @@ pub fn access_sections(ctx: &Ctx, csrf: &str, v: &AccessView, q: &Query) -> Mark
     let others = v.sessions.iter().filter(|(me, _)| !me).count() as u64;
     let action = "/.cc/account/app-passwords";
     html! {
-        section class="admin-section account__app-passwords" id="app-passwords" aria-labelledby="app-passwords-title" {
+        section class="admin-section account-card account-card--wide account__app-passwords" id="app-passwords" aria-labelledby="app-passwords-title" {
             div class="admin-section__head" {
-                h2 id="app-passwords-title" { (ctx.t("access.app_passwords")) }
+                h2 class="account-card__title" id="app-passwords-title" { (ctx.t("access.app_passwords")) }
                 (adder(ctx, &Adder {
                     id: "add-app-password",
                     button: ctx.t("access.app_password"),
@@ -206,8 +206,8 @@ pub fn access_sections(ctx: &Ctx, csrf: &str, v: &AccessView, q: &Query) -> Mark
                 }
             }
         }
-        section class="account__sessions" id="sessions" aria-labelledby="sessions-title" {
-            h2 id="sessions-title" { (ctx.t("access.sessions")) }
+        section class="account-card account__sessions" id="sessions" aria-labelledby="sessions-title" {
+            h2 class="account-card__title" id="sessions-title" { (ctx.t("access.sessions")) }
             @if let Some(n) = q.get("signed_out").and_then(|n| n.parse::<u64>().ok()) {
                 p class="banner" data-state="ok" role="status" { (ctx.tn("access.signed_out", n)) }
             }
@@ -222,9 +222,10 @@ pub fn access_sections(ctx: &Ctx, csrf: &str, v: &AccessView, q: &Query) -> Mark
             @if others == 0 {
                 p { (ctx.t("access.only_here")) }
             } @else {
-                form method="post" action="/.cc/account/sessions" {
+                form method="post" action="/.cc/account/sessions"
+                    data-confirm=(ctx.tn("access.sign_out_others_confirm", others)) {
                     input type="hidden" name="csrf" value=(csrf);
-                    button type="submit" { (ctx.tn("access.sign_out_others", others)) }
+                    button class="btn btn--danger" type="submit" { (ctx.tn("access.sign_out_others", others)) }
                 }
             }
         }

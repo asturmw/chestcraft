@@ -229,7 +229,7 @@ async fn tab_bar_has_no_trash_and_the_account_page_links_to_it() {
         .await
         .text();
     assert!(
-        t.contains(r#"<p class="account__trash"><a href="/.cc/trash">"#),
+        t.contains(r#"<li class="account__trash"><a href="/.cc/trash">"#),
         "{t}"
     );
     assert!(t.find("account__trash") < t.find("prefs-title"), "{t}");

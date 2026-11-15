@@ -110,13 +110,13 @@ pub fn preset_fill(p: &Preset) -> Fill {
     }
 }
 
-/// The stylesheet `/.cc/presets.css` serves: one `--preset` token per preset swatch.
+/// The stylesheet `/.cc/presets.css` serves: one `--preset` token per preset tile.
 pub fn presets_css() -> String {
     PRESETS
         .iter()
         .map(|p| {
             format!(
-                ".bg-preset[data-preset=\"{}\"] {{ --preset: linear-gradient({}deg, {}); }}\n",
+                "[data-preset=\"{}\"] {{ --preset: linear-gradient({}deg, {}); }}\n",
                 p.id,
                 p.angle,
                 p.stops.join(", ")
@@ -277,8 +277,14 @@ pub fn color_query(colors: &[String], angle: u16) -> String {
 }
 
 /// The stylesheet `/.cc/backdrop.css?c=…&a=…` serves: it sets the backdrop color token.
-/// None when the values are not valid colors.
-pub fn color_css(c: &str, a: &str) -> Option<String> {
+/// With a `scope` (`[a-z]`, 1–16 letters) only the backdrops inside `[data-bg="<scope>"]`
+/// (the background editor's preview and tiles), which wins over the page's own. None when
+/// the values are not valid colors or the scope is not a plain word.
+pub fn color_css(c: &str, a: &str, scope: Option<&str>) -> Option<String> {
+    let plain = |s: &str| (1..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase());
+    if scope.is_some_and(|s| !plain(s)) {
+        return None;
+    }
     let colors: Vec<String> = c.split('-').map(parse_color).collect::<Option<_>>()?;
     if !(1..=MAX_COLORS).contains(&colors.len()) {
         return None;
@@ -289,8 +295,9 @@ pub fn color_css(c: &str, a: &str) -> Option<String> {
     } else {
         format!("linear-gradient({}deg, {})", angle % 360, colors.join(", "))
     };
+    let within = scope.map_or(String::new(), |s| format!("[data-bg=\"{s}\"] "));
     Some(format!(
-        ".backdrop[data-state=\"color\"] {{ --backdrop-color: {value}; }}\n"
+        "{within}.backdrop[data-state=\"color\"] {{ --backdrop-color: {value}; }}\n"
     ))
 }
 
@@ -689,17 +696,24 @@ mod tests {
         let q = color_query(&["#aabbcc".into(), "#001122".into()], 45);
         assert_eq!(q, "c=aabbcc-001122&a=45");
         assert_eq!(
-            color_css("aabbcc-001122", "45").unwrap(),
+            color_css("aabbcc-001122", "45", None).unwrap(),
             ".backdrop[data-state=\"color\"] { --backdrop-color: linear-gradient(45deg, #aabbcc, #001122); }\n"
         );
-        assert!(color_css("aabbcc", "").unwrap().contains("#aabbcc;"));
+        assert!(color_css("aabbcc", "", None).unwrap().contains("#aabbcc;"));
+        assert_eq!(
+            color_css("aabbcc", "0", Some("preview")).unwrap(),
+            "[data-bg=\"preview\"] .backdrop[data-state=\"color\"] { --backdrop-color: #aabbcc; }\n"
+        );
+        for scope in ["", "Preview", "a]b", "x-y", "abcdefghijklmnopq"] {
+            assert_eq!(color_css("aabbcc", "0", Some(scope)), None, "{scope}");
+        }
         for (c, a) in [
             ("aabbcc}", "0"),
             ("", "0"),
             ("aabbcc", "x"),
             ("a-b-c-d", "0"),
         ] {
-            assert_eq!(color_css(c, a), None, "{c} {a}");
+            assert_eq!(color_css(c, a, None), None, "{c} {a}");
         }
     }
 

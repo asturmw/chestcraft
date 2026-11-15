@@ -434,6 +434,18 @@ public write, shares from the UI), and the next UI slices as the design delivers
   every UI string; "Bereich"/"area" only for read-only areas, mount points and selection
   ranges; generic folder-view strings ("Ordner herunterladen", "Dieser Ordner ist leer")
   stay at a library's top level too. MCP, CLI, config and API texts keep "volume".
+  Step 9 done (look, account, background editor; Q4/Q38, Q24, Q32/Q9): one look button in
+  the app bar at every width (`views::look_switch`; popover: theme Dark/Light/System
+  (`theme=system` = unset), glass, skins, "Change background …"; works as a native popover
+  without JS). Account page as cards (profile, settings: language/shortcuts/folder view,
+  app passwords, sessions with a confirm, appearance link); no theme/skin/rotation selects
+  there; `assets/account.js` saves selects on change (button hidden with JS). Background
+  editor: users edit the skin in use only (`?skin=` ignored), admin editor keeps per-skin
+  tabs; preview from `views::backdrop()` on top, glass switch beside it, tiles (default,
+  skin, presets as `fill=preset:<id>`, own color, picture sets as checkboxes, upload tile:
+  dialog with JS, inline without), "Fine-tune" (veil, blur, opacity), rotation select in
+  the editor (shown from 2 ticked sets). An unset glass stays unset on save (`glass_auto`).
+  `/.cc/backdrop.css` takes `&for=<scope>` (scoped colors for preview and tiles).
 - Open: For the design session (not in its NOTES yet): the dashboard screen (provisional
   `dashboard.css`, activity charts), the app bar's look switches, tablet nav (the `appbar__menu`
   drawer, provisional now), the account menu, a

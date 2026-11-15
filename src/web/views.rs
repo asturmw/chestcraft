@@ -512,15 +512,17 @@ fn find_field(ctx: &Ctx, place: &'static str) -> Markup {
     }
 }
 
-/// The look switches in the app bar (provisional until the design delivers them): theme
-/// and glass as two-way toggles, the skin in a menu. One form posting to the account page
-/// with `back`, so the answer returns to this page; `app.js` posts it and reloads, which
-/// keeps the scroll position. On narrow screens only the menu button shows, and its menu
-/// holds all three. "System" theme presses neither toggle (the CSS marks the one in effect).
+/// The look button in the app bar (review Q4, Q38; provisional until the design delivers
+/// it): one button at every width, its menu holds the theme (dark, light or the system's),
+/// the glass, the skins and the way to the background editor. One form posting to the
+/// account page with `back`, so the answer returns to this page; `app.js` posts it and
+/// reloads, which keeps the scroll position. Without script the menu is a native popover
+/// of submit buttons.
 fn look_switch(ctx: &Ctx, csrf: &str) -> Markup {
     let themes = [
-        ("dark", "account.theme_dark"),
-        ("light", "account.theme_light"),
+        ("dark", "account.theme_dark", ctx.theme == Some("dark")),
+        ("light", "account.theme_light", ctx.theme == Some("light")),
+        ("system", "account.theme_system", ctx.theme.is_none()),
     ];
     let glasses = [
         ("frosted", "backgrounds.glass_frosted"),
@@ -532,12 +534,6 @@ fn look_switch(ctx: &Ctx, csrf: &str) -> Markup {
         .find(|(k, _)| *k == ctx.skin)
         .map(|(_, l)| l.as_str())
         .unwrap_or(ctx.skin.as_str());
-    let toggle = |field: &str, value: &str, label: &str, on: bool| {
-        html! {
-            button class="seg__item btn btn--quiet look__opt" type="submit" name=(field) value=(value)
-                aria-pressed=(on) aria-current=[on.then_some("true")] { (label) }
-        }
-    };
     let radio = |field: &str, value: &str, label: &str, on: bool| {
         html! {
             button class="menu__item look__item" type="submit" role="menuitemradio" name=(field) value=(value)
@@ -551,14 +547,8 @@ fn look_switch(ctx: &Ctx, csrf: &str) -> Markup {
         form class="look" method="post" action="/.cc/account" data-js="look" {
             input type="hidden" name="csrf" value=(csrf);
             input type="hidden" name="back" value="1";
-            div class="seg look__seg" data-look="theme" role="group" aria-label=(ctx.t("account.theme")) {
-                @for (v, key) in themes { (toggle("theme", v, ctx.t(key), ctx.theme == Some(v))) }
-            }
-            div class="seg look__seg" data-look="glass" role="group" aria-label=(ctx.t("backgrounds.glass")) {
-                @for (v, key) in glasses { (toggle("glass", v, ctx.t(key), ctx.glass == v)) }
-            }
             button class="btn btn--quiet look__button" type="button" aria-haspopup="menu" popovertarget="look-menu"
-                aria-label=(ctx.tf("nav.look_button", &[("skin", skin_name)])) {
+                aria-label=(ctx.tf("nav.look_button", &[("skin", skin_name)])) title=(ctx.t("nav.look")) {
                 (icon("sparkle"))
                 span class="look__name" aria-hidden="true" { (skin_name) }
                 (icon_c("chevron-down", "look__caret"))
@@ -566,7 +556,7 @@ fn look_switch(ctx: &Ctx, csrf: &str) -> Markup {
             div class="menu look__menu" id="look-menu" role="menu" aria-label=(ctx.t("nav.look")) popover {
                 div class="look__group" data-look="theme" role="group" aria-labelledby="look-theme" {
                     p class="look__heading" id="look-theme" { (ctx.t("account.theme")) }
-                    @for (v, key) in themes { (radio("theme", v, ctx.t(key), ctx.theme == Some(v))) }
+                    @for (v, key, on) in themes { (radio("theme", v, ctx.t(key), on)) }
                 }
                 div class="look__group" data-look="glass" role="group" aria-labelledby="look-glass" {
                     p class="look__heading" id="look-glass" { (ctx.t("backgrounds.glass")) }
@@ -578,9 +568,9 @@ fn look_switch(ctx: &Ctx, csrf: &str) -> Markup {
                         @for (k, label) in &ctx.skins { (radio("skin", k, label, *k == ctx.skin)) }
                     }
                 }
-                a class="menu__item look__more" role="menuitem" href="/.cc/account" {
+                a class="menu__item look__more" role="menuitem" href="/.cc/account/backgrounds" {
                     (icon("image"))
-                    span class="menu__text" { span class="menu__label" { (ctx.t("nav.look_more")) } }
+                    span class="menu__text" { span class="menu__label" { (ctx.t("nav.look_background")) } }
                 }
             }
         }
